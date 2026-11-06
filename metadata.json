@@ -1,0 +1,6 @@
+{
+  "name": "Naija Life: RPG Simulation",
+  "description": "Web-based life simulation RPG set across Nigeria's 36 states with career hustles, living expenses, embassy visa processing, and international relocation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
