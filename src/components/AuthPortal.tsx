@@ -156,6 +156,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
   const [signupPassword, setSignupPassword] = useState('');
   const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [dateOfBirth, setDateOfBirth] = useState('2002-06-15');
+  const [signupStateId, setSignupStateId] = useState('lagos');
 
   // Character customization state
   const [avatar, setAvatar] = useState<CharacterAvatar>({
@@ -383,7 +384,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
       dateOfBirth,
       createdAt: new Date().toISOString(),
       avatar,
-      spawnStateId: 'lagos',
+      spawnStateId: signupStateId,
+      lastLocationStateId: signupStateId,
       socialClass,
       phoneModel,
       cashNaira: startingCash,
@@ -438,19 +440,20 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
 
     setPendingProfile(initialProfile);
     triggerSound?.('stamp');
-    // Move to STATUS REVEAL SCREEN!
-    setCurrentStep('STATUS_REVEAL');
+    // Prompt the user to pick which of the 36 states they want to start in!
+    setCurrentStep('PICK_SPAWN');
   };
 
   // Direct Continue from Status Reveal straight into the map!
   const handleProceedDirectlyToMap = async () => {
     if (!pendingProfile) return;
 
-    const spawnState = getStateById(pendingProfile.spawnStateId || 'lagos');
+    const spawnState = getStateById(pendingProfile.spawnStateId || signupStateId || 'lagos');
     const finalUser: UserProfile = {
       ...pendingProfile,
       avatar,
       spawnStateId: spawnState.id,
+      lastLocationStateId: spawnState.id,
     };
 
     // Save on Naija Life servers so this account is accessible from any other device!
@@ -494,43 +497,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     setCurrentStep('PICK_SPAWN');
   };
 
-  // Optional: Spawn state selected -> Finalize Registration and Launch to Map!
+  // Step: Spawn state selected from the 36 Nigerian states!
   const handleSpawnSelected = async (selectedState: StateData) => {
     if (!pendingProfile) return;
 
-    const finalUser: UserProfile = {
+    const updatedProfile: UserProfile = {
       ...pendingProfile,
       avatar,
       spawnStateId: selectedState.id,
+      lastLocationStateId: selectedState.id,
     };
 
-    // Save on Naija Life servers so this account is accessible from any other device!
-    try {
-      await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: finalUser.username,
-          password: signupPassword,
-          profile: finalUser,
-        }),
-      });
-    } catch (err) {
-      console.warn('Server registration offline fallback:', err);
-    }
-
-    // Save into all registered users
-    saveUserRecord(finalUser.username, {
-      password: signupPassword,
-      profile: finalUser,
-    });
-    setSyncedUsers(getStoredUsers());
-
-    // Save as current active session
-    saveSession(finalUser);
-
+    setPendingProfile(updatedProfile);
+    setSignupStateId(selectedState.id);
     triggerSound?.('stamp');
-    onAuthSuccess(finalUser, selectedState);
+
+    // Proceed to Status Reveal to see your rolled class, starting funds, and residence in your chosen state!
+    setCurrentStep('STATUS_REVEAL');
   };
 
   // =========================================================================
@@ -541,6 +524,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     const isNepo = pendingProfile.socialClass === 'nepo';
     const isMapo = pendingProfile.socialClass === 'mapo';
     const totalWealth = pendingProfile.bankNaira + pendingProfile.cashNaira;
+    const currentSpawnState = getStateById(pendingProfile.spawnStateId || signupStateId || 'lagos');
 
     return (
       <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-zinc-950 text-white select-none overflow-y-auto overflow-x-hidden py-6 px-4">
@@ -571,9 +555,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
 
             {/* Status Badge */}
             <div className="flex items-center justify-between mb-4">
-              <span className="flex items-center gap-1.5 text-xs text-zinc-400">
+              <span className="flex items-center gap-1.5 text-xs text-emerald-300 font-bold">
                 <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Spawning in Lagos State</span>
+                <span>Spawning in {currentSpawnState.name} State ({currentSpawnState.zone})</span>
               </span>
               <span
                 className={`px-3 py-1 rounded-full text-xs font-black tracking-wide uppercase shadow-sm flex items-center gap-1.5 ${
@@ -605,7 +589,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                 </h3>
                 <p className="text-xs text-emerald-400 font-mono">@{pendingProfile.username}</p>
                 <p className="text-[11px] text-zinc-400 mt-0.5">
-                  Born {pendingProfile.dateOfBirth}
+                  Born {pendingProfile.dateOfBirth} · Capital: {currentSpawnState.capital}
                 </p>
               </div>
             </div>
@@ -639,33 +623,40 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
             </div>
           </div>
 
-          {/* PRIMARY CALL TO ACTION: "CONTINUE TO NAIJA MAP" */}
+          {/* PRIMARY CALL TO ACTION: "ENTER [STATE] MAP" */}
           <button
             type="button"
             onClick={handleProceedDirectlyToMap}
             className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-zinc-950 font-black text-lg tracking-wide shadow-xl shadow-emerald-500/25 transition-all transform hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-3 cursor-pointer"
           >
             <Play className="w-5 h-5 fill-current" />
-            <span>CONTINUE TO THE MAP</span>
+            <span>ENTER {currentSpawnState.name.toUpperCase()} MAP</span>
             <ArrowRight className="w-5 h-5" />
           </button>
 
-          {/* Secondary Option: Customize Appearance First */}
+          {/* Secondary Option: Change Starting State */}
           <div className="mt-3 flex items-center justify-center gap-4 text-xs">
+            <button
+              type="button"
+              onClick={() => setCurrentStep('PICK_SPAWN')}
+              className="text-zinc-300 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer font-bold"
+            >
+              <Compass className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Change Starting State (36 States)</span>
+            </button>
+            <span className="text-zinc-600">·</span>
             <button
               type="button"
               onClick={() => setCurrentStep('CUSTOMIZE')}
               className="text-zinc-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer"
             >
-              <span>Optional: Customize Clothes or Pick Birth State First</span>
+              <span>Customize Character</span>
             </button>
           </div>
         </div>
       </div>
     );
   }
-
-
 
   // =========================================================================
   // STEP: Character Customizer
@@ -690,9 +681,11 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     return (
       <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-zinc-950 text-white overflow-y-auto overflow-x-hidden py-8">
         <SpawnStateSelector
+          initialStateId={pendingProfile.spawnStateId || signupStateId}
           onSelectState={handleSpawnSelected}
           userName={`${pendingProfile.firstName} ${pendingProfile.lastName}`}
           socialClass={pendingProfile.socialClass}
+          avatar={avatar}
         />
       </div>
     );
@@ -891,6 +884,33 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                 </div>
               </div>
 
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-zinc-300 block">Starting State (Birthplace)</label>
+                  <span className="text-[10px] text-emerald-400 font-mono font-bold">🇳🇬 36 States Only · No Canada</span>
+                </div>
+                <div className="relative">
+                  <MapPin className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    value={signupStateId}
+                    onChange={(e) => setSignupStateId(e.target.value)}
+                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all cursor-pointer"
+                  >
+                    {NIGERIA_36_STATES_ALPHABETICAL
+                      .filter((s) => s.id.toLowerCase() !== 'canada' && s.id.toLowerCase() !== 'international_canada')
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((state) => (
+                        <option key={state.id} value={state.id} className="bg-zinc-900 text-white">
+                          {state.name} State ({state.capital} - {state.zone})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <p className="text-[10px] text-zinc-400 mt-1">
+                  Which state do you want to start in? Select one of Nigeria's 36 states (Canada is travel only).
+                </p>
+              </div>
+
               {/* Status lottery notice */}
               <div className="p-3 bg-zinc-900/80 border border-emerald-500/20 rounded-xl text-[11px] text-zinc-300 space-y-1 shadow-inner">
                 <p className="font-bold text-emerald-300 flex items-center gap-1.5">
@@ -909,7 +929,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
               >
                 <span className="absolute inset-0 bg-white/30 -skew-x-12 translate-x-[-150%] animate-btn-shimmer" />
                 <span className="relative z-10 flex items-center justify-center gap-2">
-                  <span>Create Account & Roll Social Status</span>
+                  <span>Confirm Starting State &amp; Roll Status</span>
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </span>
               </button>

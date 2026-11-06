@@ -24,6 +24,7 @@ interface SpawnStateSelectorProps {
   playerName?: string;
   userName?: string;
   socialClass?: string;
+  initialStateId?: string;
   onSelectSpawn?: (state: StateData) => void;
   onSelectState?: (state: StateData) => void;
 }
@@ -33,6 +34,7 @@ export const SpawnStateSelector: React.FC<SpawnStateSelectorProps> = ({
   playerName,
   userName,
   socialClass,
+  initialStateId,
   onSelectSpawn,
   onSelectState,
 }) => {
@@ -48,12 +50,19 @@ export const SpawnStateSelector: React.FC<SpawnStateSelectorProps> = ({
     shoes: 'sneakers',
     accessory: 'none',
   };
-  // Sort states strictly alphabetically by name
+  // Strictly filter out Canada - ONLY the 36 Nigerian states (+ Abuja) allowed
   const sortedStates = useMemo(() => {
-    return [...NIGERIA_36_STATES_ALPHABETICAL].sort((a, b) => a.name.localeCompare(b.name));
+    return [...NIGERIA_36_STATES_ALPHABETICAL]
+      .filter((s) => s.id.toLowerCase() !== 'canada' && s.id.toLowerCase() !== 'international_canada')
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, []);
 
-  const [selectedStateId, setSelectedStateId] = useState<string>('lagos');
+  const [selectedStateId, setSelectedStateId] = useState<string>(() => {
+    if (initialStateId && initialStateId.toLowerCase() !== 'canada') {
+      return initialStateId;
+    }
+    return 'lagos';
+  });
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredStates = useMemo(() => {
@@ -78,20 +87,20 @@ export const SpawnStateSelector: React.FC<SpawnStateSelectorProps> = ({
       <div className="text-center mb-6">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-[11px] font-semibold text-emerald-300 shadow-sm mb-2">
           <Compass className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Step 3 of 3: Official Birthplace & Starting Spawn</span>
+          <span>Starting Location: 36 Nigerian States Only</span>
         </div>
         <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-          Pick Your Starting <span className="text-emerald-400">Nigerian State</span>
+          Which State Do You Want to <span className="text-emerald-400">Start In?</span>
         </h2>
-        <p className="text-xs text-zinc-400 max-w-md mx-auto mt-1">
-          Scroll through all 36 Nigerian states (+ FCT) in alphabetical order to select where your life journey begins.
+        <p className="text-xs text-zinc-300 max-w-lg mx-auto mt-1 font-medium">
+          Select one of the <strong className="text-emerald-400">36 Nigerian States</strong>. Only the 36 states are allowed for starting — Canada is international only!
         </p>
 
         {/* STUCK HERE WARNING BANNER */}
         <div className="mt-3 max-w-lg mx-auto p-2.5 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-300 text-xs flex items-center justify-center gap-2 text-left">
           <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
           <span>
-            <strong>Official Rule:</strong> Once you pick your spawn, you are <strong>stuck in that state</strong> until you earn funds to travel out!
+            <strong>Official Rule:</strong> You will spawn in your chosen state. You must stay and build your life there until you travel to other states or abroad!
           </span>
         </div>
       </div>
