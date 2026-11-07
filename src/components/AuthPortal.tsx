@@ -41,9 +41,9 @@ interface AuthPortalProps {
   triggerSound?: (type: 'coin' | 'alert' | 'stamp' | 'success') => void;
 }
 
-// Clean storage namespace for accounts
-const STORAGE_USERS_KEY = 'naija_life_citizens_v12_release';
-const STORAGE_SESSION_KEY = 'naija_life_active_citizen_v12_release';
+// Clean storage namespace for accounts (Fresh reset with multi-device server sync)
+export const STORAGE_USERS_KEY = 'naija_life_citizens_v14_pure';
+export const STORAGE_SESSION_KEY = 'naija_life_active_citizen_v14_pure';
 
 export function purgeAllLegacyAccounts(): void {
   try {
@@ -106,6 +106,42 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
   const initialSession = getStoredSession();
   const allStoredUsers = getStoredUsers();
   const [syncedUsers, setSyncedUsers] = useState<Record<string, { password: string; profile: UserProfile }>>(allStoredUsers);
+
+  // Synchronize with Naija Life server on load so accounts are available across all devices
+  useEffect(() => {
+    let isMounted = true;
+    const fetchServerAccounts = async () => {
+      try {
+        const res = await fetch('/api/auth/all-accounts');
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.citizens && typeof data.citizens === 'object') {
+            const localUsers = getStoredUsers();
+            const merged = { ...localUsers };
+            for (const [uKey, rec] of Object.entries(data.citizens)) {
+              const r = rec as { password?: string; profile?: UserProfile };
+              if (r?.profile) {
+                merged[uKey.toLowerCase().trim()] = {
+                  password: r.password || '',
+                  profile: r.profile,
+                };
+              }
+            }
+            if (isMounted) {
+              localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(merged));
+              setSyncedUsers(merged);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Server account sync fallback:', err);
+      }
+    };
+    fetchServerAccounts();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // ONLY show accounts that actually exist on THIS specific device (no fake test accounts)
   const deviceUserKeys = useMemo(() => {
@@ -315,8 +351,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
 
     // Check if username is already taken
     const existingUsers = getStoredUsers();
-    if (existingUsers[cleanUsername]) {
+    if (existingUsers[cleanUsername] || syncedUsers[cleanUsername]) {
       setErrorMessage(`Username "${signupUsername}" is already taken! Please choose another username.`);
+      triggerSound?.('alert');
+      return;
+    }
+
+    // Check if citizen full name (firstName + lastName) is already registered
+    const candidateFullName = `${firstName.trim().toLowerCase()} ${lastName.trim().toLowerCase()}`;
+    const allKnownUsers = { ...existingUsers, ...syncedUsers };
+    const isNameTaken = Object.values(allKnownUsers).some((u) => {
+      const f = u.profile?.firstName?.trim().toLowerCase() || '';
+      const l = u.profile?.lastName?.trim().toLowerCase() || '';
+      return `${f} ${l}` === candidateFullName;
+    });
+
+    if (isNameTaken) {
+      setErrorMessage(`Citizen name "${firstName.trim()} ${lastName.trim()}" is already in use! Citizen full names must be unique.`);
       triggerSound?.('alert');
       return;
     }
@@ -440,8 +491,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
 
     setPendingProfile(initialProfile);
     triggerSound?.('stamp');
-    // Prompt the user to pick which of the 36 states they want to start in!
-    setCurrentStep('PICK_SPAWN');
+    // Step 2: Proceed to Avatar Customization!
+    setCurrentStep('CUSTOMIZE');
   };
 
   // Direct Continue from Status Reveal straight into the map!
@@ -884,52 +935,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                 </div>
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-zinc-300 block">Starting State (Birthplace)</label>
-                  <span className="text-[10px] text-emerald-400 font-mono font-bold">🇳🇬 36 States Only · No Canada</span>
-                </div>
-                <div className="relative">
-                  <MapPin className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <select
-                    value={signupStateId}
-                    onChange={(e) => setSignupStateId(e.target.value)}
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all cursor-pointer"
-                  >
-                    {NIGERIA_36_STATES_ALPHABETICAL
-                      .filter((s) => s.id.toLowerCase() !== 'canada' && s.id.toLowerCase() !== 'international_canada')
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map((state) => (
-                        <option key={state.id} value={state.id} className="bg-zinc-900 text-white">
-                          {state.name} State ({state.capital} - {state.zone})
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <p className="text-[10px] text-zinc-400 mt-1">
-                  Which state do you want to start in? Select one of Nigeria's 36 states (Canada is travel only).
-                </p>
-              </div>
-
-              {/* Status lottery notice */}
-              <div className="p-3 bg-zinc-900/80 border border-emerald-500/20 rounded-xl text-[11px] text-zinc-300 space-y-1 shadow-inner">
-                <p className="font-bold text-emerald-300 flex items-center gap-1.5">
-                  <Crown className="w-3.5 h-3.5 text-amber-400 animate-bounce" />
-                  <span>Random Social Status Lottery on Birth:</span>
-                </p>
-                <p>• <strong className="text-emerald-400">Lapo (Poor):</strong> ₦50k-₦100k starter loan, Self-Contain Apt, iPhone X</p>
-                <p>• <strong className="text-blue-400">Mapo (Middle):</strong> ₦800k-₦1M starting funds, 4-Bedroom Flat, Samsung S24, 35% rent aid</p>
-                <p>• <strong className="text-amber-400">Nepo (Rich):</strong> ₦1.5M-₦3M starting wealth, Luxury Villa, iPhone 17 Pro Max, 100% rent aid</p>
-                <p className="text-[10px] text-amber-300/90 mt-0.5">• 👑 Game Owner starts with 999 Sextillion &amp; iPhone 18 Pro Max</p>
-              </div>
-
               <button
                 type="submit"
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:brightness-110 text-zinc-950 font-black text-sm tracking-wide shadow-xl shadow-emerald-500/30 transition-all cursor-pointer relative overflow-hidden group hover:scale-[1.01]"
               >
                 <span className="absolute inset-0 bg-white/30 -skew-x-12 translate-x-[-150%] animate-btn-shimmer" />
                 <span className="relative z-10 flex items-center justify-center gap-2">
-                  <span>Confirm Starting State &amp; Roll Status</span>
+                  <span>PROCEED TO AVATAR CUSTOMIZATION</span>
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </span>
               </button>

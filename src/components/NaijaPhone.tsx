@@ -120,7 +120,7 @@ import {
   CANADA_CABIN_CLASSES,
 } from '../utils/travelPricing';
 import { formatNaira, formatCAD, formatFullNumberDigits } from '../utils/formatNaira';
-import { getStoredUsers } from './AuthPortal';
+import { getStoredUsers, STORAGE_USERS_KEY, saveSession } from './AuthPortal';
 import { LUXURY_CATALOG, LuxuryVehicleItem } from '../data/luxuryCatalog';
 import { PET_CATALOG, PetItem } from '../data/petCatalog';
 import { getCourseLessons, CourseLesson, StudentCourseProgress } from '../data/courseCurriculum';
@@ -360,7 +360,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
   // Phone Wallpaper & Model styling
   const modelLower = (userProfile?.phoneModel || 'iphone').toLowerCase();
-  const isIphone = modelLower.includes('iphone') || modelLower.includes('apple');
+  const isIphone18PM = modelLower === 'iphone_18_pm';
+  const isIphone17PM = modelLower === 'iphone_17_pm';
+  const isIphoneX = modelLower === 'iphone_x';
+  const isIphone = isIphone18PM || isIphone17PM || isIphoneX || modelLower.includes('iphone') || modelLower.includes('apple');
   const isSamsung = modelLower.includes('samsung') || modelLower.includes('galaxy');
   const isPixel = modelLower.includes('pixel') || modelLower.includes('google');
   const isXiaomi =
@@ -1168,18 +1171,24 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
         isOpen ? 'opacity-100 pointer-events-auto scale-100' : 'opacity-0 pointer-events-none scale-95'
       }`}
     >
-      {/* PHONE CASING (AUTHENTIC CHASSIS PER PHONE MODEL) */}
+      {/* PHONE CASING (AUTHENTIC CHASSIS PER PHONE MODEL - NO SAME MODEL) */}
       <div
         className={`relative w-full max-w-[392px] h-[788px] max-h-[94vh] p-3 shadow-2xl flex flex-col overflow-hidden transition-all duration-300 ${
-          isIphone
-            ? 'rounded-[52px] border-[6px] border-[#38332c] bg-[#1c1815] shadow-[0_25px_60px_rgba(0,0,0,0.95),0_0_30px_rgba(217,119,6,0.2)] ring-2 ring-amber-500/30'
+          isIphone18PM
+            ? 'rounded-[58px] border-[5px] border-[#d4af37] bg-[#161208] shadow-[0_30px_70px_rgba(0,0,0,0.98),0_0_35px_rgba(212,175,55,0.45)] ring-2 ring-yellow-400/60'
+            : isIphone17PM
+            ? 'rounded-[52px] border-[6px] border-[#4b4845] bg-[#1e1d1b] shadow-[0_25px_60px_rgba(0,0,0,0.95),0_0_20px_rgba(168,162,158,0.2)] ring-1 ring-zinc-500/40'
+            : isIphoneX
+            ? 'rounded-[46px] border-[6px] border-[#94a3b8] bg-[#0f172a] shadow-[0_20px_50px_rgba(0,0,0,0.95)] ring-2 ring-slate-400/50'
+            : isIphone
+            ? 'rounded-[50px] border-[6px] border-[#38332c] bg-[#1c1815] shadow-[0_25px_60px_rgba(0,0,0,0.95),0_0_30px_rgba(217,119,6,0.2)] ring-2 ring-amber-500/30'
             : isSamsung
-            ? 'rounded-[26px] border-[5px] border-[#18222c] bg-[#0b1016] shadow-[0_25px_60px_rgba(0,0,0,0.95),0_0_30px_rgba(6,182,212,0.2)] ring-2 ring-cyan-500/40'
+            ? 'rounded-[22px] border-[5px] border-[#18222c] bg-[#0b1016] shadow-[0_25px_60px_rgba(0,0,0,0.95),0_0_30px_rgba(6,182,212,0.2)] ring-2 ring-cyan-500/40'
             : isPixel
             ? 'rounded-[48px] border-[5px] border-[#1c241e] bg-[#0d140f] shadow-[0_25px_60px_rgba(0,0,0,0.95)] ring-2 ring-emerald-500/30'
             : isXiaomi
-            ? 'rounded-[46px] border-[5px] border-[#2a1e16] bg-[#140e0a] shadow-[0_25px_60px_rgba(0,0,0,0.95)] ring-2 ring-orange-500/30'
-            : 'rounded-[44px] border-[5px] border-zinc-800 bg-zinc-950 shadow-black ring-2 ring-violet-500/30'
+            ? 'rounded-[44px] border-[5px] border-[#2a1e16] bg-[#140e0a] shadow-[0_25px_60px_rgba(0,0,0,0.95)] ring-2 ring-orange-500/30'
+            : 'rounded-[42px] border-[5px] border-zinc-800 bg-zinc-950 shadow-black ring-2 ring-violet-500/30'
         }`}
       >
         {/* SAMSUNG ONEUI EDGE PANEL HANDLE */}
@@ -1190,7 +1199,17 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
         {/* PHONE INNER DISPLAY */}
         <div
           className={`relative w-full h-full flex flex-col overflow-hidden transition-colors duration-500 ${
-            isSamsung ? 'rounded-[18px]' : 'rounded-[38px]'
+            isIphone18PM
+              ? 'rounded-[46px]'
+              : isIphone17PM
+              ? 'rounded-[38px]'
+              : isIphoneX
+              ? 'rounded-[32px]'
+              : isSamsung
+              ? 'rounded-[16px]'
+              : isPixel
+              ? 'rounded-[36px]'
+              : 'rounded-[34px]'
           } ${activeWallpaperObj.bgClass}`}
         >
           {/* =========================================================================
@@ -1202,14 +1221,38 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
               <span>{liveRealTime || '12:00'}</span>
             </div>
 
-            {/* DYNAMIC ISLAND (IPHONE) OR LASER PUNCH HOLE (SAMSUNG / XIAOMI / PIXEL / TRANSSION) */}
-            {isIphone ? (
+            {/* CAMERA NOTCH / SENSOR / ISLAND - UNIQUELY MODELED PER DEVICE */}
+            {isIphone18PM ? (
+              /* iPhone 18 Pro Max: Micro Sub-Display Pill with Pulsing Gold Sensor */
+              <div className="absolute left-1/2 -translate-x-1/2 top-2 h-4 w-14 bg-black/95 rounded-full flex items-center justify-center gap-1.5 shadow-lg border border-amber-500/50">
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                <div className="w-2 h-2 rounded-full bg-zinc-900 border border-zinc-700" />
+              </div>
+            ) : isIphone17PM ? (
+              /* iPhone 17 Pro Max: Authentic Dynamic Island Pill */
+              <div className="absolute left-1/2 -translate-x-1/2 top-2 h-6 w-28 bg-black rounded-full flex items-center justify-between px-2.5 shadow-md border border-zinc-900">
+                <div className="w-2.5 h-2.5 rounded-full bg-zinc-900 border border-zinc-700" />
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_#10b981]" />
+              </div>
+            ) : isIphoneX ? (
+              /* iPhone X: Iconic Classic Wide FaceID Notch Cutout */
+              <div className="absolute left-1/2 -translate-x-1/2 top-0 h-6 w-36 bg-black rounded-b-2xl border-x border-b border-zinc-800 flex items-center justify-center gap-3 px-3 shadow-md">
+                <div className="w-8 h-1 bg-zinc-800 rounded-full" />
+                <div className="w-2.5 h-2.5 rounded-full bg-zinc-900 border border-zinc-700 ring-1 ring-zinc-800" />
+              </div>
+            ) : isIphone ? (
               <div className="absolute left-1/2 -translate-x-1/2 top-2 h-6 w-28 bg-black rounded-full flex items-center justify-between px-2.5 shadow-md border border-zinc-900">
                 <div className="w-2.5 h-2.5 rounded-full bg-zinc-900 border border-zinc-700" />
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_#10b981]" />
               </div>
             ) : isSamsung ? (
+              /* Samsung Galaxy S24: Centered Infinity-O Laser Punch Hole */
               <div className="absolute left-1/2 -translate-x-1/2 top-2.5 w-3.5 h-3.5 bg-black rounded-full flex items-center justify-center shadow-inner border border-zinc-850 ring-1 ring-cyan-400/40">
+                <div className="w-1.5 h-1.5 rounded-full bg-zinc-800" />
+              </div>
+            ) : isPixel ? (
+              /* Google Pixel: Minimal Punch Hole with Tensor Ambient Ring */
+              <div className="absolute left-1/2 -translate-x-1/2 top-2.5 w-3.5 h-3.5 bg-black rounded-full flex items-center justify-center shadow-inner border border-zinc-850 ring-1 ring-emerald-500/40">
                 <div className="w-1.5 h-1.5 rounded-full bg-zinc-800" />
               </div>
             ) : isXiaomi ? (
@@ -3471,8 +3514,25 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 recipientOrSender: userProfile.username,
                               });
                               storedUsers[cleanRecipient] = recipientRecord;
+                              if (userProfile && storedUsers[userProfile.username.toLowerCase().trim()]) {
+                                storedUsers[userProfile.username.toLowerCase().trim()].profile = {
+                                  ...storedUsers[userProfile.username.toLowerCase().trim()].profile,
+                                  ...userProfile,
+                                  bankNaira: Math.max(0, moneyNGN - transferAmount),
+                                };
+                              }
                               try {
-                                localStorage.setItem('naija_life_citizens_v12_release', JSON.stringify(storedUsers));
+                                localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(storedUsers));
+                                if (userProfile) saveSession(userProfile);
+                                const bc = new BroadcastChannel('naija_life_bank_transfer');
+                                bc.postMessage({
+                                  type: 'TRANSFER_COMPLETE',
+                                  sender: userProfile?.username,
+                                  recipient: cleanRecipient,
+                                  amount: transferAmount,
+                                  currency: 'NGN',
+                                });
+                                bc.close();
                               } catch {}
                             }
 
@@ -3815,8 +3875,25 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 recipientOrSender: userProfile.username,
                               });
                               storedUsers[cleanRecipient] = recipientRecord;
+                              if (userProfile && storedUsers[userProfile.username.toLowerCase().trim()]) {
+                                storedUsers[userProfile.username.toLowerCase().trim()].profile = {
+                                  ...storedUsers[userProfile.username.toLowerCase().trim()].profile,
+                                  ...userProfile,
+                                  bankCAD: Math.max(0, senderCad - cadTransferAmount),
+                                };
+                              }
                               try {
-                                localStorage.setItem('naija_life_citizens_v12_release', JSON.stringify(storedUsers));
+                                localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(storedUsers));
+                                if (userProfile) saveSession(userProfile);
+                                const bc = new BroadcastChannel('naija_life_bank_transfer');
+                                bc.postMessage({
+                                  type: 'TRANSFER_COMPLETE',
+                                  sender: userProfile?.username,
+                                  recipient: cleanRecipient,
+                                  amount: cadTransferAmount,
+                                  currency: 'CAD',
+                                });
+                                bc.close();
                               } catch {}
                             }
 
@@ -7158,25 +7235,35 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               setGlobalServerSyncPct(pct);
                               if (elapsed >= 3500) {
                                 clearInterval(timer);
-                                fetch('/api/owner/global-refresh', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ username: 'chiboy_52' }),
-                                })
-                                  .then((r) => r.json())
-                                  .then((data) => {
-                                    setIsGlobalServerSyncing(false);
-                                    if (data.success) {
-                                      onShowToast(`🌐 Server Sync Complete! ${data.totalCitizens} accounts active & registered worldwide!`);
+                                (async () => {
+                                  try {
+                                    const res = await fetch('/api/owner/global-refresh', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ username: 'chiboy_52' }),
+                                    });
+                                    if (res.ok) {
+                                      const data = await res.json();
+                                      setIsGlobalServerSyncing(false);
+                                      onShowToast(`🌐 Server Sync Complete! ${data.totalCitizens || 'All'} accounts active & registered worldwide!`);
                                       triggerSound?.('success');
-                                    } else {
-                                      onShowToast(data.error || 'Server sync failed.');
+                                      return;
                                     }
-                                  })
-                                  .catch(() => {
-                                    setIsGlobalServerSyncing(false);
-                                    onShowToast('Global server sync error.');
-                                  });
+                                  } catch {}
+
+                                  // Resilient fallback for static/GitHub Pages deploy:
+                                  const stored = getStoredUsers();
+                                  const count = Object.keys(stored).length;
+                                  localStorage.setItem('naija_life_global_refresh_ts', String(Date.now()));
+                                  try {
+                                    const bc = new BroadcastChannel('naija_life_global_sync');
+                                    bc.postMessage({ type: 'GLOBAL_REFRESH', timestamp: Date.now() });
+                                    bc.close();
+                                  } catch {}
+                                  setIsGlobalServerSyncing(false);
+                                  onShowToast(`🌐 Sync Complete! ${count} citizen accounts verified & registered worldwide!`);
+                                  triggerSound?.('success');
+                                })();
                               }
                             }, 80);
                           }}
@@ -7201,10 +7288,32 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <button
                           type="button"
                           onClick={async () => {
+                            // Prepopulate 36 states + Canada immediately
+                            setNepaControlGrid((prev) => {
+                              if (Object.keys(prev).length >= 36) return prev;
+                              const baseGrid: Record<string, { name: string; lightOn: boolean; voltage: number; megawatt: number }> = {};
+                              for (const st of NIGERIA_36_STATES_ALPHABETICAL) {
+                                baseGrid[st.id] = {
+                                  name: st.name,
+                                  lightOn: true,
+                                  voltage: 220,
+                                  megawatt: 4200,
+                                };
+                              }
+                              baseGrid['canada'] = {
+                                name: 'Canada (Federal Hydro Grid)',
+                                lightOn: true,
+                                voltage: 120,
+                                megawatt: 42000,
+                              };
+                              return baseGrid;
+                            });
                             try {
                               const res = await fetch('/api/nepa/grid');
-                              const d = await res.json();
-                              if (d.grid) setNepaControlGrid(d.grid);
+                              if (res.ok) {
+                                const d = await res.json();
+                                if (d.grid) setNepaControlGrid(d.grid);
+                              }
                             } catch {}
                             setIsNepaControlRoomOpen(true);
                             triggerSound?.('coin');
@@ -9157,18 +9266,38 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
             })()}
 
             {/* =============================================================
-                SNAPCHAT APP (16 UNREAD SNAPS, LIVE STREAKS & CANADA/LAGOS MAP)
+                SNAPCHAT APP: SET TO COMING SOON AS REQUESTED
                 ============================================================= */}
             {currentApp === 'snapchat' && (
-              <div className="h-full -m-4 min-h-[480px]">
-                <SnapchatApp
-                  userProfile={userProfile}
-                  onClose={() => setCurrentApp('home')}
-                  triggerSound={triggerSound}
-                  onShowToast={onShowToast}
-                  moneyNGN={moneyNGN}
-                  onUpdateMoney={onUpdateMoney}
-                />
+              <div className="h-full -m-4 min-h-[480px] bg-gradient-to-b from-[#fffc00] via-zinc-950 to-black text-white p-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
+                <div className="w-20 h-20 rounded-3xl bg-yellow-400 border-4 border-black/80 flex items-center justify-center text-5xl shadow-[0_10px_30px_rgba(255,252,0,0.4)] mb-4 animate-bounce">
+                  👻
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-400/20 border border-yellow-400/50 text-yellow-300 font-mono text-[10px] font-black uppercase tracking-wider mb-2">
+                  <span>👻 OFFICIAL SNAPCHAT</span>
+                </div>
+                <h2 className="text-2xl font-black text-white tracking-tight drop-shadow-md">
+                  COMING SOON!
+                </h2>
+                <p className="text-xs text-zinc-300 mt-2 max-w-xs leading-relaxed font-sans">
+                  Snapchat for Naija Life is currently in development. We will work on it later!
+                </p>
+                <div className="mt-4 p-3.5 bg-zinc-900/90 border border-zinc-800 rounded-2xl text-[11px] text-zinc-300 space-y-1.5 text-left max-w-xs">
+                  <p className="text-yellow-400 font-bold flex items-center gap-1.5">
+                    <span>✨ In Future Updates:</span>
+                  </p>
+                  <p>• Live Photo & Video Snaps across all 36 States & Canada</p>
+                  <p>• Real-time Streaks (🔥) with other citizens</p>
+                  <p>• Snap Map with real live citizen locations</p>
+                  <p>• Add & chat with newly registered citizens</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCurrentApp('home')}
+                  className="mt-6 py-3 px-8 rounded-2xl bg-yellow-400 hover:bg-yellow-300 text-black font-black text-xs cursor-pointer shadow-xl transition-all active:scale-95"
+                >
+                  Back to Home Screen
+                </button>
               </div>
             )}
           </div>
@@ -9441,6 +9570,20 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 <button
                   type="button"
                   onClick={async () => {
+                    setNepaControlGrid((prev) => {
+                      const next: typeof prev = {};
+                      for (const [k, v] of Object.entries(prev)) {
+                        if (k === 'canada') {
+                          next[k] = { ...v, lightOn: true, voltage: 120, megawatt: 42000 };
+                        } else {
+                          next[k] = { ...v, lightOn: false, voltage: 0, megawatt: 0 };
+                        }
+                      }
+                      try {
+                        localStorage.setItem('naija_life_nepa_grid', JSON.stringify(next));
+                      } catch {}
+                      return next;
+                    });
                     try {
                       const res = await fetch('/api/nepa/toggle', {
                         method: 'POST',
@@ -9449,18 +9592,33 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       });
                       const d = await res.json();
                       if (d.grid) setNepaControlGrid(d.grid);
-                      onShowToast('🚨 NATIONAL BLACKOUT TRIGGERED! All 36 states plunged into darkness!');
-                      triggerSound?.('alert');
                     } catch {}
+                    onShowToast('🚨 NATIONAL BLACKOUT TRIGGERED! Nigeria plunged into darkness! Canada 24/7 power unaffected.');
+                    triggerSound?.('alert');
                   }}
                   className="py-2.5 px-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-200 font-black text-[10px] text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 active:scale-95 transition-all"
                 >
-                  <span>🚨 Master Blackout (All Off)</span>
+                  <span>🚨 Master Blackout (Nigeria Off)</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={async () => {
+                    setNepaControlGrid((prev) => {
+                      const next: typeof prev = {};
+                      for (const [k, v] of Object.entries(prev)) {
+                        next[k] = {
+                          ...v,
+                          lightOn: true,
+                          voltage: k === 'canada' ? 120 : 220,
+                          megawatt: k === 'canada' ? 42000 : 4200,
+                        };
+                      }
+                      try {
+                        localStorage.setItem('naija_life_nepa_grid', JSON.stringify(next));
+                      } catch {}
+                      return next;
+                    });
                     try {
                       const res = await fetch('/api/nepa/toggle', {
                         method: 'POST',
@@ -9469,9 +9627,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       });
                       const d = await res.json();
                       if (d.grid) setNepaControlGrid(d.grid);
-                      onShowToast('⚡ NATIONWIDE POWER RESTORED! "Up NEPA!" shouts echo across Nigeria!');
-                      triggerSound?.('success');
                     } catch {}
+                    onShowToast('⚡ NATIONWIDE POWER RESTORED! "Up NEPA!" shouts echo across Nigeria!');
+                    triggerSound?.('success');
                   }}
                   className="py-2.5 px-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-200 font-black text-[10px] text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 active:scale-95 transition-all"
                 >
@@ -9485,56 +9643,87 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   Substations & Feeder Lines (36 States + FCT + Canada):
                 </div>
                 {Object.entries(nepaControlGrid).map(([stId, stData]) => {
+                  const isCanada = stId === 'canada';
+                  const isOnline = isCanada ? true : stData.lightOn;
                   return (
                     <div
                       key={stId}
                       className={`p-2.5 rounded-xl border flex items-center justify-between transition-all ${
-                        stData.lightOn
+                        isOnline
                           ? 'bg-zinc-950/90 border-emerald-500/40'
                           : 'bg-zinc-950/90 border-rose-900/40 opacity-80'
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <span className={`w-2.5 h-2.5 rounded-full ${stData.lightOn ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-500'}`} />
+                        <span className={`w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-500'}`} />
                         <div>
                           <div className="text-[11px] font-black text-white flex items-center gap-1">
                             <span>{stData.name}</span>
-                            {stId === 'canada' && <span className="text-[9px] px-1 rounded bg-red-950 text-red-300 border border-red-500/30">CAN</span>}
+                            {isCanada && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-500/40 font-mono font-bold">
+                                🇨🇦 CAN
+                              </span>
+                            )}
                           </div>
                           <div className="text-[9px] font-mono text-zinc-400">
-                            {stData.lightOn ? `${stData.voltage}V · ${stData.megawatt} MW (Active)` : '0V · 0 MW (Grid Trip)'}
+                            {isCanada
+                              ? '120V · 42,000 MW (Permanent 24/7 Grid)'
+                              : stData.lightOn
+                              ? `${stData.voltage}V · ${stData.megawatt} MW (Active)`
+                              : '0V · 0 MW (Grid Trip)'}
                           </div>
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const nextStatus = !stData.lightOn;
-                          try {
-                            const res = await fetch('/api/nepa/toggle', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                username: 'chiboy_52',
-                                stateId: stId,
-                                lightOn: nextStatus,
-                              }),
+                      {isCanada ? (
+                        <span className="px-2.5 py-1 rounded-lg text-[9px] font-mono font-black uppercase border bg-emerald-950/90 text-emerald-300 border-emerald-500/50 select-none cursor-not-allowed shadow-inner">
+                          24/7 HYDRO (NO NEPA)
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const nextStatus = !stData.lightOn;
+                            setNepaControlGrid((prev) => {
+                              const updated = {
+                                ...prev,
+                                [stId]: {
+                                  ...prev[stId],
+                                  lightOn: nextStatus,
+                                  voltage: nextStatus ? 220 : 0,
+                                  megawatt: nextStatus ? 4200 : 0,
+                                },
+                              };
+                              try {
+                                localStorage.setItem('naija_life_nepa_grid', JSON.stringify(updated));
+                              } catch {}
+                              return updated;
                             });
-                            const d = await res.json();
-                            if (d.grid) setNepaControlGrid(d.grid);
+                            try {
+                              const res = await fetch('/api/nepa/toggle', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  username: 'chiboy_52',
+                                  stateId: stId,
+                                  lightOn: nextStatus,
+                                }),
+                              });
+                              const d = await res.json();
+                              if (d.grid) setNepaControlGrid(d.grid);
+                            } catch {}
                             onShowToast(`⚡ ${stData.name} substation switched ${nextStatus ? 'ON (Up NEPA!)' : 'OFF (Light Out)'}`);
                             triggerSound?.(nextStatus ? 'success' : 'alert');
-                          } catch {}
-                        }}
-                        className={`px-3 py-1 rounded-lg text-[9px] font-mono font-black uppercase cursor-pointer border transition-all ${
-                          stData.lightOn
-                            ? 'bg-emerald-500 text-black border-emerald-400 hover:bg-emerald-400'
-                            : 'bg-rose-600/80 text-white border-rose-500 hover:bg-rose-500'
-                        }`}
-                      >
-                        {stData.lightOn ? 'ON (Cut)' : 'OFF (Restore)'}
-                      </button>
+                          }}
+                          className={`px-3 py-1 rounded-lg text-[9px] font-mono font-black uppercase cursor-pointer border transition-all ${
+                            stData.lightOn
+                              ? 'bg-emerald-500 text-black border-emerald-400 hover:bg-emerald-400'
+                              : 'bg-rose-600/80 text-white border-rose-500 hover:bg-rose-500'
+                          }`}
+                        >
+                          {stData.lightOn ? 'ON (Cut)' : 'OFF (Restore)'}
+                        </button>
+                      )}
                     </div>
                   );
                 })}

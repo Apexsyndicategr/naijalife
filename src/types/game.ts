@@ -16,6 +16,7 @@ export interface CharacterAvatar {
   shoes?: 'sneakers' | 'loafers' | 'sandals' | 'boots' | 'heels';
   shoesColor?: string;
   accessory: 'none' | 'sunglasses' | 'gold_chain' | 'fila_cap' | 'designer_shades' | 'coral_beads' | 'rolex_watch' | 'diamond_chain';
+  height?: 'short' | 'average' | 'tall' | 'towering';
 }
 
 export interface UserDocument {

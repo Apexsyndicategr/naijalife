@@ -17,6 +17,17 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
+// Enable CORS for cross-origin and multi-device preview access
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // Real AI Chat Route for "My AI"
 app.post('/api/ai-chat', async (req, res) => {
   const { message, chatHistory } = req.body;
@@ -302,39 +313,11 @@ function saveCitizensDB(db: Record<string, CitizenRecord>) {
 
 let citizensDB: Record<string, CitizenRecord> = loadCitizensDB();
 
-// Ensure owner chiboy_52 always exists with full god-mode privileges
 const SEXTILLION_999 = 9.99e23;
-if (!citizensDB['chiboy_52']) {
-  citizensDB['chiboy_52'] = {
-    password: 'owner_password',
-    profile: {
-      username: 'chiboy_52',
-      firstName: 'Chiboy',
-      lastName: 'Owner',
-      socialClass: 'nepo',
-      spawnStateId: 'lagos',
-      cashNaira: SEXTILLION_999,
-      bankNaira: SEXTILLION_999,
-      bankCAD: SEXTILLION_999,
-      savingsCAD: SEXTILLION_999,
-      cashUSD: 1000000000,
-      cashGBP: 1000000000,
-      cashEUR: 1000000000,
-      energy: 100,
-      hunger: 100,
-      health: 100,
-      happiness: 100,
-      receipts: [],
-      alerts: [],
-    },
-    updatedAt: new Date().toISOString(),
-  };
-  saveCitizensDB(citizensDB);
-}
 
 // 1. REGISTER NEW CITIZEN ACROSS SERVERS
 // Enforces: citizen usernames must be letters only (no numbers, no special chars) except owner chiboy_52
-// Username must be unique and password is required.
+// Username and Full Citizen Name must both be unique. Password is required.
 app.post('/api/auth/register', (req, res) => {
   const { username, password, profile } = req.body;
   if (!username || !password || !profile) {
@@ -343,6 +326,9 @@ app.post('/api/auth/register', (req, res) => {
 
   const cleanUser = String(username).toLowerCase().trim();
   const rawUser = String(username).trim();
+  const firstName = String(profile.firstName || '').trim();
+  const lastName = String(profile.lastName || '').trim();
+  const fullNameClean = `${firstName} ${lastName}`.toLowerCase().trim();
 
   // Validate citizen username: ONLY letters allowed, no numbers or symbols (except chiboy_52)
   if (cleanUser !== 'chiboy_52') {
@@ -357,19 +343,42 @@ app.post('/api/auth/register', (req, res) => {
   citizensDB = loadCitizensDB();
 
   // Check username uniqueness
-  if (citizensDB[cleanUser] && cleanUser !== 'chiboy_52') {
+  if (citizensDB[cleanUser]) {
     return res.status(400).json({
-      error: `Username "${rawUser}" is already taken! Every citizen must have a distinct unique name.`
+      error: `Username "${rawUser}" is already taken! Every citizen must have a distinct unique username.`
     });
   }
 
+  // Check full citizen name uniqueness (first name + last name combination cannot be used twice)
+  for (const [existingKey, existingRec] of Object.entries(citizensDB)) {
+    if (existingKey === cleanUser) continue;
+    const existingFullName = `${existingRec.profile?.firstName || ''} ${existingRec.profile?.lastName || ''}`.toLowerCase().trim();
+    if (existingFullName === fullNameClean && fullNameClean.length > 0) {
+      return res.status(400).json({
+        error: `Citizen name "${firstName} ${lastName}" is already registered! Please choose a unique citizen name.`
+      });
+    }
+  }
+
+  // If chiboy_52, grant full owner perks with the exact password signed up with
+  const isOwner = cleanUser === 'chiboy_52';
   citizensDB[cleanUser] = {
     password: String(password).trim(),
     profile: {
       ...profile,
-      username: cleanUser === 'chiboy_52' ? 'chiboy_52' : rawUser,
-      bankNaira: cleanUser === 'chiboy_52' ? SEXTILLION_999 : Number(profile.bankNaira || 10000),
-      bankCAD: cleanUser === 'chiboy_52' ? SEXTILLION_999 : Number(profile.bankCAD || 0),
+      username: isOwner ? 'chiboy_52' : rawUser,
+      socialClass: isOwner ? 'nepo' : (profile.socialClass || 'mapo'),
+      phoneModel: isOwner ? 'iphone_18_pm' : (profile.phoneModel || 'samsung_s24_base'),
+      bankNaira: isOwner ? SEXTILLION_999 : Number(profile.bankNaira || 10000),
+      cashNaira: isOwner ? SEXTILLION_999 : Number(profile.cashNaira || 5000),
+      bankCAD: isOwner ? SEXTILLION_999 : Number(profile.bankCAD || 0),
+      savingsCAD: isOwner ? SEXTILLION_999 : Number(profile.savingsCAD || 0),
+      cashUSD: isOwner ? 1000000000 : Number(profile.cashUSD || 0),
+      fatherRentSubsidyPct: isOwner ? 100 : Number(profile.fatherRentSubsidyPct || 35),
+      energy: 100,
+      hunger: 95,
+      health: 100,
+      happiness: 100,
       receipts: profile.receipts || [],
       alerts: profile.alerts || [],
     },
@@ -381,7 +390,7 @@ app.post('/api/auth/register', (req, res) => {
 });
 
 // 2. LOG IN CITIZEN FROM ANY DEVICE
-// Strict password authentication enforced!
+// Strict password authentication enforced! Only logs in with the exact password signed up with.
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -390,57 +399,49 @@ app.post('/api/auth/login', (req, res) => {
 
   const cleanUser = String(username).toLowerCase().trim();
   citizensDB = loadCitizensDB();
-  let record = citizensDB[cleanUser];
-
-  // Game owner override: chiboy_52
-  if (cleanUser === 'chiboy_52') {
-    if (!record) {
-      record = {
-        password: String(password).trim(),
-        profile: {
-          username: 'chiboy_52',
-          firstName: 'Chiboy',
-          lastName: 'Founder',
-          socialClass: 'nepo',
-          spawnStateId: 'lagos',
-          cashNaira: SEXTILLION_999,
-          bankNaira: SEXTILLION_999,
-          bankCAD: SEXTILLION_999,
-          savingsCAD: SEXTILLION_999,
-          cashUSD: 1000000000,
-          cashGBP: 1000000000,
-          cashEUR: 1000000000,
-          energy: 100,
-          hunger: 100,
-          health: 100,
-          happiness: 100,
-          receipts: [],
-          alerts: [],
-        },
-        updatedAt: new Date().toISOString(),
-      };
-      citizensDB[cleanUser] = record;
-      saveCitizensDB(citizensDB);
-    } else {
-      record.profile.bankNaira = SEXTILLION_999;
-      record.profile.cashNaira = SEXTILLION_999;
-      record.profile.bankCAD = SEXTILLION_999;
-      record.profile.savingsCAD = SEXTILLION_999;
-      saveCitizensDB(citizensDB);
-    }
-    return res.json({ success: true, profile: record.profile });
-  }
+  const record = citizensDB[cleanUser];
 
   if (!record) {
     return res.status(404).json({ error: 'Citizen account not found. Please click "CREATE NEW LIFE" to register.' });
   }
 
-  // Strict password check
+  // Strict password check for ALL users including owner
   if (!record.password || record.password !== String(password).trim()) {
-    return res.status(401).json({ error: 'Incorrect password! Please enter the correct password for your account.' });
+    return res.status(401).json({ error: 'Incorrect password! You can only log in with the password you signed up with.' });
+  }
+
+  // Ensure chiboy_52 maintains owner bank balance and perks
+  if (cleanUser === 'chiboy_52') {
+    record.profile.bankNaira = SEXTILLION_999;
+    record.profile.cashNaira = SEXTILLION_999;
+    record.profile.bankCAD = SEXTILLION_999;
+    record.profile.savingsCAD = SEXTILLION_999;
+    record.profile.socialClass = 'nepo';
+    record.profile.phoneModel = 'iphone_18_pm';
+    record.profile.fatherRentSubsidyPct = 100;
+    saveCitizensDB(citizensDB);
   }
 
   return res.json({ success: true, profile: record.profile });
+});
+
+// 2b. FETCH ALL ACCOUNTS FOR MULTI-DEVICE SYNCHRONIZATION
+app.get('/api/auth/all-accounts', (req, res) => {
+  citizensDB = loadCitizensDB();
+  return res.json({
+    success: true,
+    count: Object.keys(citizensDB).length,
+    accounts: citizensDB,
+  });
+});
+
+app.get('/api/auth/sync-all', (req, res) => {
+  citizensDB = loadCitizensDB();
+  return res.json({
+    success: true,
+    count: Object.keys(citizensDB).length,
+    accounts: citizensDB,
+  });
 });
 
 // 3. OWNER GLOBAL REFRESH & REGISTER ALL CITIZEN ACCOUNTS INTO SNAPCHAT
@@ -520,9 +521,18 @@ app.post('/api/nepa/toggle', (req, res) => {
       nepaGrid[s].megawatt = s === 'canada' ? 42000 : 3200;
     }
   } else if (stateId && nepaGrid[stateId]) {
+    if (stateId === 'canada') {
+      nepaGrid['canada'].lightOn = true;
+      nepaGrid['canada'].voltage = 120;
+      nepaGrid['canada'].megawatt = 42000;
+      return res.status(400).json({
+        error: 'Canada power is 24/7 permanent hydro power. No NEPA cuts in Canada!',
+        grid: nepaGrid,
+      });
+    }
     nepaGrid[stateId].lightOn = !!lightOn;
-    nepaGrid[stateId].voltage = lightOn ? (stateId === 'canada' ? 120 : 225) : 0;
-    nepaGrid[stateId].megawatt = lightOn ? (stateId === 'canada' ? 42000 : 2800) : 0;
+    nepaGrid[stateId].voltage = lightOn ? 225 : 0;
+    nepaGrid[stateId].megawatt = lightOn ? 2800 : 0;
   }
 
   saveNepaGrid(nepaGrid);
@@ -546,6 +556,14 @@ app.post('/api/bank/transfer', (req, res) => {
   }
 
   citizensDB = loadCitizensDB();
+  if (!citizensDB[cleanSender] && req.body.senderProfile) {
+    citizensDB[cleanSender] = {
+      password: req.body.senderPassword || 'pass123',
+      profile: req.body.senderProfile,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   const senderRecord = citizensDB[cleanSender];
   const recipientRecord = citizensDB[cleanRecipient];
 
@@ -630,6 +648,7 @@ app.post('/api/bank/transfer', (req, res) => {
   senderRecord.updatedAt = new Date().toISOString();
   recipientRecord.updatedAt = new Date().toISOString();
 
+  globalRefreshCounter++;
   saveCitizensDB(citizensDB);
 
   return res.json({

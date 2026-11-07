@@ -82,9 +82,11 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
           {/* Ground shadow */}
           <ellipse cx="60" cy="222" rx="36" ry="6" fill="#000000" fillOpacity="0.4" />
 
-          {/* ========================================================
-              LEGS & PANTS (Full Body with stepping rotation)
-              ======================================================== */}
+          {/* Character height scaling group */}
+          <g style={{ transformOrigin: '60px 220px', transform: safeAvatar.height === 'short' ? 'scale(0.92, 0.90)' : safeAvatar.height === 'tall' ? 'scale(1.02, 1.05)' : safeAvatar.height === 'towering' ? 'scale(1.04, 1.10)' : 'scale(1, 1)' }}>
+            {/* ========================================================
+                LEGS & PANTS (Full Body with stepping rotation)
+                ======================================================== */}
           {/* Left Leg & Shoe Group */}
           <g style={{ transformOrigin: '50px 136px', animation: isWalking ? 'walkLegL 0.42s ease-in-out infinite' : 'none' }}>
             <rect
@@ -343,6 +345,7 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
               <line x1="58" y1="38" x2="62" y2="38" stroke="#fbbf24" strokeWidth="1.5" />
             </g>
           )}
+          </g>
           </g>
         </svg>
       ) : (

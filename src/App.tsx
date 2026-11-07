@@ -1268,9 +1268,14 @@ export default function App() {
     if (audio) {
       audio.loop = true;
       audio.onended = () => {
-        // Enforce indefinite continuous loop
         audio.currentTime = 0;
-        if (!isMusicMuted) {
+        if (!isMusicMuted && currentAudioSrcRef.current) {
+          audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
+        }
+      };
+      audio.onpause = () => {
+        // Prevent browser from automatically killing music playback after idle
+        if (!isMusicMuted && currentAudioSrcRef.current && !audio.ended) {
           audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
         }
       };
@@ -1280,28 +1285,40 @@ export default function App() {
   useEffect(() => {
     const syncServerMusicAndGlobalState = async () => {
       try {
-        // 1. Sync broadcast soundtrack
-        const res = await fetch('/api/broadcast/music');
-        if (res.ok) {
-          const data = await res.json();
-          const audio = broadcastAudioRef.current;
-          if (data.active && data.audioData && audio) {
-            if (currentAudioSrcRef.current !== data.audioData) {
-              currentAudioSrcRef.current = data.audioData;
-              audio.src = data.audioData;
-              audio.loop = true;
-              if (!isMusicMuted) {
-                audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
-              }
-            } else if (!isMusicMuted && audio.paused) {
+        // 1. Sync broadcast soundtrack (Server first, localStorage fallback)
+        let activeAudioData = '';
+        try {
+          const res = await fetch('/api/broadcast/music');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.active && data.audioData) {
+              activeAudioData = data.audioData;
+            }
+          }
+        } catch {}
+
+        if (!activeAudioData && typeof window !== 'undefined') {
+          const localTrack = localStorage.getItem('naija_life_broadcast_track');
+          if (localTrack) activeAudioData = localTrack;
+        }
+
+        const audio = broadcastAudioRef.current;
+        if (activeAudioData && audio) {
+          if (currentAudioSrcRef.current !== activeAudioData) {
+            currentAudioSrcRef.current = activeAudioData;
+            audio.src = activeAudioData;
+            audio.loop = true;
+            if (!isMusicMuted) {
               audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
             }
-          } else if (!data.active && audio) {
-            currentAudioSrcRef.current = '';
-            audio.pause();
-            audio.src = '';
-            setIsBroadcastPlaying(false);
+          } else if (!isMusicMuted && audio.paused) {
+            audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
           }
+        } else if (!activeAudioData && audio && currentAudioSrcRef.current) {
+          currentAudioSrcRef.current = '';
+          audio.pause();
+          audio.src = '';
+          setIsBroadcastPlaying(false);
         }
 
         // 2. Poll global status to trigger server-wide state refresh if owner bumped globalRefreshCounter
@@ -1321,6 +1338,10 @@ export default function App() {
                   const updatedProfile = accData.citizens[cleanU].profile;
                   saveSession(updatedProfile);
                   setCurrentUser(updatedProfile);
+                  setWallet((w) => ({
+                    ...w,
+                    NGN: updatedProfile.bankNaira || w.NGN,
+                  }));
                 }
               }
             }
@@ -1331,8 +1352,50 @@ export default function App() {
 
     syncServerMusicAndGlobalState();
     const interval = setInterval(syncServerMusicAndGlobalState, 5000);
-    return () => clearInterval(interval);
-  }, [isMusicMuted]);
+
+    // Cross-tab / cross-device live event synchronization
+    let transferChannel: BroadcastChannel | null = null;
+    let globalChannel: BroadcastChannel | null = null;
+    try {
+      transferChannel = new BroadcastChannel('naija_life_bank_transfer');
+      transferChannel.onmessage = (evt) => {
+        if (evt.data?.recipient && currentUser) {
+          const cleanCur = currentUser.username.toLowerCase().trim();
+          const cleanRec = String(evt.data.recipient).toLowerCase().trim();
+          if (cleanCur === cleanRec) {
+            const addedAmount = Number(evt.data.amount) || 0;
+            const curr = evt.data.currency || 'NGN';
+            if (curr === 'CAD') {
+              setCurrentUser((prev) => prev ? { ...prev, bankCAD: (prev.bankCAD || 0) + addedAmount } : null);
+              showToast(`🔔 CREDIT ALERT: +$${addedAmount.toLocaleString()} CAD from @${evt.data.sender}!`);
+            } else {
+              setWallet((w) => ({ ...w, NGN: w.NGN + addedAmount }));
+              setCurrentUser((prev) => prev ? { ...prev, bankNaira: (prev.bankNaira || 0) + addedAmount } : null);
+              showToast(`🔔 CREDIT ALERT: +₦${addedAmount.toLocaleString()} NGN from @${evt.data.sender}!`);
+            }
+            triggerSound('coin');
+          }
+        }
+      };
+
+      globalChannel = new BroadcastChannel('naija_life_global_sync');
+      globalChannel.onmessage = () => {
+        const curSession = getStoredSession();
+        if (curSession) {
+          setCurrentUser(curSession);
+          setWallet((w) => ({ ...w, NGN: curSession.bankNaira || w.NGN }));
+        }
+      };
+    } catch {}
+
+    return () => {
+      clearInterval(interval);
+      try {
+        transferChannel?.close();
+        globalChannel?.close();
+      } catch {}
+    };
+  }, [isMusicMuted, currentUser]);
 
   const handleToggleMusicMute = () => {
     setIsMusicMuted((prev) => {
