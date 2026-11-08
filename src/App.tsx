@@ -1271,16 +1271,43 @@ export default function App() {
       audio.onended = () => {
         audio.currentTime = 0;
         if (!isMusicMuted && currentAudioSrcRef.current) {
-          audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
+          audio.play().catch(() => {
+            audio.load();
+            audio.play().catch(() => {});
+          });
         }
       };
-      audio.onpause = () => {
-        // Prevent browser from automatically killing music playback after idle
-        if (!isMusicMuted && currentAudioSrcRef.current && !audio.ended) {
-          audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
+      audio.onerror = () => {
+        // Stream glitch or network reconnect: reload audio and resume
+        if (!isMusicMuted && currentAudioSrcRef.current) {
+          setTimeout(() => {
+            if (audio && currentAudioSrcRef.current && !isMusicMuted) {
+              audio.src = currentAudioSrcRef.current;
+              audio.load();
+              audio.play().catch(() => {});
+            }
+          }, 800);
         }
       };
     }
+  }, [isMusicMuted]);
+
+  // Keep audio playing indefinitely on user interaction if browser tried to suspend it
+  useEffect(() => {
+    const resumeAudioIfIdle = () => {
+      const audio = broadcastAudioRef.current;
+      if (audio && currentAudioSrcRef.current && !isMusicMuted && audio.paused) {
+        audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
+      }
+    };
+    window.addEventListener('click', resumeAudioIfIdle, { passive: true });
+    window.addEventListener('touchstart', resumeAudioIfIdle, { passive: true });
+    window.addEventListener('keydown', resumeAudioIfIdle, { passive: true });
+    return () => {
+      window.removeEventListener('click', resumeAudioIfIdle);
+      window.removeEventListener('touchstart', resumeAudioIfIdle);
+      window.removeEventListener('keydown', resumeAudioIfIdle);
+    };
   }, [isMusicMuted]);
 
   useEffect(() => {
@@ -1293,7 +1320,8 @@ export default function App() {
           if (res.ok) {
             const data = await res.json();
             if (data.active) {
-              activeAudioData = data.streamUrl || data.audioData || '';
+              // Prefer audioData (self-contained data URL immune to socket timeout), with streamUrl fallback
+              activeAudioData = data.audioData || data.streamUrl || '';
             }
           }
         } catch {}
@@ -1335,8 +1363,9 @@ export default function App() {
               if (accRes.ok) {
                 const accData = await accRes.json();
                 const cleanU = curSession.username.toLowerCase().trim();
-                if (accData.citizens?.[cleanU]?.profile) {
-                  const updatedProfile = accData.citizens[cleanU].profile;
+                const allCitizens = accData.citizens || accData.accounts || {};
+                if (allCitizens[cleanU]?.profile) {
+                  const updatedProfile = allCitizens[cleanU].profile;
                   saveSession(updatedProfile);
                   setCurrentUser(updatedProfile);
                   setWallet((w) => ({

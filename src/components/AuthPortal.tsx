@@ -115,10 +115,11 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
         const res = await fetch('/api/auth/all-accounts');
         if (res.ok) {
           const data = await res.json();
-          if (data?.citizens && typeof data.citizens === 'object') {
+          const serverUsers = data?.citizens || data?.accounts;
+          if (serverUsers && typeof serverUsers === 'object') {
             const localUsers = getStoredUsers();
             const merged = { ...localUsers };
-            for (const [uKey, rec] of Object.entries(data.citizens)) {
+            for (const [uKey, rec] of Object.entries(serverUsers)) {
               const r = rec as { password?: string; profile?: UserProfile };
               if (r?.profile) {
                 merged[uKey.toLowerCase().trim()] = {

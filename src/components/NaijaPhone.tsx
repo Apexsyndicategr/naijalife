@@ -692,6 +692,46 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
     return fallbackList;
   };
 
+  // Live automatic synchronization of NEPA grid with server
+  useEffect(() => {
+    let isMounted = true;
+    const fetchNepa = async () => {
+      try {
+        const res = await fetch('/api/nepa/grid');
+        if (res.ok) {
+          const d = await res.json();
+          if (d.grid && isMounted) {
+            setNepaControlGrid(d.grid);
+            try {
+              localStorage.setItem('naija_life_nepa_grid', JSON.stringify(d.grid));
+            } catch {}
+          }
+        }
+      } catch {}
+    };
+
+    fetchNepa();
+    // Fast 2.5s polling while control room is open so owner witnesses dynamic state changes
+    const pollInterval = isNepaControlRoomOpen ? 2500 : 15000;
+    const interval = setInterval(fetchNepa, pollInterval);
+
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('naija_life_nepa');
+      bc.onmessage = (e) => {
+        if (e.data?.grid && isMounted) {
+          setNepaControlGrid(e.data.grid);
+        }
+      };
+    } catch {}
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      try { bc?.close(); } catch {}
+    };
+  }, [isNepaControlRoomOpen]);
+
   // Owner Broadcast state (for chiboy_52)
   const [ownerBroadcastTrack, setOwnerBroadcastTrack] = useState<string>('');
   const [isUploadingBroadcast, setIsUploadingBroadcast] = useState<boolean>(false);
@@ -7305,31 +7345,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <button
                           type="button"
                           onClick={async () => {
-                            // Prepopulate 36 states + Canada immediately
-                            setNepaControlGrid((prev) => {
-                              if (Object.keys(prev).length >= 36) return prev;
-                              const baseGrid: Record<string, { name: string; lightOn: boolean; voltage: number; megawatt: number }> = {};
-                              for (const st of NIGERIA_36_STATES_ALPHABETICAL) {
-                                baseGrid[st.id] = {
-                                  name: st.name,
-                                  lightOn: true,
-                                  voltage: 220,
-                                  megawatt: 4200,
-                                };
-                              }
-                              baseGrid['canada'] = {
-                                name: 'Canada (Federal Hydro Grid)',
-                                lightOn: true,
-                                voltage: 120,
-                                megawatt: 42000,
-                              };
-                              return baseGrid;
-                            });
                             try {
                               const res = await fetch('/api/nepa/grid');
                               if (res.ok) {
                                 const d = await res.json();
-                                if (d.grid) setNepaControlGrid(d.grid);
+                                if (d.grid) {
+                                  setNepaControlGrid(d.grid);
+                                  try {
+                                    localStorage.setItem('naija_life_nepa_grid', JSON.stringify(d.grid));
+                                  } catch {}
+                                }
                               }
                             } catch {}
                             setIsNepaControlRoomOpen(true);
@@ -9841,7 +9866,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         body: JSON.stringify({ username: 'chiboy_52', masterBlackout: true }),
                       });
                       const d = await res.json();
-                      if (d.grid) setNepaControlGrid(d.grid);
+                      if (d.grid) {
+                        setNepaControlGrid(d.grid);
+                        try {
+                          const bc = new BroadcastChannel('naija_life_nepa');
+                          bc.postMessage({ grid: d.grid });
+                          bc.close();
+                        } catch {}
+                      }
                     } catch {}
                     onShowToast('🚨 NATIONAL BLACKOUT TRIGGERED! Nigeria plunged into darkness! Canada 24/7 power unaffected.');
                     triggerSound?.('alert');
@@ -9876,7 +9908,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         body: JSON.stringify({ username: 'chiboy_52', masterPowerOn: true }),
                       });
                       const d = await res.json();
-                      if (d.grid) setNepaControlGrid(d.grid);
+                      if (d.grid) {
+                        setNepaControlGrid(d.grid);
+                        try {
+                          const bc = new BroadcastChannel('naija_life_nepa');
+                          bc.postMessage({ grid: d.grid });
+                          bc.close();
+                        } catch {}
+                      }
                     } catch {}
                     onShowToast('⚡ NATIONWIDE POWER RESTORED! "Up NEPA!" shouts echo across Nigeria!');
                     triggerSound?.('success');
@@ -9960,7 +9999,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 }),
                               });
                               const d = await res.json();
-                              if (d.grid) setNepaControlGrid(d.grid);
+                              if (d.grid) {
+                                setNepaControlGrid(d.grid);
+                                try {
+                                  const bc = new BroadcastChannel('naija_life_nepa');
+                                  bc.postMessage({ grid: d.grid });
+                                  bc.close();
+                                } catch {}
+                              }
                             } catch {}
                             onShowToast(`⚡ ${stData.name} substation switched ${nextStatus ? 'ON (Up NEPA!)' : 'OFF (Light Out)'}`);
                             triggerSound?.(nextStatus ? 'success' : 'alert');

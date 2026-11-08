@@ -913,7 +913,18 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
   };
 
   const [nepaLightOn, setNepaLightOn] = useState<boolean>(() => {
-    return Math.random() < getStateNepaProb(activeStateId || 'lagos');
+    if (activeStateId === 'canada') return true;
+    try {
+      const raw = localStorage.getItem('naija_life_nepa_grid');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const normKey = (activeStateId || 'lagos').toLowerCase().replace(/\s+/g, '_');
+        const targetKey = (normKey === 'fct_abuja' || normKey === 'fct') ? 'fct' : normKey;
+        const st = parsed[targetKey] || parsed['fct_abuja'] || parsed[normKey];
+        if (st && typeof st.lightOn === 'boolean') return st.lightOn;
+      }
+    } catch {}
+    return false;
   });
 
   useEffect(() => {
@@ -921,24 +932,56 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       setNepaLightOn(true);
       return;
     }
+
+    const normKey = (activeStateId || 'lagos').toLowerCase().replace(/\s+/g, '_');
+    const targetKey = (normKey === 'fct_abuja' || normKey === 'fct') ? 'fct' : normKey;
+
+    const resolveStateLight = (gridObj: any): boolean | null => {
+      if (!gridObj) return null;
+      const stateData = gridObj[targetKey] || (targetKey === 'fct' ? gridObj['fct_abuja'] : null) || gridObj[normKey];
+      if (stateData && typeof stateData.lightOn === 'boolean') {
+        return stateData.lightOn;
+      }
+      return null;
+    };
+
     const fetchNepaStatus = async () => {
       try {
         const res = await fetch('/api/nepa/grid');
         if (res.ok) {
           const data = await res.json();
-          if (data.grid && data.grid[activeStateId]) {
-            setNepaLightOn(data.grid[activeStateId].lightOn);
-            return;
+          if (data.grid) {
+            const lightStatus = resolveStateLight(data.grid);
+            if (lightStatus !== null) {
+              setNepaLightOn(lightStatus);
+            }
           }
         }
       } catch {}
-      setNepaLightOn(Math.random() < getStateNepaProb(activeStateId));
     };
 
     fetchNepaStatus();
-    // Realistic periodic sync: poll every 10 seconds for owner overrides or realistic grid cycles
-    const interval = setInterval(fetchNepaStatus, 10000);
-    return () => clearInterval(interval);
+    // Fast 2s polling so the live dynamic cycle and owner phone overrides correspond seamlessly
+    const interval = setInterval(fetchNepaStatus, 2000);
+
+    // Real-time broadcast channel coordination between phone control room and map
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('naija_life_nepa');
+      bc.onmessage = (evt) => {
+        if (evt.data?.grid) {
+          const lightStatus = resolveStateLight(evt.data.grid);
+          if (lightStatus !== null) {
+            setNepaLightOn(lightStatus);
+          }
+        }
+      };
+    } catch {}
+
+    return () => {
+      clearInterval(interval);
+      try { bc?.close(); } catch {}
+    };
   }, [activeStateId]);
 
   return (

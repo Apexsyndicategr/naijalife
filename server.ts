@@ -219,10 +219,10 @@ let snapMessagesDB: {
 
 let globalRefreshCounter = 1;
 
-// Initialize or load NEPA grid state
+// Initialize or load NEPA grid state (All 36 States + FCT + Canada)
 const ALL_STATES_LIST = [
   'abia', 'adamawa', 'akwa_ibom', 'anambra', 'bauchi', 'bayelsa', 'benue', 'borno',
-  'cross_river', 'delta', 'ebonyi', 'edo', 'ekiti', 'enugu', 'fct_abuja', 'gombe',
+  'cross_river', 'delta', 'ebonyi', 'edo', 'ekiti', 'enugu', 'fct', 'gombe',
   'imo', 'jigawa', 'kaduna', 'kano', 'katsina', 'kebbi', 'kogi', 'kwara',
   'lagos', 'nasarawa', 'niger', 'ogun', 'ondo', 'osun', 'oyo', 'plateau',
   'rivers', 'sokoto', 'taraba', 'yobe', 'zamfara', 'canada'
@@ -234,17 +234,19 @@ function initDefaultNepaGrid(): Record<string, { name: string; lightOn: boolean;
     if (s === 'canada') {
       grid[s] = { name: 'Canada (Hydro-Québec / Ontario Grid)', lightOn: true, voltage: 120, megawatt: 42000 };
     } else {
-      const formattedName = s.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-      // Diverse baseline: realistic mix of states with light and outages
-      const lightOn = ['lagos', 'fct_abuja', 'rivers'].includes(s) ? (Math.random() > 0.25) : (Math.random() > 0.45);
+      const formattedName = s === 'fct' ? 'FCT Abuja' : s.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      // Dynamic realistic baseline: ~50% of states have light, ~50% in blackout
+      const lightOn = Math.random() > 0.48;
       grid[s] = {
         name: formattedName,
         lightOn,
-        voltage: lightOn ? 190 + Math.floor(Math.random() * 40) : 0,
-        megawatt: lightOn ? 1500 + Math.floor(Math.random() * 1800) : 0,
+        voltage: lightOn ? 200 + Math.floor(Math.random() * 25) : 0,
+        megawatt: lightOn ? 1800 + Math.floor(Math.random() * 1500) : 0,
       };
     }
   }
+  // Alias fct_abuja to fct
+  grid['fct_abuja'] = { ...grid['fct'], name: 'FCT Abuja' };
   return grid;
 }
 
@@ -254,6 +256,8 @@ function loadNepaGrid(): Record<string, { name: string; lightOn: boolean; voltag
       const data = JSON.parse(fs.readFileSync(NEPA_FILE, 'utf-8'));
       // Ensure Canada is ALWAYS locked 100% on
       data['canada'] = { name: 'Canada (Hydro-Québec / Ontario Grid)', lightOn: true, voltage: 120, megawatt: 42000 };
+      if (data['fct']) data['fct_abuja'] = { ...data['fct'], name: 'FCT Abuja' };
+      else if (data['fct_abuja']) data['fct'] = { ...data['fct_abuja'], name: 'FCT Abuja' };
       return data;
     }
   } catch (err) {
@@ -267,6 +271,7 @@ function saveNepaGrid(grid: Record<string, { name: string; lightOn: boolean; vol
     if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
     // Guarantee Canada is always ON before saving
     grid['canada'] = { name: 'Canada (Hydro-Québec / Ontario Grid)', lightOn: true, voltage: 120, megawatt: 42000 };
+    if (grid['fct']) grid['fct_abuja'] = { ...grid['fct'], name: 'FCT Abuja' };
     fs.writeFileSync(NEPA_FILE, JSON.stringify(grid, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving NEPA grid:', err);
@@ -275,24 +280,27 @@ function saveNepaGrid(grid: Record<string, { name: string; lightOn: boolean; vol
 
 let nepaGrid = loadNepaGrid();
 
-// Dynamic automatic NEPA power grid cycle: runs every 45 seconds
-// Automatically fluctuates power across 1-2 random Nigerian states while keeping Canada strictly unaffected
+// Dynamic automatic NEPA power grid cycle: runs every 15 seconds
+// Automatically fluctuates power across 2-3 random Nigerian states (toggling between outage and light on with realistic voltage)
+// Keeps Canada strictly 100% immune (24/7 hydro)
 setInterval(() => {
   const nigerianStates = ALL_STATES_LIST.filter((s) => s !== 'canada');
-  const countToShift = Math.floor(Math.random() * 2) + 1; // 1 or 2 states
+  const countToShift = Math.floor(Math.random() * 2) + 2; // 2 or 3 states shift each cycle
   for (let i = 0; i < countToShift; i++) {
     const randomState = nigerianStates[Math.floor(Math.random() * nigerianStates.length)];
     if (nepaGrid[randomState]) {
       const newLightStatus = !nepaGrid[randomState].lightOn;
       nepaGrid[randomState].lightOn = newLightStatus;
-      nepaGrid[randomState].voltage = newLightStatus ? 195 + Math.floor(Math.random() * 35) : 0;
-      nepaGrid[randomState].megawatt = newLightStatus ? 1600 + Math.floor(Math.random() * 1500) : 0;
+      nepaGrid[randomState].voltage = newLightStatus ? 198 + Math.floor(Math.random() * 27) : 0;
+      nepaGrid[randomState].megawatt = newLightStatus ? 1850 + Math.floor(Math.random() * 1400) : 0;
     }
   }
   // Guarantee Canada never changes
   nepaGrid['canada'] = { name: 'Canada (Hydro-Québec / Ontario Grid)', lightOn: true, voltage: 120, megawatt: 42000 };
+  if (nepaGrid['fct']) nepaGrid['fct_abuja'] = { ...nepaGrid['fct'], name: 'FCT Abuja' };
   saveNepaGrid(nepaGrid);
-}, 45 * 1000);
+  globalRefreshCounter++;
+}, 15 * 1000);
 
 function loadCitizensDB(): Record<string, CitizenRecord> {
   try {
@@ -442,6 +450,7 @@ app.get('/api/auth/all-accounts', (req, res) => {
     success: true,
     count: Object.keys(citizensDB).length,
     accounts: citizensDB,
+    citizens: citizensDB,
   });
 });
 
@@ -451,6 +460,7 @@ app.get('/api/auth/sync-all', (req, res) => {
     success: true,
     count: Object.keys(citizensDB).length,
     accounts: citizensDB,
+    citizens: citizensDB,
   });
 });
 
@@ -592,8 +602,9 @@ app.post('/api/nepa/toggle', (req, res) => {
       nepaGrid[s].voltage = s === 'canada' ? 120 : 230;
       nepaGrid[s].megawatt = s === 'canada' ? 42000 : 3200;
     }
-  } else if (stateId && nepaGrid[stateId]) {
-    if (stateId === 'canada') {
+  } else if (stateId) {
+    const targetKey = (stateId === 'fct_abuja') ? 'fct' : stateId;
+    if (targetKey === 'canada') {
       nepaGrid['canada'].lightOn = true;
       nepaGrid['canada'].voltage = 120;
       nepaGrid['canada'].megawatt = 42000;
@@ -602,9 +613,14 @@ app.post('/api/nepa/toggle', (req, res) => {
         grid: nepaGrid,
       });
     }
-    nepaGrid[stateId].lightOn = !!lightOn;
-    nepaGrid[stateId].voltage = lightOn ? 225 : 0;
-    nepaGrid[stateId].megawatt = lightOn ? 2800 : 0;
+    if (nepaGrid[targetKey]) {
+      nepaGrid[targetKey].lightOn = !!lightOn;
+      nepaGrid[targetKey].voltage = lightOn ? 225 : 0;
+      nepaGrid[targetKey].megawatt = lightOn ? 2800 : 0;
+      if (targetKey === 'fct') {
+        nepaGrid['fct_abuja'] = { ...nepaGrid['fct'], name: 'FCT Abuja' };
+      }
+    }
   }
 
   saveNepaGrid(nepaGrid);
@@ -771,12 +787,41 @@ function saveBroadcastTrack(track: BroadcastTrack | null) {
 const AUDIO_STREAM_FILE = path.resolve(DB_DIR, 'broadcast_audio.mp3');
 
 app.get('/api/broadcast/audio.mp3', (req, res) => {
-  if (fs.existsSync(AUDIO_STREAM_FILE)) {
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Accept-Ranges', 'bytes');
-    return fs.createReadStream(AUDIO_STREAM_FILE).pipe(res);
+  if (!fs.existsSync(AUDIO_STREAM_FILE)) {
+    return res.status(404).end();
   }
-  return res.status(404).end();
+  try {
+    const stat = fs.statSync(AUDIO_STREAM_FILE);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = (end - start) + 1;
+      const fileStream = fs.createReadStream(AUDIO_STREAM_FILE, { start, end });
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': 'audio/mpeg',
+        'Cache-Control': 'no-cache',
+      });
+      return fileStream.pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': 'audio/mpeg',
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
+      });
+      return fs.createReadStream(AUDIO_STREAM_FILE).pipe(res);
+    }
+  } catch (err) {
+    console.error('Error streaming broadcast audio:', err);
+    return res.status(500).end();
+  }
 });
 
 let currentBroadcastTrack: BroadcastTrack | null = loadBroadcastTrack();
