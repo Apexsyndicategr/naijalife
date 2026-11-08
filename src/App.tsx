@@ -75,6 +75,7 @@ import {
   clearSession,
   saveSession,
   getStoredUsers,
+  STORAGE_USERS_KEY,
 } from './components/AuthPortal';
 import {
   DeviceOptimizationLoader,
@@ -1291,8 +1292,8 @@ export default function App() {
           const res = await fetch('/api/broadcast/music');
           if (res.ok) {
             const data = await res.json();
-            if (data.active && data.audioData) {
-              activeAudioData = data.audioData;
+            if (data.active) {
+              activeAudioData = data.streamUrl || data.audioData || '';
             }
           }
         } catch {}
@@ -3258,11 +3259,45 @@ export default function App() {
         onLogout={handleLogout}
         onNewLife={handleNewGame}
         onUpdateMoney={(deltaNGN, deltaUSD) => {
-          setWallet((w) => ({
-            ...w,
-            NGN: Math.max(0, w.NGN + deltaNGN),
-            USD: Math.max(0, w.USD + (deltaUSD || 0)),
-          }));
+          setWallet((w) => {
+            const nextNGN = Math.max(0, w.NGN + deltaNGN);
+            const nextUSD = Math.max(0, w.USD + (deltaUSD || 0));
+
+            // Sync with active user profile and server database so money deduction sticks permanently
+            if (currentUser) {
+              const updatedProfile = {
+                ...currentUser,
+                bankNaira: nextNGN,
+                cashNaira: nextNGN,
+              };
+              saveSession(updatedProfile);
+              setCurrentUser(updatedProfile);
+
+              try {
+                const allUsers = getStoredUsers();
+                const cleanU = currentUser.username.toLowerCase().trim();
+                if (allUsers[cleanU]) {
+                  allUsers[cleanU].profile = updatedProfile;
+                  localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(allUsers));
+                }
+              } catch {}
+
+              fetch('/api/auth/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  username: currentUser.username,
+                  profileUpdates: { bankNaira: nextNGN, cashNaira: nextNGN },
+                }),
+              }).catch(() => {});
+            }
+
+            return {
+              ...w,
+              NGN: nextNGN,
+              USD: nextUSD,
+            };
+          });
         }}
         onUpdateStats={(effects) => {
           if (effects.energy !== undefined) setEnergy((e) => Math.max(0, Math.min(100, e + effects.energy!)));

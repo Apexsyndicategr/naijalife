@@ -734,6 +734,11 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       onShowToast(`You are currently previewing ${previewState.name}! Travel here by Bus or Plane to enter ${loc.name}.`);
       return;
     }
+    if (loc.type === 'airport') {
+      setIsAirportModalOpen(true);
+      triggerSound?.('stamp');
+      return;
+    }
     setPendingCommuteTarget(loc);
     triggerSound?.('stamp');
   };
@@ -1860,41 +1865,11 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
               ===================================================================== */}
           {(() => {
             const isMobile = deviceType === 'mobile' || !!deviceOptimizationProfile?.reducedShadows;
-            const viewW = typeof window !== 'undefined' ? window.innerWidth : 400;
-            const viewH = typeof window !== 'undefined' ? window.innerHeight : 800;
-            const effectiveZoom = zoom || 0.7;
-            const centerWorldX = (-panOffset.x + viewW / 2) / effectiveZoom;
-            const centerWorldY = (-panOffset.y + viewH / 2) / effectiveZoom;
-            const maxCullRadius = 850;
 
             return activeStateLocations.map((loc) => {
               const posX = (loc.x / 100) * 3500 + 150;
               const posY = (loc.y / 100) * 2500 + 150;
               const isHighlighted = loc.id === highlightedLocationId;
-
-              // On mobile, if a building is outside the extended 850px radius, render a lightweight pin
-              // so the mobile browser doesn't have to composite thousands of 3D polygon nodes!
-              if (isMobile && !isHighlighted) {
-                const dist = Math.hypot(posX - centerWorldX, posY - centerWorldY);
-                if (dist > maxCullRadius) {
-                  return (
-                    <div
-                      key={loc.id}
-                      style={{
-                        left: `${posX}px`,
-                        top: `${posY}px`,
-                      }}
-                      className="absolute pointer-events-auto cursor-pointer z-10"
-                      onClick={() => handleLocationClick(loc)}
-                      title={`Click to travel to ${loc.name}`}
-                    >
-                      <div className="w-7 h-7 rounded-full bg-zinc-950/90 border border-emerald-400/70 flex items-center justify-center text-xs shadow-md backdrop-blur-xs hover:scale-125 transition-transform">
-                        <span>{getLocationLogo(loc.type)}</span>
-                      </div>
-                    </div>
-                  );
-                }
-              }
 
               return (
                 <LagosLifeBuilding
@@ -3030,8 +3005,16 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
         currentStateId={currentState.id}
         initialApp={phoneInitialApp}
         onInterstateTravel={(targetState, fare) => {
-          // Trigger the luxury coach bus simulation (strictly 60s / 1m countdown)
+          // Bus fallback
           triggerBusWithSimulation(targetState as any, fare);
+        }}
+        onFlightTravel={(targetState, fare, airlineName, aircraftModel) => {
+          // Trigger the high-altitude airline flight simulation (30s domestic, 60s international)
+          triggerFlightWithSimulation(targetState as any, fare, airlineName, aircraftModel);
+        }}
+        onBusTravel={(targetState, fare, busOperator) => {
+          // Trigger the interstate coach bus simulation (strictly 60s / 1m)
+          triggerBusWithSimulation(targetState as any, fare, busOperator);
         }}
       />
 

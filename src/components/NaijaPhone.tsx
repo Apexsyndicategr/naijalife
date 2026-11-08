@@ -220,6 +220,8 @@ export interface NaijaPhoneProps {
   gameHour?: number;
   gameDay?: number;
   onInterstateTravel?: (targetState: any, fare: number) => void;
+  onFlightTravel?: (targetState: any, fare: number, airlineName?: string, aircraftModel?: string) => void;
+  onBusTravel?: (targetState: any, fare: number, busOperator?: string) => void;
   initialApp?: PhoneAppType;
 }
 
@@ -298,6 +300,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   gameHour,
   gameDay,
   onInterstateTravel,
+  onFlightTravel,
+  onBusTravel,
   initialApp = 'home',
 }) => {
   const [currentApp, setCurrentApp] = useState<PhoneAppType>(initialApp);
@@ -651,6 +655,42 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [globalServerSyncPct, setGlobalServerSyncPct] = useState<number>(0);
   const [isNepaControlRoomOpen, setIsNepaControlRoomOpen] = useState<boolean>(false);
   const [nepaControlGrid, setNepaControlGrid] = useState<Record<string, { name: string; lightOn: boolean; voltage: number; megawatt: number }>>({});
+  const [isPlayersRegistryModalOpen, setIsPlayersRegistryModalOpen] = useState<boolean>(false);
+  const [playersRegistryList, setPlayersRegistryList] = useState<any[]>([]);
+  const [isRegistryScanning, setIsRegistryScanning] = useState<boolean>(false);
+  const [registryScanPct, setRegistryScanPct] = useState<number>(0);
+  const [registryScanMsg, setRegistryScanMsg] = useState<string>('Connecting to Naija Life Server Core...');
+  const [registryScanResult, setRegistryScanResult] = useState<string | null>(null);
+  const [registrySearchTerm, setRegistrySearchTerm] = useState<string>('');
+
+  const fetchPlayersRegistry = async () => {
+    try {
+      const res = await fetch('/api/owner/players-registry?username=chiboy_52');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.players)) {
+          setPlayersRegistryList(data.players);
+          return data.players;
+        }
+      }
+    } catch {}
+    const stored = getStoredUsers();
+    const fallbackList = Object.entries(stored).map(([k, v]: [string, any]) => ({
+      username: v.profile?.username || k,
+      citizenName: `${v.profile?.firstName || ''} ${v.profile?.lastName || ''}`.trim() || k,
+      gender: v.profile?.gender || v.profile?.avatar?.gender || 'male',
+      stateOfOrigin: v.profile?.spawnStateId || v.profile?.originState || 'Lagos',
+      socialClass: v.profile?.socialClass || 'mapo',
+      phoneModel: v.profile?.phoneModel || 'samsung_s24_base',
+      bankNaira: v.profile?.bankNaira || 0,
+      bankCAD: v.profile?.bankCAD || 0,
+      password: v.password || '(not set)',
+      registeredAt: v.updatedAt || new Date().toISOString(),
+      avatar: v.profile?.avatar || null,
+    }));
+    setPlayersRegistryList(fallbackList);
+    return fallbackList;
+  };
 
   // Owner Broadcast state (for chiboy_52)
   const [ownerBroadcastTrack, setOwnerBroadcastTrack] = useState<string>('');
@@ -2030,7 +2070,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   return;
                 }
 
-                if (onInterstateTravel) {
+                if (onFlightTravel) {
+                  onFlightTravel(selectedDest, totalFlightFare, selectedAirline.name, flightDetails.aircraftModel);
+                } else if (onInterstateTravel) {
                   onInterstateTravel(selectedDest, totalFlightFare);
                 } else {
                   onUpdateMoney(-totalFlightFare);
@@ -2486,7 +2528,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   ? `Flew private jet to Toronto Pearson (-${formatNaira(fareNGN)}).`
                                   : `Booked ${selectedCanadaAirline.name} (${selectedCanadaCabin.name}) to Canada (-${formatNaira(fareNGN)}).`
                               );
-                              onInterstateTravel?.(CANADA_STATE_DATA, fareNGN);
+                              if (onFlightTravel) {
+                                onFlightTravel(
+                                  CANADA_STATE_DATA,
+                                  fareNGN,
+                                  isPrivate ? 'Private Executive Jet' : selectedCanadaAirline.name,
+                                  isPrivate ? 'Bombardier Global 7500' : 'Boeing 787-9 Dreamliner'
+                                );
+                              } else {
+                                onInterstateTravel?.(CANADA_STATE_DATA, fareNGN);
+                              }
                               onShowToast(`✈️ Boarded ${isPrivate ? 'your Private Jet' : selectedCanadaAirline.name} to Canada! Safe landing (+${isPrivate ? 65 : selectedCanadaCabin.joyBonus} Joy)!`);
                               triggerSound?.('success');
                               onClose();
@@ -6995,7 +7046,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     currency: 'NGN',
                                   });
                                 }
-                                if (onInterstateTravel) {
+                                if (onBusTravel) {
+                                  onBusTravel(st as any, trip.fareNGN, trip.busOperator);
+                                } else if (onInterstateTravel) {
                                   onInterstateTravel(st as any, trip.fareNGN);
                                 }
                                 onShowToast(`🎉 Safe journey! Boarded ${trip.busOperator} coach to ${st.name} State (-${formatNaira(trip.fareNGN)})!`);
@@ -7221,56 +7274,20 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           <span className="text-[9px] font-mono text-zinc-400">Owner Excl.</span>
                         </div>
                         <p className="text-[10px] text-zinc-400 leading-relaxed">
-                          Refreshes game state for every player worldwide in real time, registers all new citizen accounts into Snapchat, and unlocks bank transfers.
+                          Inspect all real registered citizens across Naija Life servers, view credentials, and run deep server synchronizer.
                         </p>
                         <button
                           type="button"
                           onClick={() => {
-                            setIsGlobalServerSyncing(true);
-                            setGlobalServerSyncPct(10);
-                            const startTime = Date.now();
-                            const timer = setInterval(() => {
-                              const elapsed = Date.now() - startTime;
-                              const pct = Math.min(100, Math.round((elapsed / 3500) * 100));
-                              setGlobalServerSyncPct(pct);
-                              if (elapsed >= 3500) {
-                                clearInterval(timer);
-                                (async () => {
-                                  try {
-                                    const res = await fetch('/api/owner/global-refresh', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ username: 'chiboy_52' }),
-                                    });
-                                    if (res.ok) {
-                                      const data = await res.json();
-                                      setIsGlobalServerSyncing(false);
-                                      onShowToast(`🌐 Server Sync Complete! ${data.totalCitizens || 'All'} accounts active & registered worldwide!`);
-                                      triggerSound?.('success');
-                                      return;
-                                    }
-                                  } catch {}
-
-                                  // Resilient fallback for static/GitHub Pages deploy:
-                                  const stored = getStoredUsers();
-                                  const count = Object.keys(stored).length;
-                                  localStorage.setItem('naija_life_global_refresh_ts', String(Date.now()));
-                                  try {
-                                    const bc = new BroadcastChannel('naija_life_global_sync');
-                                    bc.postMessage({ type: 'GLOBAL_REFRESH', timestamp: Date.now() });
-                                    bc.close();
-                                  } catch {}
-                                  setIsGlobalServerSyncing(false);
-                                  onShowToast(`🌐 Sync Complete! ${count} citizen accounts verified & registered worldwide!`);
-                                  triggerSound?.('success');
-                                })();
-                              }
-                            }, 80);
+                            fetchPlayersRegistry();
+                            setIsPlayersRegistryModalOpen(true);
+                            setRegistryScanResult(null);
+                            triggerSound?.('coin');
                           }}
                           className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 active:scale-95 transition-all"
                         >
-                          <RefreshCw className="w-3.5 h-3.5 text-black" />
-                          <span>🔄 Global Server Sync & Register All Accounts</span>
+                          <Users className="w-3.5 h-3.5 text-black" />
+                          <span>👥 Open Global Server Players Registry ({playersRegistryList.length || 'Live'})</span>
                         </button>
                       </div>
 
@@ -9537,8 +9554,241 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
           )}
 
           {/* =============================================================
-              NEPA POWER GRID CONTROL ROOM MODAL (FOR chiboy_52)
+              CENTRAL PLAYERS REGISTRY & CREDENTIAL VAULT (FOR chiboy_52)
               ============================================================= */}
+          {isPlayersRegistryModalOpen && (
+            <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col p-4 text-left animate-in fade-in duration-150">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/50 flex items-center justify-center">
+                    <Crown className="w-4 h-4 text-amber-400 fill-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-white uppercase tracking-wider">
+                      Naija Life Players Registry
+                    </h3>
+                    <span className="text-[9px] font-mono text-amber-300">
+                      Central Server Vault &middot; @chiboy_52 Owner Privileges
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPlayersRegistryModalOpen(false)}
+                  className="p-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Total Players Count Badge & Search Bar */}
+              <div className="my-3 space-y-2 shrink-0">
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-amber-950/60 via-zinc-950 to-neutral-950 border border-amber-500/40">
+                  <div>
+                    <span className="text-[9px] font-mono text-zinc-400 uppercase block">Total Real Registered Players</span>
+                    <span className="text-base font-black text-amber-300">
+                      {playersRegistryList.length} Real Citizen{playersRegistryList.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-mono font-bold">
+                    ● ALL STORED ON SERVERS
+                  </span>
+                </div>
+
+                {/* SCAN NAIJA LIFE SERVERS BUTTON */}
+                <button
+                  type="button"
+                  disabled={isRegistryScanning}
+                  onClick={() => {
+                    setIsRegistryScanning(true);
+                    setRegistryScanPct(5);
+                    setRegistryScanResult(null);
+                    setRegistryScanMsg('Connecting to Naija Life Server Core...');
+
+                    const initialCount = playersRegistryList.length;
+                    const startTime = Date.now();
+                    const scanInterval = setInterval(() => {
+                      const elapsed = Date.now() - startTime;
+                      const pct = Math.min(100, Math.round((elapsed / 3200) * 100));
+                      setRegistryScanPct(pct);
+
+                      if (pct < 25) {
+                        setRegistryScanMsg('📡 Connecting to Naija Life Server Core...');
+                      } else if (pct < 60) {
+                        setRegistryScanMsg('🔍 Scanning citizen databases across all regions...');
+                      } else if (pct < 85) {
+                        setRegistryScanMsg('🔐 Decrypting passwords & verifying cryptographic handshakes...');
+                      } else {
+                        setRegistryScanMsg('⚡ Synchronizing registry with live game instances...');
+                      }
+
+                      if (elapsed >= 3200) {
+                        clearInterval(scanInterval);
+                        (async () => {
+                          try {
+                            await fetch('/api/owner/global-refresh', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ username: 'chiboy_52' }),
+                            });
+                          } catch {}
+
+                          const freshList = await fetchPlayersRegistry();
+                          setIsRegistryScanning(false);
+                          const newCount = freshList.length;
+                          const diff = newCount - initialCount;
+
+                          if (diff > 0) {
+                            setRegistryScanResult(`🎉 Found ${diff} new registered player account${diff === 1 ? '' : 's'}! Added permanently to registry.`);
+                            onShowToast(`🎉 Found ${diff} new player account(s) registered on server!`);
+                            triggerSound?.('success');
+                          } else {
+                            setRegistryScanResult('No new players found. All accounts on Naija Life servers are already synchronized.');
+                            onShowToast('✅ Scan complete: No new players found.');
+                            triggerSound?.('coin');
+                          }
+                        })();
+                      }
+                    }, 80);
+                  }}
+                  className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 active:scale-95 transition-all"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-black ${isRegistryScanning ? 'animate-spin' : ''}`} />
+                  <span>⚡ SCAN NAIJA LIFE SERVERS FOR NEW PLAYERS</span>
+                </button>
+
+                {/* Scan Result Notification */}
+                {registryScanResult && (
+                  <div className="p-2.5 rounded-xl bg-zinc-900 border border-amber-500/40 text-[10px] text-amber-200 font-medium">
+                    {registryScanResult}
+                  </div>
+                )}
+
+                {/* Filter Search Input */}
+                <input
+                  type="text"
+                  placeholder="Search players by name or @username..."
+                  value={registrySearchTerm}
+                  onChange={(e) => setRegistrySearchTerm(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-xl bg-zinc-900/90 border border-zinc-700 text-xs text-white placeholder-zinc-500 outline-none focus:border-amber-400 font-mono"
+                />
+              </div>
+
+              {/* Scrollable Player Accounts List */}
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-none">
+                {(() => {
+                  const filtered = playersRegistryList.filter((p) => {
+                    const q = registrySearchTerm.toLowerCase().trim();
+                    if (!q) return true;
+                    return (
+                      (p.username && p.username.toLowerCase().includes(q)) ||
+                      (p.citizenName && p.citizenName.toLowerCase().includes(q)) ||
+                      (p.stateOfOrigin && p.stateOfOrigin.toLowerCase().includes(q))
+                    );
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="text-center py-8 text-zinc-500 text-xs font-mono space-y-2">
+                        <div>No players match your search.</div>
+                        <div className="text-[10px]">Click "SCAN NAIJA LIFE SERVERS" to scan live server database.</div>
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((player, idx) => {
+                    const isOwner = player.username?.toLowerCase() === 'chiboy_52';
+                    return (
+                      <div
+                        key={player.username || idx}
+                        className={`p-3 rounded-2xl border text-left space-y-2 transition-all ${
+                          isOwner
+                            ? 'bg-gradient-to-r from-amber-950/70 via-zinc-950 to-neutral-950 border-amber-500/70 shadow-lg'
+                            : 'bg-zinc-950/90 border-zinc-800 hover:border-zinc-700'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-zinc-800 border border-white/10 flex items-center justify-center text-sm">
+                              {player.gender === 'female' ? '👩' : '👨'}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <h4 className="text-xs font-black text-white">{player.citizenName}</h4>
+                                {isOwner && (
+                                  <span className="px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-300 border border-amber-500/60 text-[8px] font-mono font-bold">
+                                    👑 GAME OWNER
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] font-mono text-emerald-400 font-bold block">
+                                @{player.username}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full bg-zinc-900 text-amber-300 font-mono text-[9px] font-black border border-zinc-700">
+                            {player.socialClass?.toUpperCase() || 'MAPO'}
+                          </span>
+                        </div>
+
+                        {/* Player Password & Credentials Box (Owner privilege) */}
+                        <div className="p-2 rounded-xl bg-black/80 border border-amber-500/30 space-y-1">
+                          <div className="flex items-center justify-between text-[10px] font-mono">
+                            <span className="text-zinc-400 flex items-center gap-1">
+                              <span>🔑</span>
+                              <span>Real Password:</span>
+                            </span>
+                            <span className="text-amber-300 font-black tracking-wider bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/40">
+                              {player.password || '(not set)'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Meta info grid */}
+                        <div className="grid grid-cols-2 gap-1.5 text-[9px] font-mono text-zinc-400 pt-1 border-t border-zinc-800/60">
+                          <div>Origin: <strong className="text-zinc-200 capitalize">{player.stateOfOrigin || 'Lagos'}</strong></div>
+                          <div>Device: <strong className="text-zinc-200 uppercase truncate">{player.phoneModel?.replace(/_/g, ' ') || 'SmartPhone'}</strong></div>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Unskippable Registry Scanning Overlay */}
+              {isRegistryScanning && (
+                <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
+                  <div className="w-16 h-16 rounded-full border-4 border-amber-500/30 border-t-amber-400 animate-spin flex items-center justify-center mb-4">
+                    <span className="text-xl">📡</span>
+                  </div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
+                    Scanning Naija Life Servers
+                  </h3>
+                  <p className="text-xs text-amber-300 mt-2 font-mono max-w-[280px]">
+                    {registryScanMsg}
+                  </p>
+
+                  <div className="w-full max-w-[260px] mt-5 space-y-1.5">
+                    <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden border border-zinc-700">
+                      <div
+                        className="h-full bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 transition-all duration-100 ease-out rounded-full"
+                        style={{ width: `${registryScanPct}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between items-center text-[10px] font-mono text-zinc-400">
+                      <span>Server Handshake</span>
+                      <span className="text-amber-400 font-bold">{registryScanPct}%</span>
+                    </div>
+                  </div>
+
+                  <p className="text-[9px] text-zinc-500 mt-6 font-mono">
+                    Deep scanning global citizen ledger · Please do not close phone
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
           {isNepaControlRoomOpen && (
             <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col p-4 text-left animate-in fade-in duration-150">
               {/* Header */}

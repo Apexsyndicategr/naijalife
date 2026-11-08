@@ -1,10 +1,6 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React from 'react';
 import { CharacterAvatar } from '../types/game';
+import { ThreeCharacterAvatar } from './ThreeCharacterAvatar';
 
 interface CharacterRendererProps {
   avatar: CharacterAvatar;
@@ -13,6 +9,7 @@ interface CharacterRendererProps {
   fullBody?: boolean;
   isWalking?: boolean;
   className?: string;
+  use3D?: boolean;
 }
 
 export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
@@ -22,6 +19,7 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
   fullBody = true,
   isWalking = false,
   className = '',
+  use3D = false,
 }) => {
   const sizeMap = {
     sm: 'w-10 h-10',
@@ -42,6 +40,23 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
     accessory: 'none',
   };
 
+  // If full body / xl or explicitly requested, use authentic Three.js 3D character!
+  if (use3D || size === 'full') {
+    return (
+      <div
+        className={`relative rounded-2xl flex items-center justify-center overflow-hidden shrink-0 select-none ${
+          sizeMap[size] || 'w-48 h-80 sm:w-56 sm:h-96'
+        } ${
+          showBackground
+            ? 'bg-gradient-to-b from-zinc-800 via-zinc-900 to-zinc-950 border border-zinc-700/60 shadow-lg'
+            : ''
+        } ${className}`}
+      >
+        <ThreeCharacterAvatar avatar={safeAvatar} size={size} interactive={true} />
+      </div>
+    );
+  }
+
   const skinColor = safeAvatar.skinTone || '#8d5524';
   const hairColor = safeAvatar.hairColor || '#1c1917';
   const pantsColor = safeAvatar.pantsColor || (safeAvatar.pants === 'jeans' ? '#1e3a8a' : safeAvatar.pants === 'sweatpants' ? '#374151' : safeAvatar.pants === 'wrapper' ? '#9a3412' : '#18181b');
@@ -50,7 +65,7 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
   return (
     <div
       className={`relative rounded-2xl flex items-center justify-center overflow-hidden shrink-0 select-none ${
-        size === 'full' ? 'w-48 h-80 sm:w-56 sm:h-96' : sizeMap[size]
+        sizeMap[size]
       } ${
         showBackground
           ? 'bg-gradient-to-b from-zinc-800 via-zinc-900 to-zinc-950 border border-zinc-700/60 shadow-lg'
@@ -270,7 +285,7 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
               HAIR & HEAD ACCESSORIES
               ======================================================== */}
           {safeAvatar.hairstyle === 'afro' && (
-            <circle cx="60" cy="30" r="23" fill={hairColor} opacity="0.95" />
+            <ellipse cx="60" cy="18" rx="22" ry="16" fill={hairColor} opacity="0.95" />
           )}
 
           {safeAvatar.hairstyle === 'fade' && (

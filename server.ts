@@ -235,13 +235,13 @@ function initDefaultNepaGrid(): Record<string, { name: string; lightOn: boolean;
       grid[s] = { name: 'Canada (Hydro-Québec / Ontario Grid)', lightOn: true, voltage: 120, megawatt: 42000 };
     } else {
       const formattedName = s.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-      // Realistic baseline: Lagos, Abuja, Rivers, Edo have stable power; others realistic 75% on
-      const lightOn = ['lagos', 'fct_abuja', 'rivers', 'edo', 'anambra'].includes(s) ? true : Math.random() > 0.3;
+      // Diverse baseline: realistic mix of states with light and outages
+      const lightOn = ['lagos', 'fct_abuja', 'rivers'].includes(s) ? (Math.random() > 0.25) : (Math.random() > 0.45);
       grid[s] = {
         name: formattedName,
         lightOn,
-        voltage: lightOn ? 220 + Math.floor(Math.random() * 15) : 0,
-        megawatt: lightOn ? 1800 + Math.floor(Math.random() * 1200) : 0,
+        voltage: lightOn ? 190 + Math.floor(Math.random() * 40) : 0,
+        megawatt: lightOn ? 1500 + Math.floor(Math.random() * 1800) : 0,
       };
     }
   }
@@ -251,7 +251,10 @@ function initDefaultNepaGrid(): Record<string, { name: string; lightOn: boolean;
 function loadNepaGrid(): Record<string, { name: string; lightOn: boolean; voltage: number; megawatt: number }> {
   try {
     if (fs.existsSync(NEPA_FILE)) {
-      return JSON.parse(fs.readFileSync(NEPA_FILE, 'utf-8'));
+      const data = JSON.parse(fs.readFileSync(NEPA_FILE, 'utf-8'));
+      // Ensure Canada is ALWAYS locked 100% on
+      data['canada'] = { name: 'Canada (Hydro-Québec / Ontario Grid)', lightOn: true, voltage: 120, megawatt: 42000 };
+      return data;
     }
   } catch (err) {
     console.error('Error loading NEPA grid:', err);
@@ -262,6 +265,8 @@ function loadNepaGrid(): Record<string, { name: string; lightOn: boolean; voltag
 function saveNepaGrid(grid: Record<string, { name: string; lightOn: boolean; voltage: number; megawatt: number }>) {
   try {
     if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+    // Guarantee Canada is always ON before saving
+    grid['canada'] = { name: 'Canada (Hydro-Québec / Ontario Grid)', lightOn: true, voltage: 120, megawatt: 42000 };
     fs.writeFileSync(NEPA_FILE, JSON.stringify(grid, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error saving NEPA grid:', err);
@@ -270,19 +275,24 @@ function saveNepaGrid(grid: Record<string, { name: string; lightOn: boolean; vol
 
 let nepaGrid = loadNepaGrid();
 
-// Realistic NEPA timer: subtle dynamic fluctuation every 25 minutes (NOT every 45 seconds!)
+// Dynamic automatic NEPA power grid cycle: runs every 45 seconds
+// Automatically fluctuates power across 1-2 random Nigerian states while keeping Canada strictly unaffected
 setInterval(() => {
-  for (const s of ALL_STATES_LIST) {
-    if (s === 'canada') continue; // Canada never loses grid power
-    // 10% chance of status shift every 25 minutes
-    if (Math.random() < 0.10) {
-      nepaGrid[s].lightOn = !nepaGrid[s].lightOn;
-      nepaGrid[s].voltage = nepaGrid[s].lightOn ? 220 + Math.floor(Math.random() * 10) : 0;
-      nepaGrid[s].megawatt = nepaGrid[s].lightOn ? 2100 : 0;
+  const nigerianStates = ALL_STATES_LIST.filter((s) => s !== 'canada');
+  const countToShift = Math.floor(Math.random() * 2) + 1; // 1 or 2 states
+  for (let i = 0; i < countToShift; i++) {
+    const randomState = nigerianStates[Math.floor(Math.random() * nigerianStates.length)];
+    if (nepaGrid[randomState]) {
+      const newLightStatus = !nepaGrid[randomState].lightOn;
+      nepaGrid[randomState].lightOn = newLightStatus;
+      nepaGrid[randomState].voltage = newLightStatus ? 195 + Math.floor(Math.random() * 35) : 0;
+      nepaGrid[randomState].megawatt = newLightStatus ? 1600 + Math.floor(Math.random() * 1500) : 0;
     }
   }
+  // Guarantee Canada never changes
+  nepaGrid['canada'] = { name: 'Canada (Hydro-Québec / Ontario Grid)', lightOn: true, voltage: 120, megawatt: 42000 };
   saveNepaGrid(nepaGrid);
-}, 25 * 60 * 1000);
+}, 45 * 1000);
 
 function loadCitizensDB(): Record<string, CitizenRecord> {
   try {
@@ -441,6 +451,68 @@ app.get('/api/auth/sync-all', (req, res) => {
     success: true,
     count: Object.keys(citizensDB).length,
     accounts: citizensDB,
+  });
+});
+
+// 2c. REAL-TIME ACCOUNT PROFILE SYNC (Saves bank balance, cash, CAD, stats across devices)
+app.post('/api/auth/sync', (req, res) => {
+  const { username, profileUpdates } = req.body;
+  if (!username || !profileUpdates) {
+    return res.status(400).json({ error: 'Username and profile updates are required.' });
+  }
+
+  const cleanUser = String(username).toLowerCase().trim();
+  citizensDB = loadCitizensDB();
+
+  if (!citizensDB[cleanUser]) {
+    return res.status(404).json({ error: 'Citizen account not found on Naija Life servers.' });
+  }
+
+  const isOwner = cleanUser === 'chiboy_52';
+  citizensDB[cleanUser].profile = {
+    ...citizensDB[cleanUser].profile,
+    ...profileUpdates,
+    bankNaira: isOwner ? SEXTILLION_999 : (profileUpdates.bankNaira !== undefined ? Number(profileUpdates.bankNaira) : citizensDB[cleanUser].profile.bankNaira),
+    cashNaira: isOwner ? SEXTILLION_999 : (profileUpdates.cashNaira !== undefined ? Number(profileUpdates.cashNaira) : citizensDB[cleanUser].profile.cashNaira),
+    bankCAD: isOwner ? SEXTILLION_999 : (profileUpdates.bankCAD !== undefined ? Number(profileUpdates.bankCAD) : citizensDB[cleanUser].profile.bankCAD),
+    socialClass: isOwner ? 'nepo' : (citizensDB[cleanUser].profile.socialClass || 'mapo'),
+    phoneModel: isOwner ? 'iphone_18_pm' : (citizensDB[cleanUser].profile.phoneModel || 'samsung_s24_base'),
+  };
+  citizensDB[cleanUser].updatedAt = new Date().toISOString();
+
+  saveCitizensDB(citizensDB);
+  return res.json({ success: true, profile: citizensDB[cleanUser].profile });
+});
+
+// 2d. OWNER PLAYERS REGISTRY (Returns all registered real citizens with passwords for chiboy_52)
+app.get('/api/owner/players-registry', (req, res) => {
+  const username = String(req.query.username || '').toLowerCase().trim();
+  if (username !== 'chiboy_52') {
+    return res.status(403).json({ error: 'Unauthorized: Only game owner @chiboy_52 can inspect the players registry.' });
+  }
+
+  citizensDB = loadCitizensDB();
+  const players = Object.entries(citizensDB).map(([key, record]) => {
+    const prof = record.profile || {};
+    return {
+      username: prof.username || key,
+      citizenName: `${prof.firstName || ''} ${prof.lastName || ''}`.trim() || key,
+      gender: prof.gender || prof.avatar?.gender || 'male',
+      stateOfOrigin: prof.spawnStateId || prof.originState || 'Lagos',
+      socialClass: prof.socialClass || 'mapo',
+      phoneModel: prof.phoneModel || 'samsung_s24_base',
+      bankNaira: prof.bankNaira || 0,
+      bankCAD: prof.bankCAD || 0,
+      password: record.password || '(not set)',
+      registeredAt: record.updatedAt || new Date().toISOString(),
+      avatar: prof.avatar || null,
+    };
+  });
+
+  return res.json({
+    success: true,
+    totalPlayers: players.length,
+    players,
   });
 });
 
@@ -696,12 +768,25 @@ function saveBroadcastTrack(track: BroadcastTrack | null) {
   }
 }
 
+const AUDIO_STREAM_FILE = path.resolve(DB_DIR, 'broadcast_audio.mp3');
+
+app.get('/api/broadcast/audio.mp3', (req, res) => {
+  if (fs.existsSync(AUDIO_STREAM_FILE)) {
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Accept-Ranges', 'bytes');
+    return fs.createReadStream(AUDIO_STREAM_FILE).pipe(res);
+  }
+  return res.status(404).end();
+});
+
 let currentBroadcastTrack: BroadcastTrack | null = loadBroadcastTrack();
 
 app.get('/api/broadcast/music', (req, res) => {
+  const hasAudioFile = fs.existsSync(AUDIO_STREAM_FILE);
   res.json({
-    active: !!currentBroadcastTrack,
+    active: !!currentBroadcastTrack || hasAudioFile,
     audioData: currentBroadcastTrack?.audioData || null,
+    streamUrl: hasAudioFile ? '/api/broadcast/audio.mp3' : null,
     track: currentBroadcastTrack,
   });
 });
@@ -715,9 +800,19 @@ app.post('/api/broadcast/music', (req, res) => {
   if (!audioData || typeof audioData !== 'string') {
     return res.status(400).json({ error: 'Audio data is required' });
   }
-  if (!audioData.includes('audio/mpeg') && !audioData.includes('audio/mp3') && !audioData.startsWith('data:audio/')) {
-    return res.status(400).json({ error: 'Only MP3 format audio files (.mp3) are accepted!' });
+
+  try {
+    if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+    const base64Index = audioData.indexOf('base64,');
+    if (base64Index !== -1) {
+      const rawBase64 = audioData.slice(base64Index + 7);
+      const buffer = Buffer.from(rawBase64, 'base64');
+      fs.writeFileSync(AUDIO_STREAM_FILE, buffer);
+    }
+  } catch (err) {
+    console.error('Error saving audio stream file:', err);
   }
+
   currentBroadcastTrack = {
     title: String(title || 'Owner Custom Soundtrack').trim(),
     audioData,
@@ -725,10 +820,12 @@ app.post('/api/broadcast/music', (req, res) => {
     uploadedAt: Date.now(),
   };
   saveBroadcastTrack(currentBroadcastTrack);
+  globalRefreshCounter++;
+
   return res.json({
     success: true,
     active: true,
-    audioData: currentBroadcastTrack.audioData,
+    streamUrl: '/api/broadcast/audio.mp3',
     track: currentBroadcastTrack,
   });
 });
@@ -741,6 +838,10 @@ app.delete('/api/broadcast/music', (req, res) => {
   }
   currentBroadcastTrack = null;
   saveBroadcastTrack(null);
+  try {
+    if (fs.existsSync(AUDIO_STREAM_FILE)) fs.unlinkSync(AUDIO_STREAM_FILE);
+  } catch {}
+  globalRefreshCounter++;
   return res.json({ success: true, active: false });
 });
 

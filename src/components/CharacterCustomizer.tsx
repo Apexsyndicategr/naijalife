@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { CharacterAvatar } from '../types/game';
 import { CharacterRenderer } from './CharacterRenderer';
+import { ThreeCharacterAvatar } from './ThreeCharacterAvatar';
 
 interface CharacterCustomizerProps {
   avatar: CharacterAvatar;
@@ -337,20 +338,18 @@ export const CharacterCustomizer: React.FC<CharacterCustomizerProps> = ({
             </button>
           </div>
 
-          {/* Real-time Full-Body Character Avatar */}
-          <div className="my-auto py-2">
-            <CharacterRenderer
+          {/* Real-time 3D Full-Body Character Avatar */}
+          <div className="my-auto py-2 w-full flex items-center justify-center">
+            <ThreeCharacterAvatar
               avatar={safeAvatar}
               size="full"
-              showBackground={true}
-              fullBody={true}
-              isWalking={true}
+              interactive={true}
             />
           </div>
 
           <div className="w-full mt-4 pt-3 border-t border-zinc-800/80 text-center">
             <div className="text-[11px] font-mono text-zinc-400">
-              Height: <strong className="text-emerald-400 capitalize">{safeAvatar.height || 'average'}</strong> · Fit: <strong className="text-white capitalize">{safeAvatar.outfit?.replace(/_/g, ' ')}</strong>
+              Gender: <strong className="text-white capitalize">{safeAvatar.gender || 'male'}</strong> · Height: <strong className="text-emerald-400 capitalize">{safeAvatar.height || 'average'}</strong> · Fit: <strong className="text-white capitalize">{safeAvatar.outfit?.replace(/_/g, ' ')}</strong>
             </div>
           </div>
         </div>
@@ -358,6 +357,39 @@ export const CharacterCustomizer: React.FC<CharacterCustomizerProps> = ({
         {/* RIGHT COLUMN: Studio Controls with Pictorial Hair & Starter Clothes */}
         <div className="lg:col-span-7 bg-zinc-900/90 border border-zinc-800 rounded-2xl p-5 shadow-2xl backdrop-blur-xl flex flex-col justify-between min-h-[460px]">
           <div>
+            {/* Gender Selection: Male vs Female (Dynamically modifies 3D body proportions) */}
+            <div className="mb-3.5 space-y-1.5">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-400 block">
+                Select Gender (3D Anatomical Proportions)
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...safeAvatar, gender: 'male' })}
+                  className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                    safeAvatar.gender === 'male' || !safeAvatar.gender
+                      ? 'bg-emerald-500 text-black border-emerald-400 shadow-md ring-2 ring-emerald-500/40'
+                      : 'bg-zinc-950/80 text-zinc-300 border-zinc-800 hover:border-zinc-700'
+                  }`}
+                >
+                  <span className="text-sm">👨</span>
+                  <span>Male (Masculine Frame)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...safeAvatar, gender: 'female' })}
+                  className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                    safeAvatar.gender === 'female'
+                      ? 'bg-emerald-500 text-black border-emerald-400 shadow-md ring-2 ring-emerald-500/40'
+                      : 'bg-zinc-950/80 text-zinc-300 border-zinc-800 hover:border-zinc-700'
+                  }`}
+                >
+                  <span className="text-sm">👩</span>
+                  <span>Female (Feminine Silhouette)</span>
+                </button>
+              </div>
+            </div>
+
             {/* Customizer Tabs */}
             <div className="grid grid-cols-4 gap-1.5 p-1 bg-zinc-950/80 border border-zinc-800 rounded-xl mb-4">
               <button
