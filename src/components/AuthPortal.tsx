@@ -25,7 +25,8 @@ import {
   Smartphone,
   Building,
   UserCheck,
-  Check
+  Check,
+  Mail
 } from 'lucide-react';
 import { UserProfile, CharacterAvatar, StateData, SocialClass } from '../types/game';
 export type { UserProfile };
@@ -42,8 +43,8 @@ interface AuthPortalProps {
 }
 
 // Clean storage namespace for accounts (Fresh reset with multi-device server sync)
-export const STORAGE_USERS_KEY = 'naija_life_citizens_v14_pure';
-export const STORAGE_SESSION_KEY = 'naija_life_active_citizen_v14_pure';
+export const STORAGE_USERS_KEY = 'naija_life_citizens_v15_gmail';
+export const STORAGE_SESSION_KEY = 'naija_life_active_citizen_v15_gmail';
 
 export function purgeAllLegacyAccounts(): void {
   try {
@@ -162,7 +163,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     defaultUserKey ? 'LOGIN' : 'SIGNUP'
   );
 
-  // Login form state
+  // Login form state (supports Citizen Username or Gmail)
   const [loginUsername, setLoginUsername] = useState(defaultUserKey);
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -186,9 +187,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     } catch {}
   }, []);
 
-  // Signup form state
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
+  // Signup form state: Strictly 4 fields (Gmail, Username, Birthday, Password)
+  const [signupGmail, setSignupGmail] = useState('');
   const [signupUsername, setSignupUsername] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [showSignupPassword, setShowSignupPassword] = useState(false);
@@ -226,17 +226,30 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     );
   };
 
-  // Login Handler (checks real server database first so cross-device accounts work everywhere!)
+  // Universal Owner Account Validator
+  const isOwnerAccount = (username?: string, email?: string, citizenName?: string): boolean => {
+    const u = String(username || '').toLowerCase().trim();
+    const em = String(email || '').toLowerCase().trim();
+    const c = String(citizenName || '').toLowerCase().trim();
+    return (
+      em === 'kchiboy50@gmail.com' ||
+      u === 'chiboy' ||
+      u === 'chiboy_52' ||
+      c === 'chiboy' ||
+      c.includes('chiboy')
+    );
+  };
+
+  // Login Handler (checks real server database first so cross-device accounts work everywhere via Username OR Email!)
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
-    const cleanUsername = loginUsername.trim().toLowerCase();
-    if (!cleanUsername) {
-      setErrorMessage('Please enter your citizen username');
+    const cleanIdentifier = loginUsername.trim().toLowerCase();
+    if (!cleanIdentifier) {
+      setErrorMessage('Please enter your citizen username or Email address');
       return;
     }
-    const isOwner = cleanUsername === 'chiboy_52';
     if (!loginPassword.trim()) {
       setErrorMessage('Password is required! You must enter the correct password.');
       return;
@@ -248,29 +261,35 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: cleanUsername, password: effectivePassword }),
+        body: JSON.stringify({ identifier: cleanIdentifier, username: cleanIdentifier, email: cleanIdentifier, password: effectivePassword }),
       });
 
       if (res.ok) {
         const data = await res.json();
         if (data.profile) {
-          // Document wipe requirement: ensure legacy visas are wiped
           if (!data.profile.ownedDocuments) data.profile.ownedDocuments = [];
-          if (cleanUsername === 'chiboy_52') {
+          const isOwner = isOwnerAccount(data.profile.username, data.profile.gmail || data.profile.email, data.profile.citizenName || data.profile.firstName);
+          if (isOwner) {
             const SEXTILLION_999 = 9.99e23;
+            data.profile.isOwner = true;
+            data.profile.isOwnerAccount = true;
+            data.profile.isVerified = true;
+            data.profile.socialClass = 'nepo';
+            data.profile.phoneModel = 'iphone_18_pm';
             data.profile.bankNaira = SEXTILLION_999;
             data.profile.cashNaira = SEXTILLION_999;
             data.profile.bankCAD = SEXTILLION_999;
             data.profile.savingsCAD = SEXTILLION_999;
+            data.profile.cashUSD = 1000000000;
+            data.profile.fatherRentSubsidyPct = 100;
           }
-          saveUserRecord(cleanUsername, {
+          saveUserRecord(data.profile.username.toLowerCase(), {
             password: effectivePassword,
             profile: data.profile,
           });
           setSyncedUsers(getStoredUsers());
           saveSession(data.profile);
           triggerSound?.('stamp');
-          // Resume at last saved location state / country, never reset to Abia!
           const targetLocId = data.profile.lastLocationStateId || data.profile.spawnStateId || 'lagos';
           const resumeState = getStateById(targetLocId);
           onAuthSuccess(data.profile, resumeState);
@@ -287,13 +306,20 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
 
     // 2. Fallback to local storage if server was unreachable or offline
     const users = getStoredUsers();
-    const userRecord = users[cleanUsername];
+    // Search by username or email
+    const matchedEntry = Object.entries(users).find(([uKey, uRec]) => {
+      const u = uKey.toLowerCase().trim();
+      const g = (uRec.profile?.gmail || uRec.profile?.email || '').toLowerCase().trim();
+      return u === cleanIdentifier || g === cleanIdentifier;
+    });
 
-    if (!userRecord) {
-      setErrorMessage('Citizen username not found. Please click "CREATE NEW LIFE" to create your account.');
+    if (!matchedEntry) {
+      setErrorMessage('Account not found with this username or Email. Please click "CREATE NEW LIFE" to sign up.');
       triggerSound?.('alert');
       return;
     }
+
+    const [matchedKey, userRecord] = matchedEntry;
 
     if (userRecord.password && userRecord.password !== loginPassword) {
       setErrorMessage('Incorrect password. Please verify your credentials.');
@@ -301,16 +327,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
       return;
     }
 
-    if (cleanUsername === 'chiboy_52') {
+    const isOwner = isOwnerAccount(matchedKey, userRecord.profile?.gmail || userRecord.profile?.email, userRecord.profile?.citizenName || userRecord.profile?.firstName);
+    if (isOwner) {
       const SEXTILLION_999 = 9.99e23;
+      userRecord.profile.isOwner = true;
+      userRecord.profile.isOwnerAccount = true;
+      userRecord.profile.isVerified = true;
+      userRecord.profile.socialClass = 'nepo';
+      userRecord.profile.phoneModel = 'iphone_18_pm';
       userRecord.profile.bankNaira = SEXTILLION_999;
       userRecord.profile.cashNaira = SEXTILLION_999;
       userRecord.profile.bankCAD = SEXTILLION_999;
       userRecord.profile.savingsCAD = SEXTILLION_999;
+      userRecord.profile.cashUSD = 1000000000;
+      userRecord.profile.fatherRentSubsidyPct = 100;
     }
     if (!userRecord.profile.ownedDocuments) userRecord.profile.ownedDocuments = [];
 
-    // Success login -> directly enter the map at last location
     saveSession(userRecord.profile);
     triggerSound?.('stamp');
     const targetLocId = userRecord.profile.lastLocationStateId || userRecord.profile.spawnStateId || 'lagos';
@@ -318,15 +351,26 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     onAuthSuccess(userRecord.profile, resumeState);
   };
 
-  // Step 1 Signup submission -> move to Status Reveal!
+  // Step 1 Signup submission (Email, Username, Birthday, Password) -> move to Avatar Customization!
   const handleSignupSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
 
+    const cleanEmail = signupGmail.trim().toLowerCase();
     const cleanUsername = signupUsername.trim().toLowerCase();
     const rawUsername = signupUsername.trim();
+
+    // 1. Email validation (accepts ANY valid email provider: Gmail, Yahoo, Outlook, etc.)
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
+      setErrorMessage('Please provide a valid email address (e.g. kchiboy50@gmail.com or citizen@domain.com)');
+      triggerSound?.('alert');
+      return;
+    }
+
+    // 2. Citizen Username validation: LETTERS ONLY!
     if (!cleanUsername) {
-      setErrorMessage('Please choose a username');
+      setErrorMessage('Please choose a citizen username');
       return;
     }
     if (cleanUsername !== 'chiboy_52') {
@@ -341,40 +385,56 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
       setErrorMessage('Username must be at least 3 characters long');
       return;
     }
-    if (!firstName.trim() || !lastName.trim()) {
-      setErrorMessage('Please provide your First and Last name');
+
+    // 3. Birthday validation
+    if (!dateOfBirth) {
+      setErrorMessage('Please select your Date of Birth');
       return;
     }
+
+    // 4. Password validation
     if (!signupPassword || signupPassword.length < 4) {
       setErrorMessage('Password is required and must be at least 4 characters long');
       return;
     }
 
-    // Check if username is already taken
+    // Derive display citizen name from username
+    const formattedFirstName = rawUsername.charAt(0).toUpperCase() + rawUsername.slice(1);
+    const formattedLastName = 'Citizen';
+    const cleanCitizenName = formattedFirstName.toLowerCase();
+
+    // Check if username, email, or citizen name is already taken across all known accounts
+    // "ONLY ONE ACCT PER NAME TWO ACCTS CANNOT BEAR THE SAME CITIZEN NAME"
     const existingUsers = getStoredUsers();
-    if (existingUsers[cleanUsername] || syncedUsers[cleanUsername]) {
-      setErrorMessage(`Username "${signupUsername}" is already taken! Please choose another username.`);
-      triggerSound?.('alert');
-      return;
-    }
-
-    // Check if citizen full name (firstName + lastName) is already registered
-    const candidateFullName = `${firstName.trim().toLowerCase()} ${lastName.trim().toLowerCase()}`;
     const allKnownUsers = { ...existingUsers, ...syncedUsers };
-    const isNameTaken = Object.values(allKnownUsers).some((u) => {
-      const f = u.profile?.firstName?.trim().toLowerCase() || '';
-      const l = u.profile?.lastName?.trim().toLowerCase() || '';
-      return `${f} ${l}` === candidateFullName;
-    });
 
-    if (isNameTaken) {
-      setErrorMessage(`Citizen name "${firstName.trim()} ${lastName.trim()}" is already in use! Citizen full names must be unique.`);
-      triggerSound?.('alert');
-      return;
+    for (const [uKey, uRec] of Object.entries(allKnownUsers)) {
+      const exUser = uKey.toLowerCase().trim();
+      const exEmail = (uRec.profile?.gmail || uRec.profile?.email || '').toLowerCase().trim();
+      const exFirstName = (uRec.profile?.firstName || '').toLowerCase().trim();
+      const exCitizenName = (uRec.profile?.citizenName || '').toLowerCase().trim();
+
+      if (exUser === cleanUsername) {
+        setErrorMessage(`Username "${signupUsername}" is already taken! Every citizen must have a distinct unique username.`);
+        triggerSound?.('alert');
+        return;
+      }
+      if (exEmail === cleanEmail) {
+        setErrorMessage(`Email "${signupGmail}" is already registered to an existing citizen account!`);
+        triggerSound?.('alert');
+        return;
+      }
+      if ((exCitizenName && exCitizenName === cleanCitizenName) || (exFirstName && exFirstName === cleanCitizenName)) {
+        setErrorMessage(`Citizen name "${formattedFirstName}" is already taken! Two accounts cannot bear the same citizen name.`);
+        triggerSound?.('alert');
+        return;
+      }
     }
 
-    // Determine Social Class:
-    // Game Owner Override: "chiboy_52" is NEPO with 999 Sextillion!
+    // Owner Recognition:
+    // "any acct created with kchiboy50@gmail.com and chiboy as citizen name IS THE OWNER ACCOUNT WHICH WILL GET THE OWNERS PRIVILEDGES"
+    const isOwner = isOwnerAccount(cleanUsername, cleanEmail, cleanCitizenName);
+
     let socialClass: SocialClass = 'mapo';
     let startingCash = 0;
     let startingBank = 0;
@@ -383,9 +443,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     let fatherSubsidy = 35;
     let startingHouseDesc = '4-Bedroom Flat';
 
-    if (cleanUsername === 'chiboy_52') {
+    if (isOwner) {
       socialClass = 'nepo';
-      // 999 Sextillion: 9.99 * 10^23
       const SEXTILLION_999 = 9.99e23;
       startingBank = SEXTILLION_999;
       startingCash = SEXTILLION_999;
@@ -397,17 +456,15 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
       // Randomize between Lapo, Mapo, and Nepo
       const rand = Math.random();
       if (rand < 0.45) {
-        // Lapo: starts with 50k to 100k randomised, which is a loan to pay off from bank app
         socialClass = 'lapo';
         const lapoTotal = Math.floor(Math.random() * (100000 - 50000 + 1)) + 50000;
         startingCash = lapoTotal;
         startingBank = 0;
-        loanBalance = lapoTotal; // loan that must be paid back
+        loanBalance = lapoTotal;
         fatherSubsidy = 0;
         phoneModel = 'iphone_x';
         startingHouseDesc = 'Self-Contain Apartment';
       } else if (rand < 0.85) {
-        // Mapo: starts with 800k to 1m randomised, no loan, father pays 35% of house rent
         socialClass = 'mapo';
         const mapoTotal = Math.floor(Math.random() * (1000000 - 800000 + 1)) + 800000;
         startingCash = Math.round(mapoTotal * 0.15);
@@ -417,7 +474,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
         phoneModel = 'samsung_s24_base';
         startingHouseDesc = '4-Bedroom Flat';
       } else {
-        // Nepo: starts with 1.5m to 3m randomised, no loan, father pays 100% of house rent
         socialClass = 'nepo';
         const nepoTotal = Math.floor(Math.random() * (3000000 - 1500000 + 1)) + 1500000;
         startingCash = Math.round(nepoTotal * 0.15);
@@ -431,8 +487,11 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
 
     const initialProfile: UserProfile = {
       username: signupUsername.trim(),
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
+      citizenName: formattedFirstName,
+      gmail: cleanEmail,
+      email: cleanEmail,
+      firstName: formattedFirstName,
+      lastName: formattedLastName,
       dateOfBirth,
       createdAt: new Date().toISOString(),
       avatar,
@@ -440,19 +499,22 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
       lastLocationStateId: signupStateId,
       socialClass,
       phoneModel,
+      isOwner,
+      isOwnerAccount: isOwner,
+      isVerified: isOwner,
       cashNaira: startingCash,
       bankNaira: startingBank,
       loanBalanceNGN: loanBalance,
       savingsBalanceNGN: 0,
-      bankCAD: cleanUsername === 'chiboy_52' ? 9.99e23 : 0,
-      savingsCAD: cleanUsername === 'chiboy_52' ? 9.99e23 : 0,
-      cashUSD: cleanUsername === 'chiboy_52' ? 1000000 : socialClass === 'nepo' ? 5000 : socialClass === 'mapo' ? 200 : 0,
+      bankCAD: isOwner ? 9.99e23 : 0,
+      savingsCAD: isOwner ? 9.99e23 : 0,
+      cashUSD: isOwner ? 1000000000 : socialClass === 'nepo' ? 5000 : socialClass === 'mapo' ? 200 : 0,
       energy: 100,
       hunger: 95,
       health: 100,
-      happiness: cleanUsername === 'chiboy_52' ? 100 : socialClass === 'nepo' ? 95 : 85,
+      happiness: isOwner ? 100 : socialClass === 'nepo' ? 95 : 85,
       inventory: [
-        cleanUsername === 'chiboy_52' ? 'VIP Game Owner Pass' : 'Federal NIN Slip',
+        isOwner ? 'VIP Game Owner Pass' : 'Federal NIN Slip',
         phoneModel === 'iphone_18_pm'
           ? 'iPhone 18 Pro Max'
           : phoneModel === 'iphone_17_pm'
@@ -469,7 +531,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
       receipts: [
         {
           id: 'rcpt_welcome',
-          title: cleanUsername === 'chiboy_52' ? 'Game Owner Founder Grant' : `Welcome Grant (${socialClass.toUpperCase()})`,
+          title: isOwner ? 'Game Owner Founder Grant' : `Welcome Grant (${socialClass.toUpperCase()})`,
           category: 'general',
           amount: startingBank + startingCash,
           date: new Date().toLocaleDateString(),
@@ -479,8 +541,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
       alerts: [
         {
           id: 'alrt_start',
-          text: cleanUsername === 'chiboy_52'
-            ? 'Welcome Game Owner @chiboy_52! ₦999 Sextillion balance and owner privileges granted.'
+          text: isOwner
+            ? `Welcome Game Owner @${signupUsername}! ₦999 Sextillion balance and owner privileges granted.`
             : `Welcome to Naija Life! Assigned Status: ${socialClass.toUpperCase()}.${loanBalance > 0 ? ' Repay your ₦100,000 startup loan in Naija Pay.' : ''}`,
           amount: startingBank + startingCash,
           date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -492,7 +554,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
 
     setPendingProfile(initialProfile);
     triggerSound?.('stamp');
-    // Step 2: Proceed to Avatar Customization!
+    // Step 2: Proceed immediately to Avatar Customization!
     setCurrentStep('CUSTOMIZE');
   };
 
@@ -515,6 +577,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: finalUser.username,
+          email: finalUser.email || finalUser.gmail,
+          gmail: finalUser.gmail || finalUser.email,
           password: signupPassword,
           profile: finalUser,
         }),
@@ -863,45 +927,43 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
           )}
 
           {authMode === 'SIGNUP' ? (
-            /* ================= SIGNUP FORM ================= */
+            /* ================= SIGNUP FORM (STRICTLY 4 FIELDS: GMAIL, USERNAME, BIRTHDAY, PASSWORD) ================= */
             <form onSubmit={handleSignupSubmit} className="space-y-3.5 relative z-10">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-zinc-300 block mb-1">First Name</label>
+              {/* 1. Gmail Address */}
+              <div>
+                <label className="text-xs font-bold text-zinc-300 block mb-1">Gmail / Email Address</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
-                    type="text"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="e.g. Tunde"
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-zinc-300 block mb-1">Last Name</label>
-                  <input
-                    type="text"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="e.g. Adeleke"
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
+                    type="email"
+                    value={signupGmail}
+                    onChange={(e) => setSignupGmail(e.target.value)}
+                    placeholder="e.g. yourname@gmail.com"
+                    required
+                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all font-mono"
                   />
                 </div>
               </div>
 
+              {/* 2. Citizen Username (Letters only) */}
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">Citizen Username</label>
+                <label className="text-xs font-bold text-zinc-300 block mb-1">
+                  Citizen Username <span className="text-[10px] text-zinc-400 font-normal">(Letters only, unique)</span>
+                </label>
                 <div className="relative">
                   <User className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={signupUsername}
                     onChange={(e) => setSignupUsername(e.target.value)}
-                    placeholder="Choose your unique username"
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
+                    placeholder="e.g. chidubem"
+                    required
+                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all font-mono"
                   />
                 </div>
               </div>
 
+              {/* 3. Date of Birth */}
               <div>
                 <label className="text-xs font-bold text-zinc-300 block mb-1">Date of Birth</label>
                 <div className="relative">
@@ -910,11 +972,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                     type="date"
                     value={dateOfBirth}
                     onChange={(e) => setDateOfBirth(e.target.value)}
+                    required
                     className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
                   />
                 </div>
               </div>
 
+              {/* 4. Password */}
               <div>
                 <label className="text-xs font-bold text-zinc-300 block mb-1">Password</label>
                 <div className="relative">
@@ -924,6 +988,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                     value={signupPassword}
                     onChange={(e) => setSignupPassword(e.target.value)}
                     placeholder="At least 4 characters"
+                    required
                     className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-9 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
                   />
                   <button
@@ -961,7 +1026,15 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                     {deviceUserKeys.map((uKey: string) => {
                       const uRec = syncedUsers[uKey];
                       const isSelected = loginUsername.toLowerCase().trim() === uKey;
-                      const isOwner = uKey === 'chiboy_52';
+                      const isOwner =
+                        uRec?.profile?.isOwner === true ||
+                        uRec?.profile?.isOwnerAccount === true ||
+                        uKey === 'chiboy' ||
+                        uKey === 'chiboy_52' ||
+                        uRec?.profile?.gmail?.toLowerCase() === 'kchiboy50@gmail.com' ||
+                        uRec?.profile?.email?.toLowerCase() === 'kchiboy50@gmail.com' ||
+                        uRec?.profile?.citizenName?.toLowerCase() === 'chiboy' ||
+                        uRec?.profile?.firstName?.toLowerCase() === 'chiboy';
                       return (
                         <button
                           key={uKey}
@@ -997,15 +1070,16 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
               )}
 
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Citizen Username</label>
+                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Citizen Username or Gmail</label>
                 <div className="relative">
                   <User className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={loginUsername}
                     onChange={(e) => setLoginUsername(e.target.value)}
-                    placeholder="Enter your citizen username"
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
+                    placeholder="Enter your username or Gmail"
+                    required
+                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all font-mono"
                   />
                 </div>
               </div>

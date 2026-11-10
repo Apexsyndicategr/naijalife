@@ -61,6 +61,12 @@ export interface BankAlert {
 
 export interface UserProfile {
   username: string;
+  citizenName?: string;
+  isOwner?: boolean;
+  isOwnerAccount?: boolean;
+  isVerified?: boolean;
+  gmail?: string;
+  email?: string;
   firstName: string;
   lastName: string;
   dateOfBirth: string; // Real life DOB as requested
@@ -88,6 +94,7 @@ export interface UserProfile {
   inventory: string[];
   fatherRentSubsidyPct: number; // 0 for Lapo, 35 for Mapo, 100 for Nepo
   completedCourses: string[];
+  academyProgress?: Record<string, any>;
   activeJobId?: string;
   jobTitle?: string;
   jobLevel?: number;

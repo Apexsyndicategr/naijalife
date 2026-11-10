@@ -123,7 +123,13 @@ import { formatNaira, formatCAD, formatFullNumberDigits } from '../utils/formatN
 import { getStoredUsers, STORAGE_USERS_KEY, saveSession } from './AuthPortal';
 import { LUXURY_CATALOG, LuxuryVehicleItem } from '../data/luxuryCatalog';
 import { PET_CATALOG, PetItem } from '../data/petCatalog';
-import { getCourseLessons, CourseLesson, StudentCourseProgress } from '../data/courseCurriculum';
+import {
+  getCourseLessons,
+  getCourseTotalLessons,
+  getCourseDailyCap,
+  CourseLesson,
+  StudentCourseProgress,
+} from '../data/courseCurriculum';
 import { SnapchatApp } from './SnapchatApp';
 import {
   EXPANDED_105_WALLPAPERS,
@@ -155,6 +161,11 @@ import {
   CANADIAN_FOOD_95_ADDITIONAL,
   CAD_TO_NGN_RATE,
 } from '../data/canadaExpandedCatalogs';
+import {
+  getJobCertificateRequirement,
+  getWorkShiftQuestions,
+  WorkShiftQuestion
+} from '../data/workShiftScenarios';
 
 export function formatFullNairaNumber(amount: number): string {
   if (!amount || isNaN(amount)) return '₦0.00';
@@ -485,6 +496,19 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [activeLessonStep, setActiveLessonStep] = useState<'reading' | 'quiz' | 'result'>('reading');
   const [selectedQuizAnswers, setSelectedQuizAnswers] = useState<Record<number, number>>({});
   const [lastQuizResult, setLastQuizResult] = useState<{ score: number; gpa: number; passed: boolean } | null>(null);
+  const [currentQuizQuestionIndex, setCurrentQuizQuestionIndex] = useState<number>(0);
+  const [selectedQuizChoice, setSelectedQuizChoice] = useState<number | null>(null);
+  const [quizAnswerSubmitted, setQuizAnswerSubmitted] = useState<boolean>(false);
+
+  const saveCourseProgress = (updatedMap: Record<string, StudentCourseProgress>) => {
+    setCourseProgressMap(updatedMap);
+    try {
+      localStorage.setItem('naija_life_course_progress_v3', JSON.stringify(updatedMap));
+    } catch {}
+    if (userProfile) {
+      userProfile.academyProgress = updatedMap;
+    }
+  };
 
   // Luxury App state (98 models: 33 jets, 33 helicopters, 32 yachts)
   const [luxuryCategoryFilter, setLuxuryCategoryFilter] = useState<'all' | 'jet' | 'helicopter' | 'yacht'>('all');
@@ -662,10 +686,72 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [registryScanMsg, setRegistryScanMsg] = useState<string>('Connecting to Naija Life Server Core...');
   const [registryScanResult, setRegistryScanResult] = useState<string | null>(null);
   const [registrySearchTerm, setRegistrySearchTerm] = useState<string>('');
+  const [academySearchQuery, setAcademySearchQuery] = useState<string>('');
+
+  // Interactive 15-question Work Shift State with 10-15 min countdown timer
+  const [activeWorkShift, setActiveWorkShift] = useState<{
+    job: any;
+    isCanada: boolean;
+    questions: WorkShiftQuestion[];
+    currentIndex: number;
+    correctCount: number;
+    timerSeconds: number;
+    maxTimerSeconds: number;
+    isComplete: boolean;
+    answers: number[];
+    selectedOption: {
+      letter: 'A' | 'B' | 'C' | 'D' | 'E';
+      text: string;
+      isOptimal: boolean;
+      feedback: string;
+      scoreDelta: number;
+    } | null;
+  } | null>(null);
+
+  // Active Work Shift Countdown Timer (between 10 mins and 15 mins countdown)
+  useEffect(() => {
+    if (!activeWorkShift || activeWorkShift.isComplete || activeWorkShift.timerSeconds <= 0) return;
+    const shiftInterval = setInterval(() => {
+      setActiveWorkShift((prev) => {
+        if (!prev || prev.isComplete) return prev;
+        if (prev.timerSeconds <= 1) {
+          return {
+            ...prev,
+            timerSeconds: 0,
+            isComplete: true,
+          };
+        }
+        return {
+          ...prev,
+          timerSeconds: prev.timerSeconds - 1,
+        };
+      });
+    }, 1000);
+    return () => clearInterval(shiftInterval);
+  }, [activeWorkShift?.isComplete]);
+
+  // Universal Owner Account Validator in Phone
+  const checkIsOwner = (prof?: any | null): boolean => {
+    if (!prof) return false;
+    const u = String(prof.username || '').toLowerCase().trim();
+    const em = String(prof.gmail || prof.email || '').toLowerCase().trim();
+    const cName = String(prof.citizenName || prof.firstName || '').toLowerCase().trim();
+    return (
+      prof.isOwner === true ||
+      prof.isOwnerAccount === true ||
+      u === 'chiboy' ||
+      u === 'chiboy_52' ||
+      em === 'kchiboy50@gmail.com' ||
+      cName === 'chiboy' ||
+      cName.startsWith('chiboy')
+    );
+  };
 
   const fetchPlayersRegistry = async () => {
     try {
-      const res = await fetch('/api/owner/players-registry?username=chiboy_52');
+      const u = userProfile?.username || 'chiboy';
+      const em = userProfile?.gmail || userProfile?.email || 'kchiboy50@gmail.com';
+      const res = await fetch(`/api/owner/players-registry?username=${encodeURIComponent(u)}&email=${encodeURIComponent(em)}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.players)) {
@@ -677,6 +763,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
     const stored = getStoredUsers();
     const fallbackList = Object.entries(stored).map(([k, v]: [string, any]) => ({
       username: v.profile?.username || k,
+      gmail: v.profile?.gmail || v.profile?.email || 'citizen@naijalife.ng',
       citizenName: `${v.profile?.firstName || ''} ${v.profile?.lastName || ''}`.trim() || k,
       gender: v.profile?.gender || v.profile?.avatar?.gender || 'male',
       stateOfOrigin: v.profile?.spawnStateId || v.profile?.originState || 'Lagos',
@@ -1182,9 +1269,18 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   }, [groceryCategoryFilter, grocerySearchQuery]);
 
   const filteredCourses = useMemo(() => {
-    if (courseCategoryFilter === 'All') return EXPANDED_COURSES;
-    return EXPANDED_COURSES.filter((c) => c.category === courseCategoryFilter);
-  }, [courseCategoryFilter]);
+    return EXPANDED_COURSES.filter((c) => {
+      const matchCat = courseCategoryFilter === 'All' || c.category === courseCategoryFilter;
+      const q = academySearchQuery.trim().toLowerCase();
+      const matchSearch =
+        !q ||
+        c.title.toLowerCase().includes(q) ||
+        c.desc.toLowerCase().includes(q) ||
+        c.institution.toLowerCase().includes(q) ||
+        (c.certificateName && c.certificateName.toLowerCase().includes(q));
+      return matchCat && matchSearch;
+    });
+  }, [courseCategoryFilter, academySearchQuery]);
 
   const filteredBoutique = useMemo(() => {
     if (boutiqueCategoryFilter === 'All') return EXPANDED_BOUTIQUE;
@@ -1240,6 +1336,154 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
       return p.species.toLowerCase() === petCategoryFilter.toLowerCase();
     });
   }, [petCategoryFilter]);
+
+  // Launch an interactive 15-question shift with 10-15 min countdown timer
+  const handleLaunchShift = (j: any, isCanada: boolean) => {
+    // 1. Certificate check
+    const certReq = getJobCertificateRequirement(j.id, j.title, j.sector || 'commerce');
+    const hasCert = !certReq || completedCoursesState.includes(certReq.courseId) || (userProfile?.completedCourses || []).includes(certReq.courseId);
+    if (!hasCert && certReq) {
+      onShowToast(`📜 Degree Required: You must study ${certReq.courseName} in the Academy first!`);
+      setAcademySearchQuery(certReq.courseName.split(' ')[0]);
+      if (certReq.region === 'canada') setCourseRegion('canada');
+      else setCourseRegion('nigeria');
+      setCurrentApp('courses');
+      triggerSound?.('alert');
+      return;
+    }
+
+    // 2. Energy check
+    if (energy < j.minEnergy) {
+      onShowToast(`Too exhausted to work this shift! Eat or rest first (Energy ${energy}% / required ${j.minEnergy}%).`);
+      triggerSound?.('alert');
+      return;
+    }
+
+    // 3. Canada physical location check
+    if (isCanada && currentStateId !== 'canada') {
+      onShowToast('✈️ Location Alert: You must fly to Canada to work this on-site Canadian job! Board a flight in Airport App.');
+      triggerSound?.('alert');
+      return;
+    }
+
+    // 4. Canada work permit check
+    if (isCanada) {
+      const hasValidWorkPermit = (userProfile?.ownedDocuments || []).some((d) => {
+        const isPermit = ['work_permit', 'pr_card', 'citizenship'].includes(d.type);
+        const isCan = d.country === 'Canada';
+        const isExp = d.isExpired || (d.expiresAtTimestamp ? Date.now() > d.expiresAtTimestamp : false);
+        return isPermit && isCan && !isExp;
+      });
+      if (!hasValidWorkPermit) {
+        onShowToast('⛔ IRCC Alert: A valid 7-Day Canadian Work Permit is required for this role!');
+        triggerSound?.('alert');
+        return;
+      }
+    }
+
+    // 5. Initialize interactive 15-question shift with 12-minute countdown timer (720 seconds)
+    const questions = getWorkShiftQuestions(j.title, j.sector || 'corporate');
+    setCurrentJob(j);
+    setActiveWorkShift({
+      job: j,
+      isCanada,
+      questions,
+      currentIndex: 0,
+      correctCount: 0,
+      timerSeconds: 720,
+      maxTimerSeconds: 720,
+      isComplete: false,
+      answers: [],
+      selectedOption: null,
+    });
+    triggerSound?.('coin');
+  };
+
+  // Finalize shift and compute salary + bonuses
+  const handleFinalizeShift = () => {
+    if (!activeWorkShift) return;
+    const { job, isCanada, correctCount } = activeWorkShift;
+
+    const rank = userProfile?.jobRank || 'Apprentice';
+    const multipliers: Record<string, number> = {
+      'Apprentice': 1.0,
+      'Junior': 1.0,
+      'Associate': 1.8,
+      'Senior': 3.5,
+      'Manager': 6.0,
+    };
+    const mult = multipliers[rank] || 1.0;
+
+    let earnedAmount = 0;
+
+    if (isCanada) {
+      const baseWeeklyCAD = job.salaryCADWeekly || 1200;
+      const baseShiftCAD = Math.round((baseWeeklyCAD * mult) / 7);
+      const performanceBonusCAD = Math.round(baseShiftCAD * (correctCount / 15) * 0.4);
+      earnedAmount = baseShiftCAD + performanceBonusCAD;
+
+      if (userProfile) {
+        userProfile.bankCAD = (userProfile.bankCAD || 0) + earnedAmount;
+        if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
+        userProfile.receipts.unshift({
+          id: `SHIFT_CAN_${Date.now()}`,
+          title: `Shift Payroll: ${job.title} (${correctCount}/15 Performance)`,
+          category: 'career',
+          amount: earnedAmount,
+          date: new Date().toLocaleDateString('en-CA'),
+          type: 'credit',
+          currency: 'CAD',
+        });
+      }
+    } else {
+      const baseWeeklyNGN = job.salaryNGN || 28000;
+      const baseShiftNGN = Math.round((baseWeeklyNGN * mult) / 7);
+      const performanceBonusNGN = Math.round(baseShiftNGN * (correctCount / 15) * 0.35);
+      earnedAmount = baseShiftNGN + performanceBonusNGN;
+
+      onUpdateMoney(earnedAmount);
+      if (userProfile) {
+        userProfile.jobWeeklySalaryNGN = Math.round(baseWeeklyNGN * mult);
+      }
+    }
+
+    const newShifts = (userProfile?.jobShiftsWorked || 0) + 1;
+    let newRank = userProfile?.jobRank || 'Apprentice';
+    let gotPromoted = false;
+
+    if (newShifts >= 30 && newRank !== 'Manager') {
+      newRank = 'Manager';
+      gotPromoted = true;
+    } else if (newShifts >= 15 && (newRank === 'Apprentice' || newRank === 'Associate')) {
+      newRank = 'Senior';
+      gotPromoted = true;
+    } else if (newShifts >= 5 && newRank === 'Apprentice') {
+      newRank = 'Associate';
+      gotPromoted = true;
+    }
+
+    if (userProfile) {
+      userProfile.jobShiftsWorked = newShifts;
+      userProfile.jobRank = newRank;
+    }
+
+    onUpdateStats({
+      energy: -job.minEnergy,
+      hunger: -15,
+      happiness: correctCount >= 10 ? 10 : 4,
+    });
+
+    if (gotPromoted) {
+      onShowToast(`🏆 PROMOTION! You were promoted to ${newRank.toUpperCase()}! Salary multiplied!`);
+      triggerSound?.('success');
+    } else {
+      const payLabel = isCanada ? `$${earnedAmount} CAD` : formatNaira(earnedAmount);
+      onShowToast(`💼 Shift Completed! Earned ${payLabel} (${correctCount}/15 correct decisions)!`);
+      triggerSound?.('coin');
+    }
+
+    setActiveWorkShift(null);
+  };
 
   return (
     <div
@@ -3348,10 +3592,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       </div>
                       <div className="mt-1">
                         <div className="text-lg sm:text-xl font-mono font-black text-white leading-tight break-all">
-                          ₦{formatFullNumberDigits(userProfile?.username?.toLowerCase() === 'chiboy_52' ? 9.99e23 : moneyNGN)}
+                          ₦{formatFullNumberDigits(checkIsOwner(userProfile) ? 9.99e23 : moneyNGN)}
                         </div>
                         <div className="text-[10px] font-bold text-emerald-300/90 font-mono mt-0.5">
-                          ({formatNaira(userProfile?.username?.toLowerCase() === 'chiboy_52' ? 9.99e23 : moneyNGN)})
+                          ({formatNaira(checkIsOwner(userProfile) ? 9.99e23 : moneyNGN)})
                         </div>
                       </div>
                       <div className="flex items-center justify-between mt-2 pt-2 border-t border-emerald-500/20 text-[10px] text-zinc-400">
@@ -3552,7 +3796,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                             const storedUsers = getStoredUsers();
                             const recipientRecord = storedUsers[cleanRecipient];
-                            if (!recipientRecord && cleanRecipient !== 'chiboy_52') {
+                            if (!recipientRecord && cleanRecipient !== 'chiboy_52' && cleanRecipient !== 'chiboy') {
                               onShowToast(`Citizen @${cleanRecipient} not found. Transfers can only be made to real registered citizens!`);
                               triggerSound?.('alert');
                               return;
@@ -3753,10 +3997,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       </div>
                       <div className="mt-1">
                         <div className="text-lg sm:text-xl font-mono font-black text-white leading-tight break-all">
-                          ${formatFullNumberDigits(userProfile?.username?.toLowerCase() === 'chiboy_52' ? 9.99e23 : (userProfile?.bankCAD || 0))} CAD
+                          ${formatFullNumberDigits(checkIsOwner(userProfile) ? 9.99e23 : (userProfile?.bankCAD || 0))} CAD
                         </div>
                         <div className="text-[10px] font-bold text-red-300/90 font-mono mt-0.5">
-                          ({formatCAD(userProfile?.username?.toLowerCase() === 'chiboy_52' ? 9.99e23 : (userProfile?.bankCAD || 0))})
+                          ({formatCAD(checkIsOwner(userProfile) ? 9.99e23 : (userProfile?.bankCAD || 0))})
                         </div>
                       </div>
                       <div className="flex items-center justify-between mt-2 pt-2 border-t border-red-500/20 text-[10px] text-zinc-400">
@@ -4320,6 +4564,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         return isPermit && isCan && !isExp;
                       });
 
+                      const certReq = getJobCertificateRequirement(j.id, j.title, j.sector || 'commerce');
+                      const hasCert = !certReq || completedCoursesState.includes(certReq.courseId) || (userProfile?.completedCourses || []).includes(certReq.courseId);
+
                       return (
                         <div key={j.id} className="p-3.5 rounded-2xl bg-zinc-950/90 border border-red-500/30 space-y-2 shadow-md">
                           <div className="flex justify-between items-start">
@@ -4339,117 +4586,65 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                           <p className="text-[10px] text-zinc-300 leading-relaxed">{j.desc}</p>
 
+                          {/* University Degree Certificate Requirement Notice */}
+                          {certReq && (
+                            <div className={`p-2 rounded-xl flex items-center justify-between gap-2 border text-[10px] ${
+                              hasCert ? 'bg-emerald-950/40 border-emerald-500/40' : 'bg-purple-950/40 border-purple-500/40'
+                            }`}>
+                              <div>
+                                <span className={`font-bold flex items-center gap-1 ${hasCert ? 'text-emerald-300' : 'text-purple-300'}`}>
+                                  <GraduationCap className="w-3.5 h-3.5" />
+                                  <span>{hasCert ? '✓ Degree Verified:' : '📜 Degree Required:'} {certReq.courseName}</span>
+                                </span>
+                                <span className="text-[9px] text-zinc-400 font-mono block">
+                                  {certReq.institution}
+                                </span>
+                              </div>
+                              {!hasCert && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAcademySearchQuery(certReq.courseName.split(' ')[0]);
+                                    setCourseRegion('canada');
+                                    setCurrentApp('courses');
+                                    onShowToast(`🔍 Searching Academy for "${certReq.courseName}"...`);
+                                    triggerSound?.('coin');
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[9px] shrink-0 cursor-pointer shadow"
+                                >
+                                  Search Academy
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           <div className="flex justify-between items-center pt-2 border-t border-zinc-900">
                             <span className="text-[9px] text-zinc-400 font-mono">
                               ⚡ Energy: {j.minEnergy}% · Shift: <strong className="text-emerald-400">+${shiftStipendCAD} CAD</strong>
                             </span>
 
-                            <button
-                              type="button"
-                              onClick={() => {
-                                // 1. Strict Travel Check: Must fly to Canada
-                                if (currentStateId !== 'canada') {
-                                  onShowToast('✈️ Location Alert: You must fly to Canada to work this on-site job! Board a flight in the Airport App.');
+                            {hasCert ? (
+                              <button
+                                type="button"
+                                onClick={() => handleLaunchShift(j, true)}
+                                className="px-3.5 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 text-white font-black text-[10px] rounded-xl cursor-pointer shadow transition-all flex items-center gap-1.5 active:scale-95"
+                              >
+                                <span>💼</span>
+                                <span>Work Shift (15 Tasks)</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onShowToast(`📜 You must obtain a degree in ${certReq?.courseName} from the Academy first!`);
                                   triggerSound?.('alert');
-                                  return;
-                                }
-
-                                // 2. Work Permit Check: Offer 7-day permit if not owned
-                                if (!hasValidWorkPermit) {
-                                  const userCad = userProfile?.bankCAD || 0;
-                                  if (userCad < 350) {
-                                    onShowToast('⛔ IRCC Clearance: You need a 7-Day Canadian Work Permit ($350 CAD). Insufficient CAD funds in your Canadian bank!');
-                                    triggerSound?.('alert');
-                                    return;
-                                  }
-
-                                  // Issue 7-day permit
-                                  if (userProfile) {
-                                    userProfile.bankCAD = userCad - 350;
-                                    const permitDoc: UserDocument = {
-                                      id: `can_work_permit_${Date.now()}`,
-                                      type: 'work_permit',
-                                      title: '7-Day Canadian Temporary Work Permit',
-                                      country: 'Canada',
-                                      documentNumber: `WP-CAN-${Math.floor(100000 + Math.random() * 900000)}`,
-                                      issueDate: new Date().toLocaleDateString('en-CA'),
-                                      validityWeeks: 1,
-                                      expiresAtTimestamp: Date.now() + 7 * 86400000,
-                                      expiryDate: 'Valid for 7 Days (Renew Weekly)',
-                                      status: 'Valid',
-                                      isExpired: false,
-                                      desc: `Official IRCC work authorization sponsored by ${j.employer} for on-site engineering and operations.`,
-                                      costNGN: 350 * 960.54,
-                                      institution: 'IRCC Canada',
-                                    };
-                                    if (!Array.isArray(userProfile.ownedDocuments)) userProfile.ownedDocuments = [];
-                                    userProfile.ownedDocuments.push(permitDoc);
-                                    if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                    userProfile.receipts.unshift({
-                                      id: `WP_CAN_${Date.now()}`,
-                                      title: `IRCC 7-Day Work Permit Renewal`,
-                                      category: 'immigration',
-                                      amount: 350,
-                                      date: new Date().toLocaleDateString('en-CA'),
-                                      type: 'debit',
-                                      currency: 'CAD',
-                                    });
-                                  }
-                                  onShowToast('🍁 Issued 7-Day Canadian Work Permit (-$350 CAD)! You can now work Canadian shifts.');
-                                  triggerSound?.('success');
-                                }
-
-                                if (energy < j.minEnergy) {
-                                  onShowToast('Too exhausted to work this Canadian shift! Eat or rest first.');
-                                  triggerSound?.('alert');
-                                  return;
-                                }
-
-                                const newShifts = (userProfile?.jobShiftsWorked || 0) + 1;
-                                let newRank = userProfile?.jobRank || 'Apprentice';
-                                let gotPromoted = false;
-
-                                if (newShifts >= 30 && newRank !== 'Manager') {
-                                  newRank = 'Manager';
-                                  gotPromoted = true;
-                                } else if (newShifts >= 15 && (newRank === 'Apprentice' || newRank === 'Associate')) {
-                                  newRank = 'Senior';
-                                  gotPromoted = true;
-                                } else if (newShifts >= 5 && newRank === 'Apprentice') {
-                                  newRank = 'Associate';
-                                  gotPromoted = true;
-                                }
-
-                                if (userProfile) {
-                                  userProfile.jobShiftsWorked = newShifts;
-                                  userProfile.jobRank = newRank;
-                                  userProfile.bankCAD = (userProfile.bankCAD || 0) + shiftStipendCAD;
-                                  if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                  userProfile.receipts.unshift({
-                                    id: `SHIFT_CAN_${Date.now()}`,
-                                    title: `Shift Payroll: ${j.title}`,
-                                    category: 'career',
-                                    amount: shiftStipendCAD,
-                                    date: new Date().toLocaleDateString('en-CA'),
-                                    type: 'credit',
-                                    currency: 'CAD',
-                                  });
-                                }
-
-                                onUpdateStats({ energy: -j.minEnergy, hunger: -15, happiness: 8 });
-
-                                if (gotPromoted) {
-                                  onShowToast(`🏆 PROMOTION! You were promoted to ${newRank.toUpperCase()}! Canadian salary multiplied!`);
-                                  triggerSound?.('success');
-                                } else {
-                                  onShowToast(`💼 Worked shift as ${newRank} ${j.title}! Earned +$${shiftStipendCAD} CAD (Deposited to Canadian bank)!`);
-                                  triggerSound?.('coin');
-                                }
-                              }}
-                              className="px-3.5 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 text-white font-bold text-[10px] rounded-xl cursor-pointer shadow transition-all"
-                            >
-                              Work Shift (+$ {shiftStipendCAD} CAD)
-                            </button>
+                                }}
+                                className="px-3 py-1.5 bg-zinc-800 text-zinc-500 font-bold text-[10px] rounded-xl cursor-not-allowed border border-zinc-700 flex items-center gap-1"
+                              >
+                                <span>🔒</span>
+                                <span>Degree Required</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -4472,6 +4667,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       const effectiveSalary = Math.round(startingSalary * mult);
                       const shiftStipend = Math.round(effectiveSalary / 7);
 
+                      const certReq = getJobCertificateRequirement(j.id, j.title, j.sector || 'commerce');
+                      const hasCert = !certReq || completedCoursesState.includes(certReq.courseId) || (userProfile?.completedCourses || []).includes(certReq.courseId);
+
                       return (
                         <div key={j.id} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 space-y-1.5 shadow-md">
                           <div className="flex justify-between items-start">
@@ -4485,53 +4683,64 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             </div>
                           </div>
                           <p className="text-[10px] text-zinc-400 leading-relaxed">{j.desc}</p>
+
+                          {/* University Degree Certificate Requirement Notice */}
+                          {certReq && (
+                            <div className={`p-2 rounded-xl flex items-center justify-between gap-2 border text-[10px] ${
+                              hasCert ? 'bg-emerald-950/40 border-emerald-500/40' : 'bg-purple-950/40 border-purple-500/40'
+                            }`}>
+                              <div>
+                                <span className={`font-bold flex items-center gap-1 ${hasCert ? 'text-emerald-300' : 'text-purple-300'}`}>
+                                  <GraduationCap className="w-3.5 h-3.5" />
+                                  <span>{hasCert ? '✓ Degree Verified:' : '📜 Degree Required:'} {certReq.courseName}</span>
+                                </span>
+                                <span className="text-[9px] text-zinc-400 font-mono block">
+                                  {certReq.institution}
+                                </span>
+                              </div>
+                              {!hasCert && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAcademySearchQuery(certReq.courseName.split(' ')[0]);
+                                    setCourseRegion('nigeria');
+                                    setCurrentApp('courses');
+                                    onShowToast(`🔍 Searching Academy for "${certReq.courseName}"...`);
+                                    triggerSound?.('coin');
+                                  }}
+                                  className="px-2 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[9px] shrink-0 cursor-pointer shadow"
+                                >
+                                  Search Academy
+                                </button>
+                              )}
+                            </div>
+                          )}
+
                           <div className="flex justify-between items-center pt-1.5 border-t border-zinc-900">
                             <span className="text-[9px] text-zinc-400 font-mono">⚡ Energy: {j.minEnergy}% · Shift: +{formatNaira(shiftStipend)}</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (energy < j.minEnergy) {
-                                  onShowToast('Too exhausted to work this shift! Eat or rest first.');
+
+                            {hasCert ? (
+                              <button
+                                type="button"
+                                onClick={() => handleLaunchShift(j, false)}
+                                className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-[10px] rounded-xl cursor-pointer shadow transition-all flex items-center gap-1.5 active:scale-95"
+                              >
+                                <span>💼</span>
+                                <span>Work Shift (15 Tasks)</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onShowToast(`📜 You must obtain a degree in ${certReq?.courseName} from the Academy first!`);
                                   triggerSound?.('alert');
-                                  return;
-                                }
-                                setCurrentJob(j);
-                                const newShifts = (userProfile?.jobShiftsWorked || 0) + 1;
-                                let newRank = userProfile?.jobRank || 'Apprentice';
-                                let gotPromoted = false;
-
-                                if (newShifts >= 30 && newRank !== 'Manager') {
-                                  newRank = 'Manager';
-                                  gotPromoted = true;
-                                } else if (newShifts >= 15 && (newRank === 'Apprentice' || newRank === 'Associate')) {
-                                  newRank = 'Senior';
-                                  gotPromoted = true;
-                                } else if (newShifts >= 5 && newRank === 'Apprentice') {
-                                  newRank = 'Associate';
-                                  gotPromoted = true;
-                                }
-
-                                if (userProfile) {
-                                  userProfile.jobShiftsWorked = newShifts;
-                                  userProfile.jobRank = newRank;
-                                  userProfile.jobWeeklySalaryNGN = effectiveSalary;
-                                }
-
-                                onUpdateMoney(shiftStipend);
-                                onUpdateStats({ energy: -j.minEnergy, hunger: -15, happiness: 5 });
-
-                                if (gotPromoted) {
-                                  onShowToast(`🏆 PROMOTION! You were promoted to ${newRank.toUpperCase()}! Salary multiplied!`);
-                                  triggerSound?.('success');
-                                } else {
-                                  onShowToast(`💼 Worked shift as ${newRank} ${j.title}! Shift stipend: +${formatNaira(shiftStipend)} (Shift ${newShifts})`);
-                                  triggerSound?.('coin');
-                                }
-                              }}
-                              className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-[10px] rounded-xl cursor-pointer shadow transition-all"
-                            >
-                              Work Shift
-                            </button>
+                                }}
+                                className="px-3 py-1.5 bg-zinc-800 text-zinc-500 font-bold text-[10px] rounded-xl cursor-not-allowed border border-zinc-700 flex items-center gap-1"
+                              >
+                                <span>🔒</span>
+                                <span>Degree Required</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -5210,6 +5419,27 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     </button>
                   </div>
 
+                  {/* UNIVERSAL ACADEMY DEGREE & COURSE SEARCH BAR */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-purple-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={academySearchQuery}
+                      onChange={(e) => setAcademySearchQuery(e.target.value)}
+                      placeholder="Search degree, course title, or university..."
+                      className="w-full bg-zinc-950/90 border border-purple-500/40 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-purple-400 font-mono shadow-inner"
+                    />
+                    {academySearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setAcademySearchQuery('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white text-xs cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
                   {courseRegion === 'canada' ? (
                     /* ================= CANADIAN UNIVERSITIES ================= */
                     <div className="space-y-3">
@@ -5285,16 +5515,37 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                       {/* CANADIAN COURSES LIST */}
                       <div className="space-y-2.5">
-                        {CANADA_COURSES.map((crs) => {
-                          const isCompleted = completedCoursesState.includes(crs.id);
-                          const userCad = userProfile?.bankCAD || 0;
+                        {CANADA_COURSES.filter((crs) => {
+                          const q = academySearchQuery.trim().toLowerCase();
                           return (
-                            <div key={crs.id} className="p-3.5 rounded-2xl bg-zinc-950/90 border border-red-500/30 space-y-2 shadow-md">
+                            !q ||
+                            crs.title.toLowerCase().includes(q) ||
+                            crs.desc.toLowerCase().includes(q) ||
+                            crs.institution.toLowerCase().includes(q) ||
+                            crs.city.toLowerCase().includes(q) ||
+                            crs.province.toLowerCase().includes(q)
+                          );
+                        }).map((crs) => {
+                          const totalL = getCourseTotalLessons(crs.id, crs.title);
+                          const dailyCap = getCourseDailyCap(totalL);
+                          const progress = courseProgressMap[crs.id];
+                          const isGraduated = completedCoursesState.includes(crs.id) || progress?.isGraduated;
+                          const todayStr = new Date().toLocaleDateString('en-CA');
+                          const isNewDay = progress && progress.lastLessonDate !== todayStr;
+                          const effectiveToday = progress ? (isNewDay ? 0 : (progress.lessonsDoneToday || 0)) : 0;
+                          const capReached = progress && effectiveToday >= dailyCap;
+                          const completedL = progress ? (progress.completedLessons || 0) : 0;
+                          const allLessonsDone = progress && completedL >= totalL;
+                          const gradFee = crs.feeCAD * 2;
+                          const userCad = userProfile?.bankCAD || 0;
+
+                          return (
+                            <div key={crs.id} className="p-3.5 rounded-2xl bg-zinc-950/90 border border-red-500/30 space-y-2.5 shadow-md">
                               <div className="flex items-start justify-between">
                                 <div>
-                                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                                  <div className="text-xs font-bold text-white flex items-center gap-1.5 flex-wrap">
                                     <span>{crs.title}</span>
-                                    {isCompleted && (
+                                    {isGraduated && (
                                       <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[9px] font-bold">
                                         ✓ Accredited Degree
                                       </span>
@@ -5304,28 +5555,166 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     {crs.institution} · 📍 {crs.city}, {crs.province}
                                   </div>
                                 </div>
-                                <span className="text-xs font-mono font-bold text-amber-300 shrink-0">
-                                  ${crs.feeCAD.toLocaleString()} CAD
-                                </span>
+                                <div className="text-right shrink-0">
+                                  <div className="text-xs font-mono font-bold text-amber-300">
+                                    ${crs.feeCAD.toLocaleString()} CAD
+                                  </div>
+                                  <div className="text-[9px] text-zinc-400 font-mono">
+                                    Graduation: ${gradFee.toLocaleString()} CAD
+                                  </div>
+                                </div>
                               </div>
 
                               <p className="text-[10px] text-zinc-300 leading-relaxed">{crs.desc}</p>
 
-                              <div className="flex justify-between items-center pt-1.5 border-t border-zinc-900 text-[10px] font-mono">
-                                <span className="text-zinc-400">
-                                  Curriculum: <strong className="text-white">{crs.lessonsCount} In-Depth Lessons</strong> ({crs.durationWeeks})
+                              {/* Curriculum Specs */}
+                              <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-center justify-between text-[10px] font-mono">
+                                <span className="text-zinc-300 flex items-center gap-1">
+                                  <span>📚</span>
+                                  <span><strong>{totalL} Lessons</strong> ({dailyCap}/day cap)</span>
                                 </span>
-                                {isCompleted ? (
+                                <span className="text-amber-400 font-bold">
+                                  {totalL === 12 ? '15 Questions/Lesson' : '10-12 Questions/Lesson'}
+                                </span>
+                              </div>
+
+                              {/* Progress bar if enrolled */}
+                              {progress && !isGraduated && (
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="flex justify-between text-[9px] font-mono">
+                                    <span className="text-zinc-400">Progress: {completedL} / {totalL} Lessons</span>
+                                    <span className={capReached ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                                      Today: {effectiveToday} / {dailyCap} lessons
+                                    </span>
+                                  </div>
+                                  <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-red-500 to-amber-500 transition-all duration-300 rounded-full"
+                                      style={{ width: `${Math.min(100, (completedL / totalL) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="pt-2 border-t border-zinc-900 flex justify-between items-center gap-2">
+                                {isGraduated ? (
                                   <button
                                     type="button"
                                     onClick={() => {
                                       setCertRegion('canada');
                                       setCurrentApp('certificates');
                                     }}
-                                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] rounded-lg cursor-pointer"
+                                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] rounded-xl cursor-pointer text-center"
                                   >
                                     View Canadian Degree
                                   </button>
+                                ) : allLessonsDone ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (userCad < gradFee) {
+                                        onShowToast(`Insufficient CAD! Graduation fee is double tuition ($${gradFee.toLocaleString()} CAD).`);
+                                        triggerSound?.('alert');
+                                        return;
+                                      }
+                                      if (userProfile) {
+                                        userProfile.bankCAD = userCad - gradFee;
+                                        const updatedCourses = [...completedCoursesState, crs.id];
+                                        setCompletedCoursesState(updatedCourses);
+                                        userProfile.completedCourses = updatedCourses;
+                                        if (!Array.isArray(userProfile.ownedDocuments)) userProfile.ownedDocuments = [];
+                                        userProfile.ownedDocuments.push({
+                                          id: `DEG_CAN_${crs.id}_${Date.now()}`,
+                                          type: 'study_permit',
+                                          title: `${crs.title} Degree`,
+                                          country: 'Canada',
+                                          documentNumber: `CAN-DEG-${Date.now().toString().slice(-6)}`,
+                                          issueDate: todayStr,
+                                          status: 'Valid',
+                                          institution: crs.institution,
+                                          desc: `Official accredited Canadian university degree conferred by ${crs.institution}.`,
+                                        });
+                                        if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
+                                        userProfile.receipts.unshift({
+                                          id: `GRAD_CAN_${Date.now()}`,
+                                          title: `Graduation Fee: ${crs.title}`,
+                                          category: 'education',
+                                          amount: gradFee,
+                                          date: todayStr,
+                                          type: 'debit',
+                                          currency: 'CAD',
+                                        });
+                                      }
+                                      const updatedMap = {
+                                        ...courseProgressMap,
+                                        [crs.id]: {
+                                          ...progress,
+                                          isGraduated: true,
+                                        },
+                                      };
+                                      saveCourseProgress(updatedMap);
+                                      onUpdateStats({ happiness: crs.happinessBonus + 20 });
+                                      onShowToast(`🎓 Convocation complete! Paid $${gradFee.toLocaleString()} CAD graduation fee. Canadian Degree awarded!`);
+                                      triggerSound?.('success');
+                                    }}
+                                    className="w-full py-2 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 text-black font-black text-[10px] rounded-xl cursor-pointer shadow-lg animate-pulse"
+                                  >
+                                    🎓 Pay Graduation Fee (${gradFee.toLocaleString()} CAD) & Convocate
+                                  </button>
+                                ) : progress ? (
+                                  capReached ? (
+                                    <div className="w-full flex items-center justify-between gap-2">
+                                      <span className="text-[9px] text-amber-400 font-mono">
+                                        Limit reached ({dailyCap}/{dailyCap} today)
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updatedMap = {
+                                            ...courseProgressMap,
+                                            [crs.id]: {
+                                              ...progress,
+                                              lessonsDoneToday: 0,
+                                              lastLessonDate: todayStr,
+                                            },
+                                          };
+                                          saveCourseProgress(updatedMap);
+                                          onShowToast(`🌅 Advanced to next academic day! You can now study up to ${dailyCap} lessons.`);
+                                          triggerSound?.('coin');
+                                        }}
+                                        className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-300 text-[10px] font-bold rounded-lg cursor-pointer"
+                                      >
+                                        ⏩ Simulate Next Study Day
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (isNewDay) {
+                                          const updatedMap = {
+                                            ...courseProgressMap,
+                                            [crs.id]: {
+                                              ...progress,
+                                              lessonsDoneToday: 0,
+                                              lastLessonDate: todayStr,
+                                            },
+                                          };
+                                          saveCourseProgress(updatedMap);
+                                        }
+                                        setActiveCourseId(crs.id);
+                                        setActiveLessonStep('reading');
+                                        setCurrentQuizQuestionIndex(0);
+                                        setSelectedQuizAnswers({});
+                                        setSelectedQuizChoice(null);
+                                        setQuizAnswerSubmitted(false);
+                                        setLastQuizResult(null);
+                                      }}
+                                      className="w-full py-2 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 text-white font-bold text-[10px] rounded-xl cursor-pointer shadow"
+                                    >
+                                      📖 Study Lesson {completedL + 1} of {totalL} &rarr;
+                                    </button>
+                                  )
                                 ) : (
                                   <button
                                     type="button"
@@ -5336,35 +5725,58 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                         return;
                                       }
                                       if (userCad < crs.feeCAD) {
-                                        onShowToast(`Insufficient CAD balance! Course costs $${crs.feeCAD} CAD. Convert funds in Naija Pay.`);
+                                        onShowToast(`Insufficient CAD! Course costs $${crs.feeCAD.toLocaleString()} CAD. Convert funds in Naija Pay.`);
                                         triggerSound?.('alert');
                                         return;
                                       }
-
                                       if (userProfile) {
                                         userProfile.bankCAD = userCad - crs.feeCAD;
-                                        const updated = [...completedCoursesState, crs.id];
-                                        setCompletedCoursesState(updated);
-                                        userProfile.completedCourses = updated;
                                         if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
                                         userProfile.receipts.unshift({
                                           id: `EDU_CAN_${Date.now()}`,
                                           title: `Tuition: ${crs.title}`,
                                           category: 'education',
                                           amount: crs.feeCAD,
-                                          date: new Date().toLocaleDateString('en-CA'),
+                                          date: todayStr,
                                           type: 'debit',
                                           currency: 'CAD',
                                         });
                                       }
-
-                                      onUpdateStats({ happiness: crs.happinessBonus });
-                                      onShowToast(`🎓 Graduated from ${crs.institution}! Canadian Degree awarded in Certificates app.`);
+                                      const newProg: StudentCourseProgress = {
+                                        courseId: crs.id,
+                                        title: crs.title,
+                                        institution: crs.institution,
+                                        isCanada: true,
+                                        fee: crs.feeCAD,
+                                        graduationFee: gradFee,
+                                        totalLessons: totalL,
+                                        dailyCap,
+                                        completedLessons: 0,
+                                        currentLesson: 1,
+                                        lessonsDoneToday: 0,
+                                        lastLessonDate: todayStr,
+                                        isGraduated: false,
+                                        certificateCode: `CAN-DEG-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+                                        certificateName: `${crs.title} Degree`,
+                                      };
+                                      const updatedMap = {
+                                        ...courseProgressMap,
+                                        [crs.id]: newProg,
+                                      };
+                                      saveCourseProgress(updatedMap);
+                                      setActiveCourseId(crs.id);
+                                      setActiveLessonStep('reading');
+                                      setCurrentQuizQuestionIndex(0);
+                                      setSelectedQuizAnswers({});
+                                      setSelectedQuizChoice(null);
+                                      setQuizAnswerSubmitted(false);
+                                      setLastQuizResult(null);
+                                      onShowToast(`🍁 Enrolled in ${crs.title}! Lesson 1 class notes loaded.`);
                                       triggerSound?.('success');
                                     }}
-                                    className="px-3 py-1 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 text-white font-bold text-[10px] rounded-lg cursor-pointer shadow"
+                                    className="w-full py-2 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 text-white font-bold text-[10px] rounded-xl cursor-pointer shadow"
                                   >
-                                    Enroll & Graduate (${crs.feeCAD} CAD)
+                                    Enroll in Course (${crs.feeCAD.toLocaleString()} CAD)
                                   </button>
                                 )}
                               </div>
@@ -5379,7 +5791,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="bg-purple-950/80 border border-purple-500/40 rounded-2xl p-3 flex items-center justify-between">
                         <div>
                           <h3 className="text-xs font-black text-purple-200">National Academy & Skill Hub</h3>
-                          <p className="text-[10px] text-zinc-400">Complete courses to earn recognized certificates</p>
+                          <p className="text-[10px] text-zinc-400">Complete all lessons and pay graduation to earn verified degrees</p>
                         </div>
                         <GraduationCap className="w-6 h-6 text-purple-400" />
                       </div>
@@ -5400,61 +5812,225 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         ))}
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="space-y-2.5">
                         {filteredCourses.map((crs) => {
-                          const isCompleted = completedCoursesState.includes(crs.id);
+                          const totalL = getCourseTotalLessons(crs.id, crs.title);
+                          const dailyCap = getCourseDailyCap(totalL);
+                          const progress = courseProgressMap[crs.id];
+                          const isGraduated = completedCoursesState.includes(crs.id) || progress?.isGraduated;
+                          const todayStr = new Date().toLocaleDateString('en-CA');
+                          const isNewDay = progress && progress.lastLessonDate !== todayStr;
+                          const effectiveToday = progress ? (isNewDay ? 0 : (progress.lessonsDoneToday || 0)) : 0;
+                          const capReached = progress && effectiveToday >= dailyCap;
+                          const completedL = progress ? (progress.completedLessons || 0) : 0;
+                          const allLessonsDone = progress && completedL >= totalL;
+                          const gradFee = crs.fee * 2;
+
                           return (
-                            <div key={crs.id} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 space-y-1.5">
+                            <div key={crs.id} className="p-3.5 rounded-2xl bg-zinc-950/80 border border-zinc-800 space-y-2.5 shadow-md">
                               <div className="flex items-start justify-between">
                                 <div>
-                                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                                  <div className="text-xs font-bold text-white flex items-center gap-1.5 flex-wrap">
                                     <span>{crs.title}</span>
-                                    {isCompleted && (
+                                    {isGraduated && (
                                       <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[9px] font-bold">
-                                        ✓ Certified
+                                        ✓ Certified Degree
                                       </span>
                                     )}
                                   </div>
                                   <div className="text-[10px] text-purple-300/80 font-mono">{crs.institution}</div>
                                 </div>
-                                <span className="text-xs font-mono font-bold text-purple-400">{formatNaira(crs.fee)}</span>
+                                <div className="text-right shrink-0">
+                                  <div className="text-xs font-mono font-bold text-purple-400">{formatNaira(crs.fee)}</div>
+                                  <div className="text-[9px] text-zinc-500 font-mono">Graduation: {formatNaira(gradFee)}</div>
+                                </div>
                               </div>
-                              <p className="text-[10px] text-zinc-400">{crs.desc}</p>
-                              <div className="flex justify-between items-center pt-1 border-t border-zinc-900">
-                                <span className="text-[10px] text-zinc-500 font-mono">Duration: {crs.duration}</span>
-                                {isCompleted ? (
+
+                              <p className="text-[10px] text-zinc-400 leading-relaxed">{crs.desc}</p>
+
+                              {/* Curriculum Specs */}
+                              <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-center justify-between text-[10px] font-mono">
+                                <span className="text-zinc-300 flex items-center gap-1">
+                                  <span>📚</span>
+                                  <span><strong>{totalL} Lessons</strong> ({dailyCap}/day cap)</span>
+                                </span>
+                                <span className="text-purple-400 font-bold">
+                                  {totalL === 12 ? '15 Questions/Lesson' : '10-12 Questions/Lesson'}
+                                </span>
+                              </div>
+
+                              {/* Progress bar if enrolled */}
+                              {progress && !isGraduated && (
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="flex justify-between text-[9px] font-mono">
+                                    <span className="text-zinc-400">Progress: {completedL} / {totalL} Lessons</span>
+                                    <span className={capReached ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                                      Today: {effectiveToday} / {dailyCap} lessons
+                                    </span>
+                                  </div>
+                                  <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 transition-all duration-300 rounded-full"
+                                      style={{ width: `${Math.min(100, (completedL / totalL) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="pt-2 border-t border-zinc-900 flex justify-between items-center gap-2">
+                                {isGraduated ? (
                                   <button
                                     type="button"
                                     onClick={() => {
                                       setCertRegion('nigeria');
                                       setCurrentApp('certificates');
                                     }}
-                                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] rounded-lg cursor-pointer"
+                                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] rounded-xl cursor-pointer text-center"
                                   >
                                     View Certificate
                                   </button>
+                                ) : allLessonsDone ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (moneyNGN < gradFee) {
+                                        onShowToast(`Insufficient funds! Graduation fee is double tuition (${formatNaira(gradFee)}).`);
+                                        triggerSound?.('alert');
+                                        return;
+                                      }
+                                      onUpdateMoney(-gradFee);
+                                      const updatedCourses = [...completedCoursesState, crs.id];
+                                      setCompletedCoursesState(updatedCourses);
+                                      if (userProfile) {
+                                        userProfile.completedCourses = updatedCourses;
+                                        if (!Array.isArray(userProfile.ownedDocuments)) userProfile.ownedDocuments = [];
+                                        userProfile.ownedDocuments.push({
+                                          id: `DEG_NGA_${crs.id}_${Date.now()}`,
+                                          type: 'nin_slip',
+                                          title: `${crs.title} Certificate`,
+                                          country: 'Nigeria',
+                                          documentNumber: `NGA-DEG-${Date.now().toString().slice(-6)}`,
+                                          issueDate: todayStr,
+                                          status: 'Valid',
+                                          institution: crs.institution,
+                                          desc: `Official accredited certificate issued by ${crs.institution}.`,
+                                        });
+                                      }
+                                      const updatedMap = {
+                                        ...courseProgressMap,
+                                        [crs.id]: {
+                                          ...progress,
+                                          isGraduated: true,
+                                        },
+                                      };
+                                      saveCourseProgress(updatedMap);
+                                      onUpdateStats({ happiness: crs.happinessBoost + 20 });
+                                      onShowToast(`🎓 Graduation complete! Paid ${formatNaira(gradFee)} graduation fee. Accredited Degree awarded!`);
+                                      triggerSound?.('success');
+                                    }}
+                                    className="w-full py-2 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 text-black font-black text-[10px] rounded-xl cursor-pointer shadow-lg animate-pulse"
+                                  >
+                                    🎓 Pay Graduation Fee ({formatNaira(gradFee)}) & Convocate
+                                  </button>
+                                ) : progress ? (
+                                  capReached ? (
+                                    <div className="w-full flex items-center justify-between gap-2">
+                                      <span className="text-[9px] text-amber-400 font-mono">
+                                        Limit reached ({dailyCap}/{dailyCap} today)
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updatedMap = {
+                                            ...courseProgressMap,
+                                            [crs.id]: {
+                                              ...progress,
+                                              lessonsDoneToday: 0,
+                                              lastLessonDate: todayStr,
+                                            },
+                                          };
+                                          saveCourseProgress(updatedMap);
+                                          onShowToast(`🌅 Advanced to next academic day! You can now study up to ${dailyCap} lessons.`);
+                                          triggerSound?.('coin');
+                                        }}
+                                        className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-300 text-[10px] font-bold rounded-lg cursor-pointer"
+                                      >
+                                        ⏩ Simulate Next Study Day
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (isNewDay) {
+                                          const updatedMap = {
+                                            ...courseProgressMap,
+                                            [crs.id]: {
+                                              ...progress,
+                                              lessonsDoneToday: 0,
+                                              lastLessonDate: todayStr,
+                                            },
+                                          };
+                                          saveCourseProgress(updatedMap);
+                                        }
+                                        setActiveCourseId(crs.id);
+                                        setActiveLessonStep('reading');
+                                        setCurrentQuizQuestionIndex(0);
+                                        setSelectedQuizAnswers({});
+                                        setSelectedQuizChoice(null);
+                                        setQuizAnswerSubmitted(false);
+                                        setLastQuizResult(null);
+                                      }}
+                                      className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] rounded-xl cursor-pointer shadow"
+                                    >
+                                      📖 Study Lesson {completedL + 1} of {totalL} &rarr;
+                                    </button>
+                                  )
                                 ) : (
                                   <button
                                     type="button"
                                     onClick={() => {
                                       if (moneyNGN < crs.fee) {
-                                        onShowToast('Insufficient funds for enrollment!');
+                                        onShowToast(`Insufficient funds for enrollment! Course costs ${formatNaira(crs.fee)}.`);
                                         triggerSound?.('alert');
                                         return;
                                       }
                                       onUpdateMoney(-crs.fee);
-                                      const updated = [...completedCoursesState, crs.id];
-                                      setCompletedCoursesState(updated);
-                                      if (userProfile) {
-                                        userProfile.completedCourses = updated;
-                                      }
-                                      onUpdateStats({ happiness: crs.happinessBoost });
-                                      onShowToast(`🎓 Completed ${crs.title}! Certificate awarded in Certificates app.`);
+                                      const newProg: StudentCourseProgress = {
+                                        courseId: crs.id,
+                                        title: crs.title,
+                                        institution: crs.institution,
+                                        isCanada: false,
+                                        fee: crs.fee,
+                                        graduationFee: gradFee,
+                                        totalLessons: totalL,
+                                        dailyCap,
+                                        completedLessons: 0,
+                                        currentLesson: 1,
+                                        lessonsDoneToday: 0,
+                                        lastLessonDate: todayStr,
+                                        isGraduated: false,
+                                        certificateCode: `NGA-DEG-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+                                        certificateName: `${crs.title} Certificate`,
+                                      };
+                                      const updatedMap = {
+                                        ...courseProgressMap,
+                                        [crs.id]: newProg,
+                                      };
+                                      saveCourseProgress(updatedMap);
+                                      setActiveCourseId(crs.id);
+                                      setActiveLessonStep('reading');
+                                      setCurrentQuizQuestionIndex(0);
+                                      setSelectedQuizAnswers({});
+                                      setSelectedQuizChoice(null);
+                                      setQuizAnswerSubmitted(false);
+                                      setLastQuizResult(null);
+                                      onShowToast(`📚 Enrolled in ${crs.title}! Lesson 1 class notes loaded.`);
                                       triggerSound?.('success');
                                     }}
-                                    className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] rounded-lg cursor-pointer"
+                                    className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] rounded-xl cursor-pointer shadow"
                                   >
-                                    Enroll & Graduate
+                                    Enroll in Course ({formatNaira(crs.fee)})
                                   </button>
                                 )}
                               </div>
@@ -7181,8 +7757,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   </div>
                 </div>
 
-                {/* OWNER RADIO BROADCAST PANEL (VISIBLE EXCLUSIVELY TO chiboy_52) */}
-                {userProfile?.username?.toLowerCase() === 'chiboy_52' && (
+                {/* OWNER RADIO BROADCAST PANEL (VISIBLE TO OWNER ACCOUNTS) */}
+                {checkIsOwner(userProfile) && (
                   <div className="p-4 rounded-3xl bg-gradient-to-br from-amber-950 via-zinc-950 to-amber-950/40 border-2 border-amber-500/80 shadow-[0_0_25px_rgba(245,158,11,0.25)] space-y-3 text-left">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -7192,7 +7768,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             Owner Server Radio Broadcast
                           </h4>
                           <span className="text-[9px] font-mono text-zinc-400">
-                            Naija Life Central Synchronizer · @chiboy_52
+                            Naija Life Central Synchronizer · @{userProfile?.username || 'chiboy'}
                           </span>
                         </div>
                       </div>
@@ -7247,7 +7823,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({
-                                      username: 'chiboy_52',
+                                      username: userProfile?.username || 'chiboy',
+                                      email: userProfile?.gmail || userProfile?.email || 'kchiboy50@gmail.com',
                                       title: file.name.replace(/\.mp3$/i, ''),
                                       audioData: base64,
                                     }),
@@ -7287,7 +7864,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               const res = await fetch('/api/broadcast/music', {
                                 method: 'DELETE',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ username: 'chiboy_52' }),
+                                body: JSON.stringify({
+                                  username: userProfile?.username || 'chiboy',
+                                  email: userProfile?.gmail || userProfile?.email || 'kchiboy50@gmail.com',
+                                }),
                               });
                               if (res.ok) {
                                 setOwnerBroadcastTrack('');
@@ -7328,42 +7908,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         >
                           <Users className="w-3.5 h-3.5 text-black" />
                           <span>👥 Open Global Server Players Registry ({playersRegistryList.length || 'Live'})</span>
-                        </button>
-                      </div>
-
-                      {/* NEPA NATIONAL GRID CONTROL ROOM */}
-                      <div className="pt-2.5 border-t border-amber-500/30 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">
-                            NEPA National Power Grid Control
-                          </span>
-                          <span className="text-[9px] font-mono text-zinc-400">Live Grid</span>
-                        </div>
-                        <p className="text-[10px] text-zinc-400 leading-relaxed">
-                          Monitor live electrical power across all 36 States + FCT + Canada. Toggle state substations or execute master blackouts.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              const res = await fetch('/api/nepa/grid');
-                              if (res.ok) {
-                                const d = await res.json();
-                                if (d.grid) {
-                                  setNepaControlGrid(d.grid);
-                                  try {
-                                    localStorage.setItem('naija_life_nepa_grid', JSON.stringify(d.grid));
-                                  } catch {}
-                                }
-                              }
-                            } catch {}
-                            setIsNepaControlRoomOpen(true);
-                            triggerSound?.('coin');
-                          }}
-                          className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-yellow-500 via-amber-400 to-orange-500 hover:from-yellow-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 active:scale-95 transition-all"
-                        >
-                          <Zap className="w-3.5 h-3.5 fill-black" />
-                          <span>⚡ NEPA National Power Grid Control Room</span>
                         </button>
                       </div>
                     </div>
@@ -9003,7 +9547,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 23. SUGGESTIONS & COMPLAINTS (ONLINE CITIZEN FEEDBACK + OWNER INBOX)
                 ============================================================= */}
             {currentApp === 'suggestions' && (() => {
-              const isGameOwner = userProfile?.username?.toLowerCase() === 'chiboy_52';
+              const isGameOwner = checkIsOwner(userProfile);
               const myTickets = feedbackTickets.filter((t) => t.username.toLowerCase() === userProfile?.username?.toLowerCase());
 
               const handleFeedbackSubmit = (e: React.FormEvent) => {
@@ -9655,7 +10199,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             await fetch('/api/owner/global-refresh', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ username: 'chiboy_52' }),
+                              body: JSON.stringify({
+                                username: userProfile?.username || 'chiboy',
+                                email: userProfile?.gmail || userProfile?.email || 'kchiboy50@gmail.com',
+                              }),
                             });
                           } catch {}
 
@@ -9708,6 +10255,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     if (!q) return true;
                     return (
                       (p.username && p.username.toLowerCase().includes(q)) ||
+                      (p.gmail && p.gmail.toLowerCase().includes(q)) ||
                       (p.citizenName && p.citizenName.toLowerCase().includes(q)) ||
                       (p.stateOfOrigin && p.stateOfOrigin.toLowerCase().includes(q))
                     );
@@ -9723,7 +10271,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   }
 
                   return filtered.map((player, idx) => {
-                    const isOwner = player.username?.toLowerCase() === 'chiboy_52';
+                    const isOwner = checkIsOwner(player);
                     return (
                       <div
                         key={player.username || idx}
@@ -9757,8 +10305,26 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           </span>
                         </div>
 
-                        {/* Player Password & Credentials Box (Owner privilege) */}
-                        <div className="p-2 rounded-xl bg-black/80 border border-amber-500/30 space-y-1">
+                        {/* Player Gmail, Username & Real Password Box (Owner Privileges) */}
+                        <div className="p-2.5 rounded-xl bg-black/80 border border-amber-500/30 space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] font-mono">
+                            <span className="text-zinc-400 flex items-center gap-1">
+                              <span>📧</span>
+                              <span>Gmail Address:</span>
+                            </span>
+                            <span className="text-emerald-300 font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/40 truncate max-w-[160px]">
+                              {player.gmail || 'citizen@naijalife.ng'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] font-mono">
+                            <span className="text-zinc-400 flex items-center gap-1">
+                              <span>👤</span>
+                              <span>Citizen Username:</span>
+                            </span>
+                            <span className="text-white font-bold bg-zinc-900 px-2 py-0.5 rounded border border-zinc-700">
+                              @{player.username}
+                            </span>
+                          </div>
                           <div className="flex items-center justify-between text-[10px] font-mono">
                             <span className="text-zinc-400 flex items-center gap-1">
                               <span>🔑</span>
@@ -10026,6 +10592,742 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
               </div>
             </div>
           )}
+
+          {/* =============================================================
+              INTERACTIVE 15-TASK WORK SHIFT SESSION WITH 10-15 MIN COUNTDOWN TIMER
+              ============================================================= */}
+          {activeWorkShift && (
+            <div className="absolute inset-0 z-50 bg-neutral-950/98 backdrop-blur-xl flex flex-col p-4 text-left animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
+              {/* Shift Header & Side Floating Timer */}
+              <div className="flex items-start justify-between pb-3 border-b border-zinc-800 shrink-0 gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center shrink-0">
+                    <Briefcase className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-xs font-black text-white truncate flex items-center gap-1.5">
+                      <span>{activeWorkShift.job?.title || 'Active Shift'}</span>
+                      <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300 text-[8px] font-mono font-bold">
+                        {userProfile?.jobRank || 'Apprentice'}
+                      </span>
+                    </h3>
+                    <div className="text-[9px] font-mono text-zinc-400 flex items-center gap-2 mt-0.5">
+                      <span>{activeWorkShift.isCanada ? '🇨🇦 Canada Workplace' : '🇳🇬 Nigeria Office'}</span>
+                      <span>&bull;</span>
+                      <span className="text-emerald-400 font-bold">{activeWorkShift.correctCount} / 15 Optimal</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Side Countdown Timer Widget (Small at the side as requested) */}
+                <div className="shrink-0 flex flex-col items-end">
+                  <div
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border font-mono font-black text-xs transition-all shadow-md ${
+                      activeWorkShift.timerSeconds < 120
+                        ? 'bg-rose-950/90 border-rose-500 text-rose-300 animate-pulse'
+                        : 'bg-black/90 border-amber-500/60 text-amber-300'
+                    }`}
+                  >
+                    <Clock className="w-3.5 h-3.5 text-amber-400 animate-spin" style={{ animationDuration: '4s' }} />
+                    <span>
+                      {Math.floor(activeWorkShift.timerSeconds / 60)}:
+                      {(activeWorkShift.timerSeconds % 60).toString().padStart(2, '0')}
+                    </span>
+                  </div>
+                  <span className="text-[8px] font-mono text-zinc-500 mt-0.5 uppercase tracking-wide">
+                    Shift Timer
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Tracker (15 Tasks) */}
+              <div className="py-2.5 shrink-0 space-y-1">
+                <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                  <span className="font-bold text-white">
+                    Task {activeWorkShift.currentIndex + 1} of 15
+                  </span>
+                  <span>
+                    {Math.round(((activeWorkShift.currentIndex + (activeWorkShift.selectedOption ? 1 : 0)) / 15) * 100)}% Complete
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
+                  <div
+                    className="h-full bg-gradient-to-r from-amber-500 via-emerald-400 to-emerald-500 transition-all duration-300 rounded-full"
+                    style={{
+                      width: `${((activeWorkShift.currentIndex + (activeWorkShift.selectedOption ? 1 : 0)) / 15) * 100}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Content Area */}
+              {activeWorkShift.isComplete || activeWorkShift.timerSeconds <= 0 ? (
+                /* Shift Completion & Payroll Settlement Screen */
+                <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-4 text-center space-y-4 animate-in fade-in duration-200">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500/20 to-emerald-500/20 border-2 border-emerald-400/80 flex items-center justify-center text-3xl shadow-lg">
+                    🏆
+                  </div>
+                  <div className="space-y-1">
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 font-mono text-[9px] font-black uppercase tracking-wider border border-emerald-500/40">
+                      Shift Completed
+                    </span>
+                    <h3 className="text-base font-black text-white">
+                      Payroll Settlement & Shift Review
+                    </h3>
+                    <p className="text-xs text-zinc-400 font-mono">
+                      {activeWorkShift.job?.title} &bull; {activeWorkShift.correctCount} / 15 Optimal Workplace Decisions
+                    </p>
+                  </div>
+
+                  <div className="w-full p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 text-left space-y-2 font-mono text-xs">
+                    <div className="flex justify-between items-center text-zinc-300">
+                      <span>Performance Rating:</span>
+                      <strong className={activeWorkShift.correctCount >= 10 ? 'text-emerald-400' : 'text-amber-400'}>
+                        {activeWorkShift.correctCount >= 13
+                          ? 'Elite (Tier A+)'
+                          : activeWorkShift.correctCount >= 10
+                          ? 'Proficient (Tier B+)'
+                          : activeWorkShift.correctCount >= 6
+                          ? 'Standard (Tier C)'
+                          : 'Probationary'}
+                      </strong>
+                    </div>
+                    <div className="flex justify-between items-center text-zinc-300">
+                      <span>Shift Time Remaining:</span>
+                      <strong className="text-zinc-200">
+                        {Math.floor(activeWorkShift.timerSeconds / 60)}m {activeWorkShift.timerSeconds % 60}s
+                      </strong>
+                    </div>
+                    <div className="flex justify-between items-center text-zinc-300">
+                      <span>Career Total Shifts:</span>
+                      <strong className="text-white">{(userProfile?.jobShiftsWorked || 0) + 1} shifts</strong>
+                    </div>
+                    <div className="pt-2 border-t border-zinc-800 flex justify-between items-center font-black">
+                      <span className="text-white">Calculated Payout:</span>
+                      <span className="text-emerald-400 text-sm">
+                        {activeWorkShift.isCanada
+                          ? `$${Math.round(
+                              ((activeWorkShift.job?.salaryCADWeekly || 1200) / 7) *
+                                (1 + (activeWorkShift.correctCount / 15) * 0.4)
+                            )} CAD`
+                          : formatNaira(
+                              Math.round(
+                                ((activeWorkShift.job?.salaryNGN || 28000) / 7) *
+                                  (1 + (activeWorkShift.correctCount / 15) * 0.35)
+                              )
+                            )}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleFinalizeShift}
+                    className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-black font-black text-xs cursor-pointer shadow-xl transition-all active:scale-95"
+                  >
+                    💼 Collect Paycheck & Clock Out
+                  </button>
+                </div>
+              ) : (
+                /* Interactive Question Screen */
+                <div className="flex-1 overflow-y-auto space-y-3 pr-1 scrollbar-none flex flex-col justify-between">
+                  {(() => {
+                    const currentQ = activeWorkShift.questions[activeWorkShift.currentIndex];
+                    if (!currentQ) return null;
+
+                    return (
+                      <div className="space-y-3">
+                        {/* Question Prompt Callout */}
+                        <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-mono uppercase tracking-wider text-amber-400 font-bold flex items-center gap-1">
+                              <span>🏢</span>
+                              <span>Workplace Dilemma #{activeWorkShift.currentIndex + 1}</span>
+                            </span>
+                            <span className="text-[9px] font-mono text-zinc-500">
+                              Options A &ndash; E
+                            </span>
+                          </div>
+                          <p className="text-xs font-bold text-white leading-relaxed">
+                            &ldquo;{currentQ.scenario}&rdquo;
+                          </p>
+                        </div>
+
+                        {/* Options A to E */}
+                        <div className="space-y-2">
+                          {currentQ.options.map((opt) => {
+                            const isChosen = activeWorkShift.selectedOption?.letter === opt.letter;
+                            const hasAnswered = !!activeWorkShift.selectedOption;
+
+                            let btnStyle = 'bg-zinc-900/70 border-zinc-800 text-zinc-200 hover:border-zinc-700 hover:bg-zinc-800/80';
+                            if (hasAnswered) {
+                              if (isChosen) {
+                                btnStyle = opt.isOptimal
+                                  ? 'bg-emerald-950/90 border-emerald-500 text-emerald-200 font-bold shadow-lg shadow-emerald-950/40'
+                                  : 'bg-rose-950/90 border-rose-500 text-rose-200 font-bold shadow-lg shadow-rose-950/40';
+                              } else if (opt.isOptimal) {
+                                btnStyle = 'bg-emerald-950/40 border-emerald-500/70 text-emerald-300 font-bold';
+                              } else {
+                                btnStyle = 'bg-zinc-950/50 border-zinc-900 text-zinc-500 opacity-60';
+                              }
+                            }
+
+                            return (
+                              <button
+                                key={opt.letter}
+                                type="button"
+                                disabled={hasAnswered}
+                                onClick={() => {
+                                  if (hasAnswered) return;
+                                  setActiveWorkShift((prev) => {
+                                    if (!prev) return prev;
+                                    return {
+                                      ...prev,
+                                      selectedOption: opt,
+                                      correctCount: opt.isOptimal ? prev.correctCount + 1 : prev.correctCount,
+                                      answers: [...prev.answers, opt.scoreDelta],
+                                    };
+                                  });
+                                  if (opt.isOptimal) {
+                                    triggerSound?.('success');
+                                  } else {
+                                    triggerSound?.('alert');
+                                  }
+                                }}
+                                className={`w-full p-2.5 rounded-xl border text-left flex items-start gap-2.5 transition-all cursor-pointer text-xs leading-snug ${btnStyle}`}
+                              >
+                                <span
+                                  className={`w-6 h-6 rounded-lg flex items-center justify-center font-mono font-black text-[11px] shrink-0 border ${
+                                    isChosen
+                                      ? opt.isOptimal
+                                        ? 'bg-emerald-500 text-black border-emerald-400'
+                                        : 'bg-rose-500 text-white border-rose-400'
+                                      : 'bg-zinc-800 text-zinc-300 border-zinc-700'
+                                  }`}
+                                >
+                                  {opt.letter}
+                                </span>
+                                <span className="flex-1 mt-0.5">{opt.text}</span>
+                                {hasAnswered && opt.isOptimal && (
+                                  <span className="shrink-0 text-emerald-400 text-sm">✓</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Tactical Feedback Card */}
+                        {activeWorkShift.selectedOption && (
+                          <div
+                            className={`p-3 rounded-xl border space-y-1 animate-in fade-in duration-150 ${
+                              activeWorkShift.selectedOption.isOptimal
+                                ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
+                                : 'bg-amber-950/60 border-amber-500/50 text-amber-200'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-[10px] font-mono font-bold">
+                              <span>
+                                {activeWorkShift.selectedOption.isOptimal
+                                  ? '🌟 Optimal Tactical Response'
+                                  : '⚠️ Sub-optimal Decision'}
+                              </span>
+                              <span>+{activeWorkShift.selectedOption.scoreDelta} PTS</span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed">
+                              {activeWorkShift.selectedOption.feedback}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Action Button Bar */}
+                  <div className="pt-2 border-t border-zinc-800 shrink-0 space-y-2">
+                    {activeWorkShift.selectedOption ? (
+                      activeWorkShift.currentIndex < 14 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveWorkShift((prev) => {
+                              if (!prev) return prev;
+                              return {
+                                ...prev,
+                                currentIndex: prev.currentIndex + 1,
+                                selectedOption: null,
+                              };
+                            });
+                          }}
+                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 text-black font-black text-xs cursor-pointer shadow-lg transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                        >
+                          <span>Proceed to Task {activeWorkShift.currentIndex + 2} of 15</span>
+                          <span>&rarr;</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveWorkShift((prev) => (prev ? { ...prev, isComplete: true } : null));
+                          }}
+                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-black font-black text-xs cursor-pointer shadow-lg transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                        >
+                          <span>Complete Shift & Calculate Settlement</span>
+                          <span>&rarr;</span>
+                        </button>
+                      )
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-mono text-zinc-500">
+                          Select option A &ndash; E to respond
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleFinalizeShift();
+                          }}
+                          className="text-[10px] font-mono text-zinc-500 hover:text-rose-400 underline cursor-pointer"
+                        >
+                          Emergency Clock Out
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =============================================================
+              ACADEMY ACTIVE LESSON MODAL (NOTES + 10-15 QUESTIONS + PACING)
+              ============================================================= */}
+          {activeCourseId && (() => {
+            const allCourses = [
+              ...CANADA_COURSES.map((c) => ({ ...c, isCanada: true, fee: c.feeCAD })),
+              ...EXPANDED_COURSES.map((c) => ({ ...c, isCanada: false })),
+            ];
+            const course = allCourses.find((c) => c.id === activeCourseId) || {
+              id: activeCourseId,
+              title: 'Professional Studies',
+              institution: 'National Academy',
+              isCanada: false,
+              fee: 50000,
+            };
+            const totalL = getCourseTotalLessons(course.id, course.title);
+            const dailyCap = getCourseDailyCap(totalL);
+            const progress = courseProgressMap[activeCourseId] || {
+              courseId: course.id,
+              title: course.title,
+              institution: course.institution,
+              isCanada: course.isCanada,
+              fee: course.fee,
+              graduationFee: course.fee * 2,
+              totalLessons: totalL,
+              dailyCap,
+              completedLessons: 0,
+              currentLesson: 1,
+              lessonsDoneToday: 0,
+              lastLessonDate: new Date().toLocaleDateString('en-CA'),
+              isGraduated: false,
+              certificateCode: `DEG-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+              certificateName: `${course.title} Degree`,
+            };
+
+            const lessonsList = getCourseLessons(course.id, course.title, totalL);
+            const lessonNum = Math.min(totalL, (progress.completedLessons || 0) + 1);
+            const currentLesson = lessonsList[lessonNum - 1] || lessonsList[0];
+            const questions = currentLesson.quizQuestions || [];
+            const currentQ = questions[currentQuizQuestionIndex] || questions[0];
+            const todayStr = new Date().toLocaleDateString('en-CA');
+
+            return (
+              <div className="absolute inset-0 z-50 bg-zinc-950/98 backdrop-blur-md flex flex-col p-4 text-white animate-in fade-in zoom-in-95 duration-200">
+                {/* Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="px-2 py-0.5 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-300 font-mono text-[9px] font-black uppercase tracking-wider">
+                        Lesson {lessonNum} of {totalL}
+                      </span>
+                      <span className="text-[10px] text-zinc-400 font-mono">
+                        {dailyCap} max/day · {questions.length} Questions
+                      </span>
+                    </div>
+                    <h3 className="text-xs font-black text-white truncate max-w-[240px]">
+                      {course.title}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveCourseId(null);
+                      setSelectedQuizChoice(null);
+                      setQuizAnswerSubmitted(false);
+                      setLastQuizResult(null);
+                    }}
+                    className="w-7 h-7 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white cursor-pointer font-bold text-xs"
+                    title="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Sub-header Navigation / Tabs */}
+                <div className="flex items-center gap-2 py-2 border-b border-zinc-900 text-[10px] font-mono">
+                  <span className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 ${
+                    activeLessonStep === 'reading' ? 'bg-purple-600 text-white' : 'bg-zinc-900 text-zinc-400'
+                  }`}>
+                    <span>📖</span>
+                    <span>1. Class Note</span>
+                  </span>
+                  <span className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 ${
+                    activeLessonStep === 'quiz' ? 'bg-purple-600 text-white' : 'bg-zinc-900 text-zinc-400'
+                  }`}>
+                    <span>✍️</span>
+                    <span>2. Assessment ({questions.length} Qs)</span>
+                  </span>
+                  <span className={`px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 ${
+                    activeLessonStep === 'result' ? 'bg-purple-600 text-white' : 'bg-zinc-900 text-zinc-400'
+                  }`}>
+                    <span>🎓</span>
+                    <span>3. Result</span>
+                  </span>
+                </div>
+
+                {/* Body Content based on Step */}
+                <div className="flex-1 overflow-y-auto py-3 space-y-3 pr-1 scrollbar-thin">
+                  {/* STEP 1: CLASS NOTE */}
+                  {activeLessonStep === 'reading' && (
+                    <div className="space-y-3 animate-in fade-in duration-200">
+                      <div className="p-3 rounded-2xl bg-purple-950/50 border border-purple-500/30 space-y-1">
+                        <div className="text-[10px] text-purple-300 font-mono font-bold uppercase tracking-wider flex items-center gap-1">
+                          <span>🏛️</span>
+                          <span>{course.institution}</span>
+                        </div>
+                        <h4 className="text-sm font-black text-white">
+                          Lesson {currentLesson.lessonNumber}: {currentLesson.title}
+                        </h4>
+                        <p className="text-[10px] text-zinc-400 leading-relaxed">
+                          Read and study the following lecture notes thoroughly. Once finished scrolling, click continue below to answer the mandatory {questions.length} assessment questions.
+                        </p>
+                      </div>
+
+                      {/* Rich Scrollable Lecture Note */}
+                      <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-3 text-xs leading-relaxed font-sans text-zinc-200">
+                        {currentLesson.lectureNotes.split('\n\n').map((paragraph, idx) => {
+                          if (paragraph.startsWith('### ')) {
+                            return (
+                              <h5 key={idx} className="text-xs font-black text-amber-300 pt-2 border-t border-zinc-800 flex items-center gap-1.5">
+                                <span>📌</span>
+                                <span>{paragraph.replace('### ', '')}</span>
+                              </h5>
+                            );
+                          }
+                          if (paragraph.startsWith('## ')) {
+                            return (
+                              <h5 key={idx} className="text-sm font-black text-purple-300 pt-1">
+                                {paragraph.replace('## ', '')}
+                              </h5>
+                            );
+                          }
+                          return (
+                            <p key={idx} className="text-[11px] text-zinc-300 leading-relaxed">
+                              {paragraph}
+                            </p>
+                          );
+                        })}
+                      </div>
+
+                      {/* Continue to Questions Button */}
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveLessonStep('quiz');
+                            setCurrentQuizQuestionIndex(0);
+                            setSelectedQuizAnswers({});
+                            setSelectedQuizChoice(null);
+                            setQuizAnswerSubmitted(false);
+                            setLastQuizResult(null);
+                          }}
+                          className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 text-white font-black text-xs cursor-pointer shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2"
+                        >
+                          <span>✓ I Have Studied the Note</span>
+                          <span>&bull;</span>
+                          <span>Continue to {questions.length} Questions &rarr;</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STEP 2: 10-15 QUESTIONS ASSESSMENT */}
+                  {activeLessonStep === 'quiz' && currentQ && (
+                    <div className="space-y-3 animate-in fade-in duration-200">
+                      {/* Stepper info */}
+                      <div className="flex items-center justify-between text-[10px] font-mono">
+                        <span className="text-purple-300 font-bold">
+                          Question {currentQuizQuestionIndex + 1} of {questions.length}
+                        </span>
+                        <span className="text-zinc-500">
+                          Passing Grade: 70%
+                        </span>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
+                        <div
+                          className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 transition-all duration-300 rounded-full"
+                          style={{
+                            width: `${((currentQuizQuestionIndex + (quizAnswerSubmitted ? 1 : 0)) / questions.length) * 100}%`,
+                          }}
+                        />
+                      </div>
+
+                      {/* Question card */}
+                      <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
+                        <div className="text-[9px] font-mono uppercase tracking-wider text-amber-400 font-bold">
+                          Theoretical & Practical Examination
+                        </div>
+                        <p className="text-xs font-bold text-white leading-relaxed">
+                          {currentQ.question}
+                        </p>
+                      </div>
+
+                      {/* Options */}
+                      <div className="space-y-2">
+                        {currentQ.options.map((option, optIdx) => {
+                          const isSelected = selectedQuizChoice === optIdx;
+                          const isCorrect = currentQ.correctAnswerIndex === optIdx;
+                          let btnStyle = 'bg-zinc-900/80 hover:bg-zinc-800/80 text-zinc-300 border-zinc-800';
+
+                          if (quizAnswerSubmitted) {
+                            if (isCorrect) {
+                              btnStyle = 'bg-emerald-950/80 text-emerald-200 border-emerald-500 font-bold shadow-md';
+                            } else if (isSelected && !isCorrect) {
+                              btnStyle = 'bg-rose-950/80 text-rose-200 border-rose-500 font-bold';
+                            } else {
+                              btnStyle = 'opacity-40 bg-zinc-950 border-zinc-900 text-zinc-500';
+                            }
+                          } else if (isSelected) {
+                            btnStyle = 'bg-purple-950/80 text-white border-purple-500 shadow-md ring-1 ring-purple-400';
+                          }
+
+                          return (
+                            <button
+                              key={optIdx}
+                              type="button"
+                              disabled={quizAnswerSubmitted}
+                              onClick={() => setSelectedQuizChoice(optIdx)}
+                              className={`w-full p-2.5 rounded-xl border text-left text-xs transition-all cursor-pointer flex items-start gap-2.5 ${btnStyle}`}
+                            >
+                              <span className="w-5 h-5 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-[10px] font-mono shrink-0 font-bold">
+                                {String.fromCharCode(65 + optIdx)}
+                              </span>
+                              <span className="leading-snug">{option}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Explanation Callout once submitted */}
+                      {quizAnswerSubmitted && (
+                        <div className="p-3 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-1 animate-in fade-in duration-150">
+                          <div className="text-[10px] font-mono font-bold flex items-center gap-1.5 text-zinc-300">
+                            {selectedQuizChoice === currentQ.correctAnswerIndex ? (
+                              <span className="text-emerald-400">✓ Correct!</span>
+                            ) : (
+                              <span className="text-rose-400">✗ Incorrect.</span>
+                            )}
+                            <span className="text-zinc-500">&bull; Lecture Note Excerpt</span>
+                          </div>
+                          <p className="text-[11px] text-zinc-300 leading-relaxed">
+                            {currentQ.explanation}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Quiz Buttons */}
+                      <div className="pt-2">
+                        {!quizAnswerSubmitted ? (
+                          <button
+                            type="button"
+                            disabled={selectedQuizChoice === null}
+                            onClick={() => {
+                              if (selectedQuizChoice === null) return;
+                              setQuizAnswerSubmitted(true);
+                              setSelectedQuizAnswers((prev) => ({
+                                ...prev,
+                                [currentQuizQuestionIndex]: selectedQuizChoice,
+                              }));
+                            }}
+                            className={`w-full py-2.5 rounded-xl font-black text-xs cursor-pointer shadow transition-all ${
+                              selectedQuizChoice !== null
+                                ? 'bg-purple-600 hover:bg-purple-500 text-white'
+                                : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                            }`}
+                          >
+                            Submit Answer
+                          </button>
+                        ) : currentQuizQuestionIndex + 1 < questions.length ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCurrentQuizQuestionIndex((prev) => prev + 1);
+                              setSelectedQuizChoice(null);
+                              setQuizAnswerSubmitted(false);
+                            }}
+                            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white font-black text-xs cursor-pointer shadow transition-all flex items-center justify-center gap-1"
+                          >
+                            <span>Next Question</span>
+                            <span>&rarr;</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Compute score
+                              const finalAnswers = {
+                                ...selectedQuizAnswers,
+                                [currentQuizQuestionIndex]: selectedQuizChoice ?? 0,
+                              };
+                              let correct = 0;
+                              questions.forEach((q, idx) => {
+                                if (finalAnswers[idx] === q.correctAnswerIndex) {
+                                  correct++;
+                                }
+                              });
+                              const score = Math.round((correct / questions.length) * 100);
+                              const passed = score >= 70;
+                              setLastQuizResult({
+                                score,
+                                gpa: passed ? 4.0 : 1.5,
+                                passed,
+                              });
+
+                              if (passed) {
+                                const newCompleted = Math.max(progress.completedLessons || 0, lessonNum);
+                                const isNewDay = progress.lastLessonDate !== todayStr;
+                                const todayCount = (isNewDay ? 0 : (progress.lessonsDoneToday || 0)) + 1;
+                                const updatedMap = {
+                                  ...courseProgressMap,
+                                  [activeCourseId]: {
+                                    ...progress,
+                                    completedLessons: newCompleted,
+                                    currentLesson: Math.min(totalL, newCompleted + 1),
+                                    lessonsDoneToday: todayCount,
+                                    lastLessonDate: todayStr,
+                                  },
+                                };
+                                saveCourseProgress(updatedMap);
+                                triggerSound?.('success');
+                              } else {
+                                triggerSound?.('alert');
+                              }
+
+                              setActiveLessonStep('result');
+                            }}
+                            className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 text-black font-black text-xs cursor-pointer shadow-xl transition-all"
+                          >
+                            🏆 Complete Assessment & Grade Lesson
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* STEP 3: RESULT SCREEN */}
+                  {activeLessonStep === 'result' && lastQuizResult && (
+                    <div className="flex-1 flex flex-col items-center justify-center p-4 text-center space-y-4 animate-in fade-in duration-200">
+                      <div className={`w-16 h-16 rounded-2xl border-2 flex items-center justify-center text-3xl shadow-lg ${
+                        lastQuizResult.passed
+                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-400'
+                          : 'bg-rose-500/20 border-rose-400 text-rose-400'
+                      }`}>
+                        {lastQuizResult.passed ? '🎓' : '📚'}
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className={`px-2.5 py-0.5 rounded-full font-mono text-[9px] font-black uppercase tracking-wider border ${
+                          lastQuizResult.passed
+                            ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                            : 'bg-rose-950 text-rose-300 border-rose-500/40'
+                        }`}>
+                          {lastQuizResult.passed ? 'Lesson Passed' : 'Assessment Failed'}
+                        </span>
+                        <h3 className="text-base font-black text-white">
+                          Score: {lastQuizResult.score}% (Pass: 70%)
+                        </h3>
+                        <p className="text-xs text-zinc-400 font-mono">
+                          Lesson {lessonNum} of {totalL} &bull; {course.title}
+                        </p>
+                      </div>
+
+                      <div className="w-full p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 text-left space-y-2 font-mono text-xs">
+                        <div className="flex justify-between items-center text-zinc-300">
+                          <span>Academic Status:</span>
+                          <strong className={lastQuizResult.passed ? 'text-emerald-400' : 'text-rose-400'}>
+                            {lastQuizResult.passed ? 'Credit Earned (Grade A)' : 'Revision Required'}
+                          </strong>
+                        </div>
+                        <div className="flex justify-between items-center text-zinc-300">
+                          <span>Total Completed:</span>
+                          <strong className="text-white">
+                            {Math.min(totalL, (progress.completedLessons || 0) + (lastQuizResult.passed ? 1 : 0))} / {totalL} Lessons
+                          </strong>
+                        </div>
+                        <div className="flex justify-between items-center text-zinc-300">
+                          <span>Daily Lessons Today:</span>
+                          <strong className="text-zinc-200">
+                            {lastQuizResult.passed ? Math.min(dailyCap, (progress.lessonsDoneToday || 0) + 1) : progress.lessonsDoneToday || 0} / {dailyCap}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {lastQuizResult.passed ? (
+                        <div className="w-full space-y-2">
+                          {(progress.completedLessons || 0) + 1 >= totalL ? (
+                            <div className="p-3 rounded-xl bg-amber-950/80 border border-amber-500/40 text-[11px] text-amber-200 font-sans">
+                              🎉 <strong>All {totalL} Lessons Completed!</strong> You are now eligible to graduate! Return to the Academy to pay your graduation fee and receive your official degree.
+                            </div>
+                          ) : null}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveCourseId(null);
+                              setSelectedQuizChoice(null);
+                              setQuizAnswerSubmitted(false);
+                              setLastQuizResult(null);
+                            }}
+                            className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 text-white font-black text-xs cursor-pointer shadow-xl transition-all"
+                          >
+                            Return to Academy & Complete Next Steps &rarr;
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="w-full space-y-2">
+                          <p className="text-[11px] text-zinc-400">
+                            You must score at least 70% to pass this lesson. Re-read the syllabus notes and retake the quiz.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveLessonStep('reading');
+                              setSelectedQuizChoice(null);
+                              setQuizAnswerSubmitted(false);
+                              setLastQuizResult(null);
+                            }}
+                            className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs cursor-pointer shadow transition-all"
+                          >
+                            📖 Review Lecture Notes & Retake Quiz
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* =============================================================
               CANADA INTERSTATE BUS JOKE MODAL ("shey you be mumu, you wan use bus go canada, ole, gerrout jorr😂")

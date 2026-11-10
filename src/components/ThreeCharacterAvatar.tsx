@@ -25,6 +25,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
   const prevMouseXRef = useRef<number>(0);
   const characterGroupRef = useRef<THREE.Group | null>(null);
   const targetRotationYRef = useRef<number>(0);
+  const isAutoSpinningRef = useRef<boolean>(true);
 
   const safeAvatar: CharacterAvatar = avatar || {
     gender: 'male',
@@ -41,8 +42,6 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
   const skinColor = safeAvatar.skinTone || '#8d5524';
   const hairColor = safeAvatar.hairColor || '#18181b';
   const outfitType = safeAvatar.outfit || 'streetwear';
-  const pantsType = safeAvatar.pants || 'jeans';
-  const shoesType = safeAvatar.shoes || 'sneakers';
   const hairstyle = safeAvatar.hairstyle || 'fade';
   const heightPreset = safeAvatar.height || 'average';
 
@@ -50,7 +49,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     const container = mountRef.current;
     if (!container) return;
 
-    // Detect software WebGL guard
+    // Detect software WebGL
     const isSoftwareGl = (() => {
       try {
         const gl = document.createElement('canvas').getContext('webgl2');
@@ -65,15 +64,16 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
       }
     })();
 
-    const width = container.clientWidth || 300;
-    const height = container.clientHeight || 450;
+    const width = container.clientWidth || 320;
+    const height = container.clientHeight || 460;
 
     // Scene & Camera
     const scene = new THREE.Scene();
 
-    const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 100);
-    camera.position.set(0, 1.45, 3.8);
-    camera.lookAt(0, 1.15, 0);
+    const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 50);
+    // Framed to capture full character from head to toe with good margins
+    camera.position.set(0, 1.25, 4.0);
+    camera.lookAt(0, 1.05, 0);
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({
@@ -85,49 +85,61 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.18;
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     container.appendChild(renderer.domElement);
 
-    // Studio Lighting Rig
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+    // Cinematic 3-Point Lighting Setup
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
     scene.add(ambientLight);
 
-    const hemiLight = new THREE.HemisphereLight(0xfff5e6, 0x1f2937, 0.85);
+    const hemiLight = new THREE.HemisphereLight(0xfff7ed, 0x18181b, 0.75);
     scene.add(hemiLight);
 
-    const keyLight = new THREE.DirectionalLight(0xfffaf0, 1.35);
-    keyLight.position.set(2.5, 4.0, 3.5);
+    // Warm Key Light (Front-Right)
+    const keyLight = new THREE.DirectionalLight(0xfffaf0, 1.45);
+    keyLight.position.set(2.4, 3.8, 3.2);
     keyLight.castShadow = !isSoftwareGl;
     if (!isSoftwareGl) {
       keyLight.shadow.mapSize.width = 1024;
       keyLight.shadow.mapSize.height = 1024;
-      keyLight.shadow.bias = -0.0005;
+      keyLight.shadow.bias = -0.0004;
       keyLight.shadow.normalBias = 0.02;
     }
     scene.add(keyLight);
 
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.7);
-    rimLight.position.set(-3.0, 3.2, -2.5);
+    // Soft Cool Fill Light (Front-Left)
+    const fillLight = new THREE.DirectionalLight(0xe0f2fe, 0.65);
+    fillLight.position.set(-2.5, 2.8, 2.5);
+    scene.add(fillLight);
+
+    // Vivid Cyan/Sky-Blue Rim Light (Back-Left - AAA Character Silhouette Highlight)
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.1);
+    rimLight.position.set(-2.8, 3.0, -3.0);
     scene.add(rimLight);
 
-    // Soft Radial Contact Shadow Grounding Plane
+    // Subtle Amber Warm Rim (Back-Right)
+    const warmRim = new THREE.DirectionalLight(0xf59e0b, 0.55);
+    warmRim.position.set(2.5, 2.5, -2.5);
+    scene.add(warmRim);
+
+    // Soft Contact Shadow Plane on Floor
     const shadowCanvas = document.createElement('canvas');
     shadowCanvas.width = 256;
     shadowCanvas.height = 256;
     const sCtx = shadowCanvas.getContext('2d');
     if (sCtx) {
-      const grad = sCtx.createRadialGradient(128, 128, 10, 128, 128, 120);
-      grad.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
-      grad.addColorStop(0.5, 'rgba(0, 0, 0, 0.25)');
+      const grad = sCtx.createRadialGradient(128, 128, 15, 128, 128, 120);
+      grad.addColorStop(0, 'rgba(0, 0, 0, 0.65)');
+      grad.addColorStop(0.45, 'rgba(0, 0, 0, 0.3)');
       grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
       sCtx.fillStyle = grad;
       sCtx.fillRect(0, 0, 256, 256);
     }
     const shadowTex = new THREE.CanvasTexture(shadowCanvas);
-    const shadowGeo = new THREE.PlaneGeometry(1.4, 1.4);
+    const shadowGeo = new THREE.PlaneGeometry(1.6, 1.6);
     const shadowMat = new THREE.MeshBasicMaterial({
       map: shadowTex,
       transparent: true,
@@ -136,12 +148,12 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     });
     const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
     shadowMesh.rotation.x = -Math.PI / 2;
-    shadowMesh.position.y = 0.002;
+    shadowMesh.position.y = 0.003;
     scene.add(shadowMesh);
 
     // =========================================================================
-    // 3D PROCEDURAL CHARACTER MESH BUILDER
-    // Relaxed Natural Standing Posture (Arms naturally relaxed down, NOT T-Pose)
+    // 3D PROCEDURAL CHARACTER MODEL
+    // Realistic proportions, natural relaxed standing posture, human anatomical structure
     // =========================================================================
     const charGroup = new THREE.Group();
     characterGroupRef.current = charGroup;
@@ -150,7 +162,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     // Height scale
     const heightScaleY =
       heightPreset === 'short'
-        ? 0.93
+        ? 0.94
         : heightPreset === 'tall'
         ? 1.05
         : heightPreset === 'towering'
@@ -158,38 +170,48 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
         : 1.0;
     charGroup.scale.set(1, heightScaleY, 1);
 
-    // Shared Materials
+    // High quality standard PBR materials
     const skinMat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(skinColor),
-      roughness: 0.62,
+      roughness: 0.52,
+      metalness: 0.03,
+    });
+
+    const skinToneObj = new THREE.Color(skinColor);
+    const lipsMat = new THREE.MeshStandardMaterial({
+      color: skinToneObj.clone().lerp(new THREE.Color(0xb91c1c), 0.28),
+      roughness: 0.45,
       metalness: 0.04,
     });
 
     const hairMat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(hairColor),
-      roughness: 0.85,
-      metalness: 0.05,
+      roughness: 0.88,
+      metalness: 0.02,
     });
 
-    // Outfit Materials based on selection (4 starter non-expensive clothes)
-    let shirtColorHex = 0xffffff; // default white tee
-    let shirtRoughness = 0.8;
-    let pantsColorHex = 0x1e3a8a; // default blue jeans
-    let pantsRoughness = 0.85;
+    // Outfit Palette
+    let shirtColorHex = 0xffffff;
+    let pantsColorHex = 0x1e3a8a;
+    let accentColorHex = 0xd97706;
 
     if (outfitType === 'corporate') {
-      shirtColorHex = 0x2563eb; // Royal blue fitted polo
-      pantsColorHex = 0xd97706; // Khaki / beige chinos
+      shirtColorHex = 0x1d4ed8; // Crisp royal blue corporate shirt
+      pantsColorHex = 0x27272a; // Charcoal tailored trousers
+      accentColorHex = 0xd4af37;
     } else if (outfitType === 'casual') {
-      shirtColorHex = 0x059669; // Forest green cotton tee
-      pantsColorHex = 0x18181b; // Black casual joggers
+      shirtColorHex = 0x059669; // Forest green casual crewneck
+      pantsColorHex = 0x18181b; // Pitch black street joggers
+      accentColorHex = 0x10b981;
     } else if (outfitType === 'ankara' || outfitType === 'trad_senator') {
-      shirtColorHex = 0x7c2d12; // Rich Ankara print rust tone
-      pantsColorHex = 0x7c2d12; // Matching Ankara trousers
+      shirtColorHex = 0x7c2d12; // Rich African mahogany rust with gold embroidery
+      pantsColorHex = 0x7c2d12; // Matching tailored senator trousers
+      accentColorHex = 0xf59e0b; // Gold embroidery
     } else {
-      // streetwear / white tee
+      // streetwear: clean crisp white designer tee & indigo wash jeans
       shirtColorHex = 0xf8fafc;
       pantsColorHex = 0x1e3a8a;
+      accentColorHex = 0xef4444;
     }
 
     if (safeAvatar.pantsColor) {
@@ -200,53 +222,101 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
 
     const shirtMat = new THREE.MeshStandardMaterial({
       color: shirtColorHex,
-      roughness: shirtRoughness,
+      roughness: 0.75,
       metalness: 0.02,
     });
 
     const pantsMat = new THREE.MeshStandardMaterial({
       color: pantsColorHex,
-      roughness: pantsRoughness,
+      roughness: 0.80,
       metalness: 0.02,
     });
 
-    const shoeMat = new THREE.MeshStandardMaterial({
-      color: 0x18181b,
-      roughness: 0.4,
+    const beltMat = new THREE.MeshStandardMaterial({
+      color: 0x1c1917,
+      roughness: 0.5,
       metalness: 0.1,
     });
 
-    // 1. Torso / Upper Body (Gender-Differentiated Anatomy)
-    // Male: Broader upper chest, tapering down
-    // Female: Narrower shoulders, fitted waist, feminine bust curvature
+    const goldBuckleMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      roughness: 0.25,
+      metalness: 0.85,
+    });
+
+    const shoeMainMat = new THREE.MeshStandardMaterial({
+      color: 0x18181b,
+      roughness: 0.45,
+      metalness: 0.08,
+    });
+
+    const shoeSoleMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.35,
+      metalness: 0.02,
+    });
+
+    // 1. Torso Group (Gender Proportions)
     const torsoGroup = new THREE.Group();
-    torsoGroup.position.set(0, 1.25, 0);
+    torsoGroup.position.set(0, 1.26, 0);
 
-    const chestWidth = isFemale ? 0.36 : 0.44;
-    const waistWidth = isFemale ? 0.30 : 0.38;
-    const hipWidth = isFemale ? 0.40 : 0.38;
+    const chestWidth = isFemale ? 0.38 : 0.46;
+    const waistWidth = isFemale ? 0.31 : 0.39;
+    const hipWidth = isFemale ? 0.42 : 0.39;
 
-    const chestGeo = new THREE.CylinderGeometry(chestWidth / 2, waistWidth / 2, 0.35, 16);
+    // Upper Chest
+    const chestGeo = new THREE.CylinderGeometry(chestWidth / 2, waistWidth / 2, 0.36, 16);
     const chestMesh = new THREE.Mesh(chestGeo, shirtMat);
-    chestMesh.position.y = 0.15;
+    chestMesh.position.y = 0.16;
     chestMesh.castShadow = !isSoftwareGl;
     chestMesh.receiveShadow = !isSoftwareGl;
     torsoGroup.add(chestMesh);
 
+    // Shirt Collar Band
+    const collarGeo = new THREE.TorusGeometry(0.09, 0.016, 8, 20);
+    const collarMesh = new THREE.Mesh(collarGeo, shirtMat);
+    collarMesh.rotation.x = Math.PI / 2;
+    collarMesh.position.set(0, 0.33, 0);
+    torsoGroup.add(collarMesh);
+
+    // Traditional Senator / Ankara Chest Embroidery Detail
+    if (outfitType === 'trad_senator' || outfitType === 'ankara') {
+      const embroGeo = new THREE.BoxGeometry(0.08, 0.26, 0.01);
+      const embroMat = new THREE.MeshStandardMaterial({
+        color: accentColorHex,
+        roughness: 0.4,
+        metalness: 0.3,
+      });
+      const embroMesh = new THREE.Mesh(embroGeo, embroMat);
+      embroMesh.position.set(0, 0.16, (chestWidth / 2) * 0.9 + 0.01);
+      torsoGroup.add(embroMesh);
+    }
+
     // Female bust curvature
     if (isFemale) {
-      const bustGeo = new THREE.SphereGeometry(0.085, 12, 12);
+      const bustGeo = new THREE.SphereGeometry(0.09, 14, 14);
       const bustL = new THREE.Mesh(bustGeo, shirtMat);
-      bustL.position.set(-0.08, 0.14, 0.12);
-      bustL.scale.set(1, 0.85, 1.1);
+      bustL.position.set(-0.085, 0.16, 0.13);
+      bustL.scale.set(1.0, 0.9, 1.15);
       const bustR = new THREE.Mesh(bustGeo, shirtMat);
-      bustR.position.set(0.08, 0.14, 0.12);
-      bustR.scale.set(1, 0.85, 1.1);
+      bustR.position.set(0.085, 0.16, 0.13);
+      bustR.scale.set(1.0, 0.9, 1.15);
       torsoGroup.add(bustL, bustR);
     }
 
-    // Lower Torso / Pelvis
-    const pelvisGeo = new THREE.CylinderGeometry(waistWidth / 2, hipWidth / 2, 0.22, 16);
+    // Belt & Buckle
+    const beltGeo = new THREE.CylinderGeometry(waistWidth / 2 + 0.006, waistWidth / 2 + 0.006, 0.045, 16);
+    const beltMesh = new THREE.Mesh(beltGeo, beltMat);
+    beltMesh.position.y = -0.02;
+    torsoGroup.add(beltMesh);
+
+    const buckleGeo = new THREE.BoxGeometry(0.05, 0.04, 0.02);
+    const buckleMesh = new THREE.Mesh(buckleGeo, goldBuckleMat);
+    buckleMesh.position.set(0, -0.02, waistWidth / 2 + 0.01);
+    torsoGroup.add(buckleMesh);
+
+    // Pelvis / Hips
+    const pelvisGeo = new THREE.CylinderGeometry(waistWidth / 2, hipWidth / 2, 0.20, 16);
     const pelvisMesh = new THREE.Mesh(pelvisGeo, pantsMat);
     pelvisMesh.position.y = -0.12;
     pelvisMesh.castShadow = !isSoftwareGl;
@@ -255,149 +325,167 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     charGroup.add(torsoGroup);
 
     // 2. Neck & Head
-    const neckGeo = new THREE.CylinderGeometry(0.075, 0.085, 0.12, 12);
+    const neckGeo = new THREE.CylinderGeometry(0.075, 0.085, 0.13, 14);
     const neckMesh = new THREE.Mesh(neckGeo, skinMat);
-    neckMesh.position.set(0, 1.55, 0);
+    neckMesh.position.set(0, 1.57, 0);
     neckMesh.castShadow = !isSoftwareGl;
     charGroup.add(neckMesh);
 
-    // Head
+    // Head Group
     const headGroup = new THREE.Group();
-    headGroup.position.set(0, 1.74, 0);
+    headGroup.position.set(0, 1.77, 0);
 
     // Cranium
-    const headGeo = new THREE.SphereGeometry(0.165, 20, 20);
-    headGeo.scale(1, 1.12, 1.05);
+    const headGeo = new THREE.SphereGeometry(0.168, 22, 22);
+    headGeo.scale(1, 1.14, 1.06);
     const headMesh = new THREE.Mesh(headGeo, skinMat);
     headMesh.castShadow = !isSoftwareGl;
     headGroup.add(headMesh);
 
-    // Jawline
-    const jawGeo = new THREE.CylinderGeometry(0.12, isFemale ? 0.08 : 0.11, 0.14, 12);
+    // Tapered Jaw & Chin
+    const jawGeo = new THREE.CylinderGeometry(0.13, isFemale ? 0.085 : 0.115, 0.15, 14);
     const jawMesh = new THREE.Mesh(jawGeo, skinMat);
-    jawMesh.position.set(0, -0.06, 0.03);
+    jawMesh.position.set(0, -0.065, 0.035);
     headGroup.add(jawMesh);
 
-    // Facial Features: Nose, Ears, Eyes, Lips
-    const noseGeo = new THREE.ConeGeometry(0.026, 0.065, 8);
+    // Defined Nose Bridge
+    const noseGeo = new THREE.ConeGeometry(0.028, 0.07, 8);
     const noseMesh = new THREE.Mesh(noseGeo, skinMat);
     noseMesh.rotation.x = Math.PI / 2.2;
-    noseMesh.position.set(0, -0.01, 0.175);
+    noseMesh.position.set(0, -0.01, 0.18);
     headGroup.add(noseMesh);
 
-    // Eyes
-    const eyeWhiteGeo = new THREE.SphereGeometry(0.025, 8, 8);
-    const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
-    const pupilGeo = new THREE.SphereGeometry(0.014, 8, 8);
-    const pupilMat = new THREE.MeshBasicMaterial({ color: 0x09090b });
+    // Stylized Expressive 3D Eyes
+    const eyeWhiteGeo = new THREE.SphereGeometry(0.026, 10, 10);
+    const eyeWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1 });
+    const pupilGeo = new THREE.SphereGeometry(0.015, 10, 10);
+    const pupilMat = new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.1 });
+    const glintGeo = new THREE.SphereGeometry(0.005, 6, 6);
+    const glintMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
+    // Left Eye
     const eyeL = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
-    eyeL.position.set(-0.055, 0.03, 0.15);
-    eyeL.scale.set(1.2, 0.7, 0.5);
+    eyeL.position.set(-0.058, 0.032, 0.152);
+    eyeL.scale.set(1.2, 0.72, 0.6);
     const pupilL = new THREE.Mesh(pupilGeo, pupilMat);
-    pupilL.position.set(-0.055, 0.03, 0.165);
+    pupilL.position.set(-0.058, 0.032, 0.168);
+    const glintL = new THREE.Mesh(glintGeo, glintMat);
+    glintL.position.set(-0.053, 0.037, 0.178);
 
+    // Right Eye
     const eyeR = new THREE.Mesh(eyeWhiteGeo, eyeWhiteMat);
-    eyeR.position.set(0.055, 0.03, 0.15);
-    eyeR.scale.set(1.2, 0.7, 0.5);
+    eyeR.position.set(0.058, 0.032, 0.152);
+    eyeR.scale.set(1.2, 0.72, 0.6);
     const pupilR = new THREE.Mesh(pupilGeo, pupilMat);
-    pupilR.position.set(0.055, 0.03, 0.165);
+    pupilR.position.set(0.058, 0.032, 0.168);
+    const glintR = new THREE.Mesh(glintGeo, glintMat);
+    glintR.position.set(0.063, 0.037, 0.178);
 
-    headGroup.add(eyeL, pupilL, eyeR, pupilR);
+    headGroup.add(eyeL, pupilL, glintL, eyeR, pupilR, glintR);
 
-    // Eyebrows
-    const browGeo = new THREE.BoxGeometry(0.045, 0.009, 0.015);
-    const browMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(hairColor), roughness: 0.9 });
+    // Styled Eyebrows
+    const browGeo = new THREE.BoxGeometry(0.048, 0.01, 0.016);
+    const browMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(hairColor), roughness: 0.85 });
     const browL = new THREE.Mesh(browGeo, browMat);
-    browL.position.set(-0.055, 0.062, 0.162);
-    browL.rotation.z = 0.06;
+    browL.position.set(-0.058, 0.066, 0.165);
+    browL.rotation.z = 0.07;
     const browR = new THREE.Mesh(browGeo, browMat);
-    browR.position.set(0.055, 0.062, 0.162);
-    browR.rotation.z = -0.06;
+    browR.position.set(0.058, 0.066, 0.165);
+    browR.rotation.z = -0.07;
     headGroup.add(browL, browR);
 
-    // Ears
-    const earGeo = new THREE.SphereGeometry(0.038, 8, 8);
-    earGeo.scale(0.4, 1.1, 0.8);
+    // Natural Contoured Lips
+    const lipGeo = new THREE.CylinderGeometry(0.036, 0.032, 0.014, 10);
+    const lipMesh = new THREE.Mesh(lipGeo, lipsMat);
+    lipMesh.rotation.x = Math.PI / 2;
+    lipMesh.position.set(0, -0.065, 0.165);
+    lipMesh.scale.set(1.2, 0.6, 0.9);
+    headGroup.add(lipMesh);
+
+    // Realistic Ears with Lobes
+    const earGeo = new THREE.SphereGeometry(0.042, 10, 10);
+    earGeo.scale(0.35, 1.15, 0.85);
     const earL = new THREE.Mesh(earGeo, skinMat);
-    earL.position.set(-0.165, 0.01, -0.01);
+    earL.position.set(-0.168, 0.01, -0.01);
     const earR = new THREE.Mesh(earGeo, skinMat);
-    earR.position.set(0.165, 0.01, -0.01);
+    earR.position.set(0.168, 0.01, -0.01);
     headGroup.add(earL, earR);
 
-    // =========================================================================
-    // 3. 3D HAIRSTYLES (CRUCIALLY PLACED ABOVE FOREHEAD - NEVER COVERING FACE!)
-    // =========================================================================
+    // 3. 3D HAIRSTYLES (Sitting comfortably above cranium - never obscuring eyes!)
     const hairGroup = new THREE.Group();
 
     if (hairstyle === 'afro') {
-      // Volumetric Afro Crown sitting securely atop and around skull, well above brow!
-      const afroBaseGeo = new THREE.SphereGeometry(0.22, 16, 16);
-      afroBaseGeo.scale(1.15, 1.05, 1.15);
+      // Volumetric Afro Crown
+      const afroBaseGeo = new THREE.SphereGeometry(0.23, 18, 18);
+      afroBaseGeo.scale(1.15, 1.08, 1.15);
       const afroMesh = new THREE.Mesh(afroBaseGeo, hairMat);
-      // Positioned up and back on the cranium so hairline is cleanly above brow
-      afroMesh.position.set(0, 0.12, -0.03);
+      afroMesh.position.set(0, 0.13, -0.03);
       hairGroup.add(afroMesh);
 
-      // Fluffy textured bumps for authentic afro density
-      for (let i = 0; i < 7; i++) {
-        const angle = (i / 7) * Math.PI * 2;
-        const bumpGeo = new THREE.SphereGeometry(0.09, 10, 10);
+      // Fluffy textured density nodes
+      for (let i = 0; i < 9; i++) {
+        const angle = (i / 9) * Math.PI * 2;
+        const bumpGeo = new THREE.SphereGeometry(0.095, 10, 10);
         const bumpMesh = new THREE.Mesh(bumpGeo, hairMat);
         bumpMesh.position.set(
-          Math.cos(angle) * 0.14,
-          0.16 + Math.sin(angle) * 0.05,
-          Math.sin(angle) * 0.14 - 0.03
+          Math.cos(angle) * 0.15,
+          0.17 + Math.sin(angle) * 0.06,
+          Math.sin(angle) * 0.15 - 0.03
         );
         hairGroup.add(bumpMesh);
       }
     } else if (hairstyle === 'fade') {
-      // Low / Mid Fade: Clean cap hugging scalp closely with crisp edge
-      const fadeGeo = new THREE.SphereGeometry(0.174, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.52);
-      fadeGeo.scale(1.02, 1.12, 1.04);
+      // Clean Taper Fade with crisp front hairline
+      const fadeGeo = new THREE.SphereGeometry(0.176, 18, 18, 0, Math.PI * 2, 0, Math.PI * 0.52);
+      fadeGeo.scale(1.02, 1.13, 1.04);
       const fadeMesh = new THREE.Mesh(fadeGeo, hairMat);
-      fadeMesh.position.set(0, 0.01, 0);
+      fadeMesh.position.set(0, 0.015, 0);
       hairGroup.add(fadeMesh);
+
+      // Crisp front edge-up line
+      const edgeGeo = new THREE.BoxGeometry(0.11, 0.012, 0.02);
+      const edgeMesh = new THREE.Mesh(edgeGeo, hairMat);
+      edgeMesh.position.set(0, 0.11, 0.158);
+      hairGroup.add(edgeMesh);
     } else if (hairstyle === 'waves') {
-      // 360 Waves: Tight cap with concentric wave rings
-      const waveCapGeo = new THREE.SphereGeometry(0.174, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.55);
-      waveCapGeo.scale(1.02, 1.12, 1.04);
+      // 360 Waves with specular rings
+      const waveCapGeo = new THREE.SphereGeometry(0.176, 18, 18, 0, Math.PI * 2, 0, Math.PI * 0.54);
+      waveCapGeo.scale(1.02, 1.13, 1.04);
       const waveCap = new THREE.Mesh(waveCapGeo, hairMat);
       hairGroup.add(waveCap);
 
       for (let w = 0; w < 4; w++) {
-        const ringGeo = new THREE.TorusGeometry(0.12 - w * 0.02, 0.012, 6, 16);
+        const ringGeo = new THREE.TorusGeometry(0.12 - w * 0.02, 0.012, 6, 18);
         const ringMesh = new THREE.Mesh(ringGeo, hairMat);
         ringMesh.rotation.x = Math.PI / 2;
-        ringMesh.position.set(0, 0.14 - w * 0.03, -0.01);
+        ringMesh.position.set(0, 0.15 - w * 0.03, -0.01);
         hairGroup.add(ringMesh);
       }
     } else if (hairstyle === 'braids' || hairstyle === 'dreads' || hairstyle === 'locs') {
-      // Scalp crown + Hanging braided strands down shoulders
-      const capGeo = new THREE.SphereGeometry(0.175, 14, 14, 0, Math.PI * 2, 0, Math.PI * 0.52);
+      // Crown cap + Hanging segmented dreads/braids
+      const capGeo = new THREE.SphereGeometry(0.176, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.52);
       const cap = new THREE.Mesh(capGeo, hairMat);
       hairGroup.add(cap);
 
-      // Hanging dread/braid cylinders
-      const braidCount = 14;
-      for (let b = 0; b < braidCount; b++) {
-        const angle = (b / braidCount) * Math.PI * 1.5 + Math.PI * 0.75;
-        const length = 0.28 + (b % 3) * 0.04;
-        const strandGeo = new THREE.CylinderGeometry(0.014, 0.01, length, 6);
+      const strandCount = 16;
+      for (let b = 0; b < strandCount; b++) {
+        const angle = (b / strandCount) * Math.PI * 1.5 + Math.PI * 0.75;
+        const length = 0.32 + (b % 3) * 0.04;
+        const strandGeo = new THREE.CylinderGeometry(0.014, 0.01, length, 8);
         const strandMesh = new THREE.Mesh(strandGeo, hairMat);
-        const radius = 0.155;
+        const radius = 0.16;
         strandMesh.position.set(
           Math.cos(angle) * radius,
           -length / 2 + 0.02,
           Math.sin(angle) * radius
         );
-        strandMesh.rotation.z = Math.cos(angle) * -0.15;
+        strandMesh.rotation.z = Math.cos(angle) * -0.16;
         hairGroup.add(strandMesh);
       }
     } else {
-      // Buzz cut
-      const buzzGeo = new THREE.SphereGeometry(0.172, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.48);
-      buzzGeo.scale(1.01, 1.10, 1.03);
+      // Clean buzz cut
+      const buzzGeo = new THREE.SphereGeometry(0.174, 18, 18, 0, Math.PI * 2, 0, Math.PI * 0.50);
+      buzzGeo.scale(1.01, 1.11, 1.03);
       const buzzMesh = new THREE.Mesh(buzzGeo, hairMat);
       hairGroup.add(buzzMesh);
     }
@@ -405,44 +493,58 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     headGroup.add(hairGroup);
     charGroup.add(headGroup);
 
-    // =========================================================================
-    // 4. NATURAL RELAXED ARMS (Relaxed down naturally at sides, NOT T-Pose)
-    // =========================================================================
-    const armWidth = isFemale ? 0.08 : 0.095;
-    const shoulderSpan = (chestWidth / 2) + 0.05;
+    // 4. Natural Relaxed Arms (Resting along torso at ~15°, NOT T-Pose)
+    const armWidth = isFemale ? 0.082 : 0.098;
+    const shoulderSpan = (chestWidth / 2) + 0.055;
 
-    // Left Arm (Relaxed slightly down and forward)
+    // Left Arm
     const armLGroup = new THREE.Group();
-    armLGroup.position.set(-shoulderSpan, 1.38, 0);
+    armLGroup.position.set(-shoulderSpan, 1.40, 0);
 
-    const upperArmGeo = new THREE.CylinderGeometry(armWidth / 2, (armWidth * 0.85) / 2, 0.32, 10);
+    // Shoulder Deltoid
+    const deltoidGeo = new THREE.SphereGeometry(armWidth * 0.7, 10, 10);
+    const deltoidL = new THREE.Mesh(deltoidGeo, shirtMat);
+    armLGroup.add(deltoidL);
+
+    // Bicep / Upper Arm
+    const upperArmGeo = new THREE.CylinderGeometry(armWidth / 2, (armWidth * 0.88) / 2, 0.32, 12);
     const upperArmL = new THREE.Mesh(upperArmGeo, shirtMat);
-    upperArmL.position.y = -0.14;
+    upperArmL.position.y = -0.15;
     armLGroup.add(upperArmL);
 
-    // Forearm & Hand (Skin)
-    const forearmGeo = new THREE.CylinderGeometry((armWidth * 0.85) / 2, (armWidth * 0.75) / 2, 0.30, 10);
+    // Forearm (Skin)
+    const forearmGeo = new THREE.CylinderGeometry((armWidth * 0.88) / 2, (armWidth * 0.74) / 2, 0.30, 12);
     const forearmL = new THREE.Mesh(forearmGeo, skinMat);
     forearmL.position.y = -0.42;
     armLGroup.add(forearmL);
 
-    const handGeo = new THREE.SphereGeometry(0.045, 8, 8);
-    handGeo.scale(0.8, 1.2, 0.9);
+    // Wristwatch on Left Arm
+    const watchBandGeo = new THREE.CylinderGeometry(armWidth * 0.39, armWidth * 0.39, 0.035, 12);
+    const watchBandMesh = new THREE.Mesh(watchBandGeo, goldBuckleMat);
+    watchBandMesh.position.y = -0.54;
+    armLGroup.add(watchBandMesh);
+
+    // Resting Curled Hand
+    const handGeo = new THREE.SphereGeometry(0.044, 10, 10);
+    handGeo.scale(0.8, 1.25, 0.95);
     const handL = new THREE.Mesh(handGeo, skinMat);
-    handL.position.y = -0.60;
+    handL.position.y = -0.61;
     armLGroup.add(handL);
 
-    // Natural resting arm angle: relaxed downwards at ~10° along torso
-    armLGroup.rotation.z = 0.14;
+    // Natural 16-degree relaxed angle
+    armLGroup.rotation.z = 0.16;
     armLGroup.rotation.x = 0.06;
     charGroup.add(armLGroup);
 
-    // Right Arm (Relaxed slightly down and forward)
+    // Right Arm
     const armRGroup = new THREE.Group();
-    armRGroup.position.set(shoulderSpan, 1.38, 0);
+    armRGroup.position.set(shoulderSpan, 1.40, 0);
+
+    const deltoidR = new THREE.Mesh(deltoidGeo, shirtMat);
+    armRGroup.add(deltoidR);
 
     const upperArmR = new THREE.Mesh(upperArmGeo, shirtMat);
-    upperArmR.position.y = -0.14;
+    upperArmR.position.y = -0.15;
     armRGroup.add(upperArmR);
 
     const forearmR = new THREE.Mesh(forearmGeo, skinMat);
@@ -450,60 +552,78 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     armRGroup.add(forearmR);
 
     const handR = new THREE.Mesh(handGeo, skinMat);
-    handR.position.y = -0.60;
+    handR.position.y = -0.61;
     armRGroup.add(handR);
 
-    armRGroup.rotation.z = -0.14;
+    armRGroup.rotation.z = -0.16;
     armRGroup.rotation.x = 0.06;
     charGroup.add(armRGroup);
 
+    // 5. Anatomical Legs & Realistic Footwear
+    const legWidth = isFemale ? 0.11 : 0.13;
+    const legSpacing = isFemale ? 0.115 : 0.135;
+
+    // Helper for structured leg (Thigh + Knee + Calf + Shoe)
+    const createLeg = (isRight: boolean) => {
+      const legGroup = new THREE.Group();
+      legGroup.position.set(isRight ? legSpacing : -legSpacing, 1.08, 0);
+
+      // Thigh (Upper Leg)
+      const thighGeo = new THREE.CylinderGeometry(legWidth / 2, (legWidth * 0.88) / 2, 0.46, 14);
+      const thighMesh = new THREE.Mesh(thighGeo, pantsMat);
+      thighMesh.position.y = -0.23;
+      thighMesh.castShadow = !isSoftwareGl;
+      legGroup.add(thighMesh);
+
+      // Knee Joint
+      const kneeGeo = new THREE.SphereGeometry((legWidth * 0.85) / 2, 10, 10);
+      const kneeMesh = new THREE.Mesh(kneeGeo, pantsMat);
+      kneeMesh.position.y = -0.46;
+      kneeMesh.scale.set(1, 0.8, 1.1);
+      legGroup.add(kneeMesh);
+
+      // Calf / Shin (Lower Leg)
+      const calfGeo = new THREE.CylinderGeometry((legWidth * 0.85) / 2, (legWidth * 0.72) / 2, 0.46, 14);
+      const calfMesh = new THREE.Mesh(calfGeo, pantsMat);
+      calfMesh.position.y = -0.69;
+      calfMesh.castShadow = !isSoftwareGl;
+      legGroup.add(calfMesh);
+
+      // Sneaker / Shoe Group
+      const shoeGroup = new THREE.Group();
+      shoeGroup.position.set(0, -0.97, 0.04);
+
+      // Shoe Upper
+      const shoeUpperGeo = new THREE.BoxGeometry(0.12, 0.075, 0.22);
+      const shoeUpper = new THREE.Mesh(shoeUpperGeo, shoeMainMat);
+      shoeUpper.castShadow = !isSoftwareGl;
+      shoeGroup.add(shoeUpper);
+
+      // Rounded Toe Cap
+      const toeGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.06, 12);
+      const toeMesh = new THREE.Mesh(toeGeo, shoeMainMat);
+      toeMesh.position.set(0, 0, 0.11);
+      shoeGroup.add(toeMesh);
+
+      // White Rubber Midsole / Outsole
+      const soleGeo = new THREE.BoxGeometry(0.124, 0.024, 0.23);
+      const soleMesh = new THREE.Mesh(soleGeo, shoeSoleMat);
+      soleMesh.position.set(0, -0.042, 0.005);
+      shoeGroup.add(soleMesh);
+
+      legGroup.add(shoeGroup);
+      return legGroup;
+    };
+
+    const leftLeg = createLeg(false);
+    const rightLeg = createLeg(true);
+    charGroup.add(leftLeg, rightLeg);
+
+    // Shift whole group so soles rest flush on floor (y = 0.04)
+    charGroup.position.y = 0.04;
+
     // =========================================================================
-    // 5. LEGS & SHOES (Natural Balanced Stand)
-    // =========================================================================
-    const legWidth = isFemale ? 0.105 : 0.125;
-    const legSpacing = isFemale ? 0.11 : 0.13;
-
-    // Left Leg
-    const legLGroup = new THREE.Group();
-    legLGroup.position.set(-legSpacing, 1.05, 0);
-
-    const legGeo = new THREE.CylinderGeometry(legWidth / 2, (legWidth * 0.8) / 2, 0.95, 12);
-    const legL = new THREE.Mesh(legGeo, pantsMat);
-    legL.position.y = -0.48;
-    legL.castShadow = !isSoftwareGl;
-    legLGroup.add(legL);
-
-    // Left Shoe
-    const shoeGeo = new THREE.BoxGeometry(0.12, 0.09, 0.22);
-    const shoeL = new THREE.Mesh(shoeGeo, shoeMat);
-    shoeL.position.set(0, -0.98, 0.04);
-    shoeL.castShadow = !isSoftwareGl;
-    legLGroup.add(shoeL);
-
-    charGroup.add(legLGroup);
-
-    // Right Leg
-    const legRGroup = new THREE.Group();
-    legRGroup.position.set(legSpacing, 1.05, 0);
-
-    const legR = new THREE.Mesh(legGeo, pantsMat);
-    legR.position.y = -0.48;
-    legR.castShadow = !isSoftwareGl;
-    legRGroup.add(legR);
-
-    // Right Shoe
-    const shoeR = new THREE.Mesh(shoeGeo, shoeMat);
-    shoeR.position.set(0, -0.98, 0.04);
-    shoeR.castShadow = !isSoftwareGl;
-    legRGroup.add(shoeR);
-
-    charGroup.add(legRGroup);
-
-    // Shift whole group so feet stand flush on ground at y = 0
-    charGroup.position.y = 0.02;
-
-    // =========================================================================
-    // RENDER LOOP & INTERACTION (Smooth Damping & Idle Breathing)
+    // RENDER LOOP & INTERACTION (Idle Breathing & Orbit Rotation)
     // =========================================================================
     let frameId = 0;
     const clock = new THREE.Clock();
@@ -511,6 +631,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     const handlePointerDown = (e: MouseEvent | TouchEvent) => {
       if (!interactive) return;
       isDraggingRef.current = true;
+      isAutoSpinningRef.current = false;
       const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
       prevMouseXRef.current = clientX;
     };
@@ -519,57 +640,59 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
       if (!interactive || !isDraggingRef.current) return;
       const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
       const deltaX = clientX - prevMouseXRef.current;
-      prevMouseXRef.current = clientX;
       targetRotationYRef.current += deltaX * 0.012;
+      prevMouseXRef.current = clientX;
     };
 
     const handlePointerUp = () => {
       isDraggingRef.current = false;
     };
 
-    const domEl = renderer.domElement;
-    domEl.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('mousemove', handlePointerMove);
-    window.addEventListener('mouseup', handlePointerUp);
-    domEl.addEventListener('touchstart', handlePointerDown, { passive: true });
-    window.addEventListener('touchmove', handlePointerMove, { passive: true });
-    window.addEventListener('touchend', handlePointerUp);
+    if (interactive) {
+      container.addEventListener('mousedown', handlePointerDown);
+      window.addEventListener('mousemove', handlePointerMove);
+      window.addEventListener('mouseup', handlePointerUp);
 
-    const renderTick = () => {
-      const delta = clock.getDelta();
-      const time = clock.getElapsedTime();
+      container.addEventListener('touchstart', handlePointerDown, { passive: true });
+      window.addEventListener('touchmove', handlePointerMove, { passive: true });
+      window.addEventListener('touchend', handlePointerUp);
+    }
 
-      // Smooth damped rotation towards target
-      if (charGroup) {
-        charGroup.rotation.y = THREE.MathUtils.damp(
-          charGroup.rotation.y,
-          targetRotationYRef.current,
-          10,
-          delta
-        );
+    const animate = () => {
+      frameId = requestAnimationFrame(animate);
+      const elapsed = clock.getElapsedTime();
 
-        // Subtle realistic idle breathing motion
-        const breath = Math.sin(time * 2.2) * 0.005;
-        torsoGroup.position.y = 1.25 + breath;
-        headGroup.position.y = 1.74 + breath * 1.2;
-        armLGroup.position.y = 1.38 + breath;
-        armRGroup.position.y = 1.38 + breath;
+      // Smooth rotational damping
+      if (characterGroupRef.current) {
+        if (isAutoSpinningRef.current && !isDraggingRef.current) {
+          targetRotationYRef.current += 0.003;
+        }
+        characterGroupRef.current.rotation.y +=
+          (targetRotationYRef.current - characterGroupRef.current.rotation.y) * 0.08;
+
+        // Subtle idle breathing animation
+        const breath = Math.sin(elapsed * 1.6) * 0.015;
+        torsoGroup.position.y = 1.26 + breath * 0.5;
+        torsoGroup.scale.set(1 + breath * 0.4, 1 + breath * 0.3, 1 + breath * 0.4);
+
+        // Subtle arm idle sway
+        armLGroup.rotation.z = 0.16 + Math.sin(elapsed * 1.6) * 0.015;
+        armRGroup.rotation.z = -0.16 - Math.sin(elapsed * 1.6) * 0.015;
       }
 
       renderer.render(scene, camera);
-      frameId = requestAnimationFrame(renderTick);
     };
 
-    frameId = requestAnimationFrame(renderTick);
+    animate();
 
-    // Handle Resize
+    // Resize observer
     const handleResize = () => {
       if (!container) return;
-      const newW = container.clientWidth || 300;
-      const newH = container.clientHeight || 450;
-      camera.aspect = newW / newH;
+      const w = container.clientWidth || 320;
+      const h = container.clientHeight || 460;
+      camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(newW, newH);
+      renderer.setSize(w, h);
     };
 
     window.addEventListener('resize', handleResize);
@@ -577,49 +700,52 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     return () => {
       cancelAnimationFrame(frameId);
       window.removeEventListener('resize', handleResize);
-      domEl.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('mousemove', handlePointerMove);
-      window.removeEventListener('mouseup', handlePointerUp);
-      domEl.removeEventListener('touchstart', handlePointerDown);
-      window.removeEventListener('touchmove', handlePointerMove);
-      window.removeEventListener('touchend', handlePointerUp);
-
-      // Clean disposal
-      renderer.dispose();
-      if (domEl.parentNode) {
-        domEl.parentNode.removeChild(domEl);
+      if (interactive) {
+        container.removeEventListener('mousedown', handlePointerDown);
+        window.removeEventListener('mousemove', handlePointerMove);
+        window.removeEventListener('mouseup', handlePointerUp);
+        container.removeEventListener('touchstart', handlePointerDown);
+        window.removeEventListener('touchmove', handlePointerMove);
+        window.removeEventListener('touchend', handlePointerUp);
       }
+      try {
+        renderer.dispose();
+        if (container.contains(renderer.domElement)) {
+          container.removeChild(renderer.domElement);
+        }
+      } catch {}
     };
   }, [
+    avatar,
     isFemale,
     skinColor,
     hairColor,
     outfitType,
-    pantsType,
-    shoesType,
     hairstyle,
     heightPreset,
+    safeAvatar.pantsColor,
     interactive,
   ]);
 
   const sizeClasses = {
-    sm: 'w-16 h-24',
-    md: 'w-36 h-48 sm:w-44 sm:h-60',
-    lg: 'w-48 h-64 sm:w-56 sm:h-72',
-    xl: 'w-64 h-80 sm:w-72 sm:h-96',
-    full: 'w-full h-80 sm:h-96',
+    sm: 'w-24 h-32',
+    md: 'w-48 h-64',
+    lg: 'w-64 h-80',
+    xl: 'w-80 h-96',
+    full: 'w-full h-full min-h-[360px] sm:min-h-[420px]',
   };
 
   return (
     <div
       ref={mountRef}
-      className={`relative flex items-center justify-center overflow-hidden select-none cursor-grab active:cursor-grabbing ${sizeClasses[size]} ${className}`}
-      title={interactive ? 'Click and drag to rotate your 3D avatar 360°' : undefined}
+      className={`relative select-none cursor-grab active:cursor-grabbing ${sizeClasses[size]} ${className}`}
+      title="Click and drag to rotate your 3D avatar 360°"
     >
       {interactive && (
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-black/60 border border-white/10 text-[9px] font-mono text-zinc-300 pointer-events-none z-10 backdrop-blur-xs flex items-center gap-1 shadow">
-          <span>🔄</span>
-          <span>Drag to Rotate 3D</span>
+        <div className="absolute bottom-2 right-2 pointer-events-none z-10">
+          <span className="px-2 py-0.5 rounded-full bg-black/60 text-zinc-400 text-[9px] font-mono border border-white/10 backdrop-blur-sm">
+            Drag to Rotate 360°
+          </span>
         </div>
       )}
     </div>

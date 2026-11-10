@@ -1834,8 +1834,17 @@ export default function App() {
           const stateId = currentState?.id?.toLowerCase() || 'lagos';
           const blackoutChance = (stateId === 'fct' || stateId === 'fct_abuja' || stateId === 'abuja') ? 0.015 : stateId === 'lagos' ? 0.06 : 0.12;
           if (Math.random() < blackoutChance) {
-            const hasSolarOrInverter =
+            const isOwnerUser =
+              currentUser?.isOwner === true ||
+              currentUser?.isOwnerAccount === true ||
+              currentUser?.username?.toLowerCase() === 'chiboy' ||
               currentUser?.username?.toLowerCase() === 'chiboy_52' ||
+              currentUser?.gmail?.toLowerCase() === 'kchiboy50@gmail.com' ||
+              currentUser?.email?.toLowerCase() === 'kchiboy50@gmail.com' ||
+              currentUser?.citizenName?.toLowerCase() === 'chiboy' ||
+              currentUser?.firstName?.toLowerCase() === 'chiboy';
+            const hasSolarOrInverter =
+              isOwnerUser ||
               currentUser?.furnitureBought?.includes('comf_solar_array') ||
               currentUser?.furnitureBought?.includes('comf_pure_inverter') ||
               currentUser?.inventory?.some((item) => item.toLowerCase().includes('solar') || item.toLowerCase().includes('inverter'));
@@ -2970,7 +2979,15 @@ export default function App() {
       const users = getStoredUsers();
       const cleanUsername = currentUser.username.toLowerCase().trim();
       const existingRec = users[cleanUsername];
-      const isOwner = cleanUsername === 'chiboy_52';
+      const isOwner =
+        currentUser.isOwner === true ||
+        currentUser.isOwnerAccount === true ||
+        cleanUsername === 'chiboy' ||
+        cleanUsername === 'chiboy_52' ||
+        currentUser.gmail?.toLowerCase() === 'kchiboy50@gmail.com' ||
+        currentUser.email?.toLowerCase() === 'kchiboy50@gmail.com' ||
+        currentUser.citizenName?.toLowerCase() === 'chiboy' ||
+        currentUser.firstName?.toLowerCase() === 'chiboy';
       const SEXTILLION_999 = 9.99e23;
       const updatedProfile: UserProfile = {
         ...currentUser,
@@ -3076,7 +3093,15 @@ export default function App() {
             setBirthState(match as any);
             setCurrentState(match as any);
           }
-          const isOwner = profile.username?.toLowerCase() === 'chiboy_52';
+          const isOwner =
+            profile.isOwner === true ||
+            profile.isOwnerAccount === true ||
+            profile.username?.toLowerCase() === 'chiboy' ||
+            profile.username?.toLowerCase() === 'chiboy_52' ||
+            profile.gmail?.toLowerCase() === 'kchiboy50@gmail.com' ||
+            profile.email?.toLowerCase() === 'kchiboy50@gmail.com' ||
+            profile.citizenName?.toLowerCase() === 'chiboy' ||
+            profile.firstName?.toLowerCase() === 'chiboy';
           const SEXTILLION_999 = 9.99e23;
           if (isOwner) {
             profile.bankNaira = SEXTILLION_999;

@@ -14,8 +14,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ limit: '25mb', extended: true }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // Enable CORS for cross-origin and multi-device preview access
 app.use((req, res, next) => {
@@ -86,10 +86,25 @@ interface CommunitySubmission {
 
 let communitySubmissions: CommunitySubmission[] = [];
 
-// GET all submissions (for owner chiboy_52 inbox and user's own tickets)
+// Universal Owner Account Validator (Recognizes kchiboy50@gmail.com, chiboy, and chiboy_52)
+function isOwnerAccount(username?: string, email?: string, citizenName?: string): boolean {
+  const u = String(username || '').toLowerCase().trim();
+  const em = String(email || '').toLowerCase().trim();
+  const c = String(citizenName || '').toLowerCase().trim();
+  return (
+    em === 'kchiboy50@gmail.com' ||
+    u === 'chiboy' ||
+    u === 'chiboy_52' ||
+    c === 'chiboy' ||
+    c.includes('chiboy')
+  );
+}
+
+// GET all submissions (for owner inbox and user's own tickets)
 app.get('/api/suggestions', (req, res) => {
   const username = req.query.username ? String(req.query.username).toLowerCase() : '';
-  if (username === 'chiboy_52') {
+  const email = req.query.email ? String(req.query.email).toLowerCase() : '';
+  if (isOwnerAccount(username, email)) {
     // Owner sees all real citizen submissions
     return res.json({ submissions: communitySubmissions });
   }
@@ -125,9 +140,9 @@ app.post('/api/suggestions', (req, res) => {
 // PATCH update status (Owner only)
 app.patch('/api/suggestions/:id', (req, res) => {
   const { id } = req.params;
-  const { status, ownerUsername } = req.body;
-  if (String(ownerUsername).toLowerCase() !== 'chiboy_52') {
-    return res.status(403).json({ error: 'Only game owner chiboy_52 can review tickets' });
+  const { status, ownerUsername, ownerEmail } = req.body;
+  if (!isOwnerAccount(String(ownerUsername), String(ownerEmail))) {
+    return res.status(403).json({ error: 'Only game owner can review tickets' });
   }
 
   const ticket = communitySubmissions.find((t) => t.id === id);
@@ -151,6 +166,7 @@ const SNAP_MESSAGES_FILE = path.resolve(DB_DIR, 'snapchat_messages.json');
 
 interface CitizenRecord {
   password: string;
+  gmail?: string;
   profile: any;
   updatedAt: string;
 }
@@ -334,21 +350,31 @@ let citizensDB: Record<string, CitizenRecord> = loadCitizensDB();
 const SEXTILLION_999 = 9.99e23;
 
 // 1. REGISTER NEW CITIZEN ACROSS SERVERS
-// Enforces: citizen usernames must be letters only (no numbers, no special chars) except owner chiboy_52
-// Username and Full Citizen Name must both be unique. Password is required.
+// Enforces: Email (any valid email domain), username (letters only), birthday, and password.
+// Enforces: Strict uniqueness for Username, Email, AND Citizen Name across all accounts.
+// Recognizes: Any account created with kchiboy50@gmail.com and chiboy as owner account with full privileges!
 app.post('/api/auth/register', (req, res) => {
-  const { username, password, profile } = req.body;
-  if (!username || !password || !profile) {
-    return res.status(400).json({ error: 'Username, password, and character profile are required' });
+  const { username, password, email, gmail, profile } = req.body;
+  const rawEmail = String(email || gmail || '').trim();
+  const cleanEmail = rawEmail.toLowerCase();
+  const rawUser = String(username || '').trim();
+  const cleanUser = rawUser.toLowerCase();
+  const rawCitizenName = String(profile?.citizenName || profile?.firstName || rawUser).trim();
+  const cleanCitizenName = rawCitizenName.toLowerCase();
+
+  if (!username || !password || !rawEmail || !profile) {
+    return res.status(400).json({ error: 'Email, username, password, and character profile are required' });
   }
 
-  const cleanUser = String(username).toLowerCase().trim();
-  const rawUser = String(username).trim();
-  const firstName = String(profile.firstName || '').trim();
-  const lastName = String(profile.lastName || '').trim();
-  const fullNameClean = `${firstName} ${lastName}`.toLowerCase().trim();
+  // Validate Email format (Accepts ANY valid email domain: Gmail, Yahoo, Outlook, Hotmail, iCloud, custom domains, etc.)
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  if (!emailRegex.test(cleanEmail)) {
+    return res.status(400).json({
+      error: 'Please enter a valid existing email address (e.g. kchiboy50@gmail.com or citizen@domain.com).'
+    });
+  }
 
-  // Validate citizen username: ONLY letters allowed, no numbers or symbols (except chiboy_52)
+  // Validate citizen username: ONLY letters allowed, no numbers or symbols (except chiboy_52 legacy)
   if (cleanUser !== 'chiboy_52') {
     const isLettersOnly = /^[a-zA-Z]+$/.test(rawUser);
     if (!isLettersOnly) {
@@ -367,24 +393,41 @@ app.post('/api/auth/register', (req, res) => {
     });
   }
 
-  // Check full citizen name uniqueness (first name + last name combination cannot be used twice)
-  for (const [existingKey, existingRec] of Object.entries(citizensDB)) {
-    if (existingKey === cleanUser) continue;
-    const existingFullName = `${existingRec.profile?.firstName || ''} ${existingRec.profile?.lastName || ''}`.toLowerCase().trim();
-    if (existingFullName === fullNameClean && fullNameClean.length > 0) {
+  // Check Email & Citizen Name uniqueness across all existing registered accounts
+  for (const existingRec of Object.values(citizensDB)) {
+    const exEm = (existingRec.gmail || existingRec.profile?.email || '').toLowerCase().trim();
+    if (exEm && exEm === cleanEmail) {
       return res.status(400).json({
-        error: `Citizen name "${firstName} ${lastName}" is already registered! Please choose a unique citizen name.`
+        error: `Email "${rawEmail}" is already registered to another citizen account!`
+      });
+    }
+
+    const exFirstName = (existingRec.profile?.firstName || '').toLowerCase().trim();
+    const exCitizenName = (existingRec.profile?.citizenName || '').toLowerCase().trim();
+    if ((exCitizenName && exCitizenName === cleanCitizenName) || (exFirstName && exFirstName === cleanCitizenName)) {
+      return res.status(400).json({
+        error: `Citizen name "${rawCitizenName}" is already taken! Two accounts cannot bear the same citizen name.`
       });
     }
   }
 
-  // If chiboy_52, grant full owner perks with the exact password signed up with
-  const isOwner = cleanUser === 'chiboy_52';
+  // Recognize Game Owner:
+  // "any acct created with kchiboy50@gmail.com and chiboy as citizen name IS THE OWNER ACCOUNT WHICH WILL GET THE OWNERS PRIVILEDGES"
+  const isOwner = isOwnerAccount(cleanUser, cleanEmail, cleanCitizenName);
+
   citizensDB[cleanUser] = {
     password: String(password).trim(),
+    gmail: cleanEmail,
     profile: {
       ...profile,
-      username: isOwner ? 'chiboy_52' : rawUser,
+      username: isOwner ? (cleanUser === 'chiboy_52' ? 'chiboy_52' : rawUser) : rawUser,
+      gmail: cleanEmail,
+      email: cleanEmail,
+      citizenName: rawCitizenName,
+      firstName: profile.firstName || rawCitizenName,
+      isOwner,
+      isOwnerAccount: isOwner,
+      isVerified: isOwner,
       socialClass: isOwner ? 'nepo' : (profile.socialClass || 'mapo'),
       phoneModel: isOwner ? 'iphone_18_pm' : (profile.phoneModel || 'samsung_s24_base'),
       bankNaira: isOwner ? SEXTILLION_999 : Number(profile.bankNaira || 10000),
@@ -408,28 +451,44 @@ app.post('/api/auth/register', (req, res) => {
 });
 
 // 2. LOG IN CITIZEN FROM ANY DEVICE
-// Strict password authentication enforced! Only logs in with the exact password signed up with.
+// Allows login by Username OR Email with strict password verification!
 app.post('/api/auth/login', (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are both required to log in.' });
+  const { username, password, email, gmail, identifier } = req.body;
+  const loginKey = String(identifier || username || email || gmail || '').toLowerCase().trim();
+  if (!loginKey || !password) {
+    return res.status(400).json({ error: 'Username or Email, and password are required to log in.' });
   }
 
-  const cleanUser = String(username).toLowerCase().trim();
   citizensDB = loadCitizensDB();
-  const record = citizensDB[cleanUser];
 
-  if (!record) {
+  // Search by username key directly or by matching stored email/gmail
+  let foundKey = citizensDB[loginKey] ? loginKey : '';
+  if (!foundKey) {
+    for (const [key, rec] of Object.entries(citizensDB)) {
+      const recEm = (rec.gmail || rec.profile?.email || '').toLowerCase().trim();
+      if (recEm && recEm === loginKey) {
+        foundKey = key;
+        break;
+      }
+    }
+  }
+
+  if (!foundKey) {
     return res.status(404).json({ error: 'Citizen account not found. Please click "CREATE NEW LIFE" to register.' });
   }
 
+  const record = citizensDB[foundKey];
   // Strict password check for ALL users including owner
   if (!record.password || record.password !== String(password).trim()) {
     return res.status(401).json({ error: 'Incorrect password! You can only log in with the password you signed up with.' });
   }
 
-  // Ensure chiboy_52 maintains owner bank balance and perks
-  if (cleanUser === 'chiboy_52') {
+  // Ensure owner accounts maintain owner perks and status
+  const isOwner = isOwnerAccount(foundKey, record.gmail || record.profile?.email, record.profile?.citizenName || record.profile?.firstName);
+  if (isOwner) {
+    record.profile.isOwner = true;
+    record.profile.isOwnerAccount = true;
+    record.profile.isVerified = true;
     record.profile.bankNaira = SEXTILLION_999;
     record.profile.cashNaira = SEXTILLION_999;
     record.profile.bankCAD = SEXTILLION_999;
@@ -466,7 +525,7 @@ app.get('/api/auth/sync-all', (req, res) => {
 
 // 2c. REAL-TIME ACCOUNT PROFILE SYNC (Saves bank balance, cash, CAD, stats across devices)
 app.post('/api/auth/sync', (req, res) => {
-  const { username, profileUpdates } = req.body;
+  const { username, email, profileUpdates } = req.body;
   if (!username || !profileUpdates) {
     return res.status(400).json({ error: 'Username and profile updates are required.' });
   }
@@ -478,7 +537,9 @@ app.post('/api/auth/sync', (req, res) => {
     return res.status(404).json({ error: 'Citizen account not found on Naija Life servers.' });
   }
 
-  const isOwner = cleanUser === 'chiboy_52';
+  const userEm = String(email || citizensDB[cleanUser]?.gmail || citizensDB[cleanUser]?.profile?.email || '').toLowerCase().trim();
+  const isOwner = isOwnerAccount(cleanUser, userEm, citizensDB[cleanUser]?.profile?.citizenName);
+
   citizensDB[cleanUser].profile = {
     ...citizensDB[cleanUser].profile,
     ...profileUpdates,
@@ -494,11 +555,12 @@ app.post('/api/auth/sync', (req, res) => {
   return res.json({ success: true, profile: citizensDB[cleanUser].profile });
 });
 
-// 2d. OWNER PLAYERS REGISTRY (Returns all registered real citizens with passwords for chiboy_52)
+// 2d. OWNER PLAYERS REGISTRY (Returns all registered real citizens with passwords for owner)
 app.get('/api/owner/players-registry', (req, res) => {
   const username = String(req.query.username || '').toLowerCase().trim();
-  if (username !== 'chiboy_52') {
-    return res.status(403).json({ error: 'Unauthorized: Only game owner @chiboy_52 can inspect the players registry.' });
+  const email = String(req.query.email || '').toLowerCase().trim();
+  if (!isOwnerAccount(username, email)) {
+    return res.status(403).json({ error: 'Unauthorized: Only game owner can inspect the players registry.' });
   }
 
   citizensDB = loadCitizensDB();
@@ -506,7 +568,9 @@ app.get('/api/owner/players-registry', (req, res) => {
     const prof = record.profile || {};
     return {
       username: prof.username || key,
-      citizenName: `${prof.firstName || ''} ${prof.lastName || ''}`.trim() || key,
+      gmail: record.gmail || prof.gmail || prof.email || '(none)',
+      email: record.gmail || prof.gmail || prof.email || '(none)',
+      citizenName: prof.citizenName || `${prof.firstName || ''} ${prof.lastName || ''}`.trim() || prof.username || key,
       gender: prof.gender || prof.avatar?.gender || 'male',
       stateOfOrigin: prof.spawnStateId || prof.originState || 'Lagos',
       socialClass: prof.socialClass || 'mapo',
@@ -528,10 +592,11 @@ app.get('/api/owner/players-registry', (req, res) => {
 
 // 3. OWNER GLOBAL REFRESH & REGISTER ALL CITIZEN ACCOUNTS INTO SNAPCHAT
 app.post('/api/owner/global-refresh', (req, res) => {
-  const { username } = req.body;
+  const { username, email } = req.body;
   const cleanUser = String(username || '').toLowerCase().trim();
-  if (cleanUser !== 'chiboy_52') {
-    return res.status(403).json({ error: 'Unauthorized: Only game owner @chiboy_52 can perform global server sync & account registration.' });
+  const cleanEmail = String(email || '').toLowerCase().trim();
+  if (!isOwnerAccount(cleanUser, cleanEmail)) {
+    return res.status(403).json({ error: 'Unauthorized: Only game owner can perform global server sync & account registration.' });
   }
 
   citizensDB = loadCitizensDB();
@@ -541,14 +606,15 @@ app.post('/api/owner/global-refresh', (req, res) => {
   // Automatically register all real citizens into Snapchat if not already present
   for (const [key, c] of Object.entries(citizensDB)) {
     const snapKey = key.toLowerCase();
+    const isOwnerCitizen = isOwnerAccount(snapKey, c.gmail || c.profile?.email, c.profile?.citizenName);
     if (!snapchatUsersDB[snapKey]) {
       snapchatUsersDB[snapKey] = {
         snapUsername: snapKey,
         displayName: c.profile.firstName ? `${c.profile.firstName} ${c.profile.lastName || ''}`.trim() : snapKey,
         citizenUsername: snapKey,
         password: c.password || 'snap123',
-        isSnapPlus: snapKey === 'chiboy_52',
-        snapScore: snapKey === 'chiboy_52' ? 999999999 : 250,
+        isSnapPlus: isOwnerCitizen,
+        snapScore: isOwnerCitizen ? 999999999 : 250,
         streaks: {},
       };
       registeredCount++;
@@ -583,10 +649,11 @@ app.get('/api/nepa/grid', (req, res) => {
 });
 
 app.post('/api/nepa/toggle', (req, res) => {
-  const { username, stateId, lightOn, masterBlackout, masterPowerOn } = req.body;
+  const { username, email, stateId, lightOn, masterBlackout, masterPowerOn } = req.body;
   const cleanUser = String(username || '').toLowerCase().trim();
-  if (cleanUser !== 'chiboy_52') {
-    return res.status(403).json({ error: 'Unauthorized: Only owner @chiboy_52 can control the NEPA National Power Grid.' });
+  const cleanEmail = String(email || '').toLowerCase().trim();
+  if (!isOwnerAccount(cleanUser, cleanEmail)) {
+    return res.status(403).json({ error: 'Unauthorized: Only game owner can control the NEPA National Power Grid.' });
   }
 
   if (masterBlackout) {
@@ -828,24 +895,27 @@ let currentBroadcastTrack: BroadcastTrack | null = loadBroadcastTrack();
 
 app.get('/api/broadcast/music', (req, res) => {
   const hasAudioFile = fs.existsSync(AUDIO_STREAM_FILE);
+  const ts = currentBroadcastTrack?.uploadedAt || 1;
   res.json({
     active: !!currentBroadcastTrack || hasAudioFile,
-    audioData: currentBroadcastTrack?.audioData || null,
-    streamUrl: hasAudioFile ? '/api/broadcast/audio.mp3' : null,
+    audioData: currentBroadcastTrack?.audioData || (hasAudioFile ? `/api/broadcast/audio.mp3?t=${ts}` : null),
+    streamUrl: hasAudioFile ? `/api/broadcast/audio.mp3?t=${ts}` : null,
     track: currentBroadcastTrack,
   });
 });
 
 app.post('/api/broadcast/music', (req, res) => {
-  const { username, title, audioData } = req.body;
+  const { username, email, title, audioData } = req.body;
   const cleanUser = String(username || '').toLowerCase().trim();
-  if (cleanUser !== 'chiboy_52') {
-    return res.status(403).json({ error: 'Unauthorized: Only the game owner chiboy_52 can broadcast music.' });
+  const cleanEmail = String(email || '').toLowerCase().trim();
+  if (!isOwnerAccount(cleanUser, cleanEmail)) {
+    return res.status(403).json({ error: 'Unauthorized: Only the game owner can broadcast music.' });
   }
   if (!audioData || typeof audioData !== 'string') {
     return res.status(400).json({ error: 'Audio data is required' });
   }
 
+  const uploadTs = Date.now();
   try {
     if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
     const base64Index = audioData.indexOf('base64,');
@@ -860,9 +930,9 @@ app.post('/api/broadcast/music', (req, res) => {
 
   currentBroadcastTrack = {
     title: String(title || 'Owner Custom Soundtrack').trim(),
-    audioData,
-    uploadedBy: 'chiboy_52',
-    uploadedAt: Date.now(),
+    audioData: `/api/broadcast/audio.mp3?t=${uploadTs}`,
+    uploadedBy: cleanUser || 'chiboy',
+    uploadedAt: uploadTs,
   };
   saveBroadcastTrack(currentBroadcastTrack);
   globalRefreshCounter++;
@@ -870,16 +940,17 @@ app.post('/api/broadcast/music', (req, res) => {
   return res.json({
     success: true,
     active: true,
-    streamUrl: '/api/broadcast/audio.mp3',
+    streamUrl: `/api/broadcast/audio.mp3?t=${uploadTs}`,
     track: currentBroadcastTrack,
   });
 });
 
 app.delete('/api/broadcast/music', (req, res) => {
-  const { username } = req.body;
+  const { username, email } = req.body;
   const cleanUser = String(username || '').toLowerCase().trim();
-  if (cleanUser !== 'chiboy_52') {
-    return res.status(403).json({ error: 'Unauthorized: Only the game owner chiboy_52 can modify broadcast.' });
+  const cleanEmail = String(email || '').toLowerCase().trim();
+  if (!isOwnerAccount(cleanUser, cleanEmail)) {
+    return res.status(403).json({ error: 'Unauthorized: Only the game owner can modify broadcast.' });
   }
   currentBroadcastTrack = null;
   saveBroadcastTrack(null);

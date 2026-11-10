@@ -203,12 +203,19 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
       setCurrentPhase('SYNCHRONIZING');
       setScanProgress(85);
 
+      // Purge all legacy fake accounts and test storage keys
+      try {
+        ['naija_life_citizens_v12_release', 'naija_life_citizens_v1', 'naija_life_citizens_v10_reset', 'naija_life_global_players', 'naija_life_global_chats'].forEach((k) => {
+          localStorage.removeItem(k);
+        });
+      } catch {}
+
       let localCitizens: any = {};
       try {
-        const raw = localStorage.getItem('naija_life_citizens_v12_release');
+        const raw = localStorage.getItem('naija_life_citizens_v15_gmail');
         if (raw) localCitizens = JSON.parse(raw);
-        // Purge any legacy fake/test account keys
-        const fakeKeys = ['testcitizen', 'citizen_emeka', 'test_citizen', 'emeka'];
+        // Purge any fake or test account keys
+        const fakeKeys = ['testcitizen', 'citizen_emeka', 'test_citizen', 'emeka', 'johnny', 'teststudent@yahoo.com'];
         let cleaned = false;
         for (const fk of fakeKeys) {
           if (localCitizens[fk]) {
@@ -217,20 +224,12 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
           }
         }
         if (cleaned) {
-          localStorage.setItem('naija_life_citizens_v12_release', JSON.stringify(localCitizens));
+          localStorage.setItem('naija_life_citizens_v15_gmail', JSON.stringify(localCitizens));
         }
       } catch {}
 
       try {
-        if (Object.keys(localCitizens).length > 0) {
-          await fetch('/api/auth/sync-all', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ localCitizens }),
-          });
-        } else {
-          await fetch('/api/health');
-        }
+        await fetch('/api/health');
       } catch (err) {
         console.warn('Server sync offline fallback:', err);
       }

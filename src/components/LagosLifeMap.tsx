@@ -2858,117 +2858,99 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       {/* =========================================================================
           COMMUTE / TRANSPORTATION OPTIONS MODAL (WHEN VISITING BUILDINGS)
           ========================================================================= */}
+      {/* =========================================================================
+          INTERIOR RENOVATION & ARCHITECTURAL FIT-OUT NOTICE (FOR ALL BUILDINGS)
+          ========================================================================= */}
       {pendingCommuteTarget && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-3xl p-6 shadow-2xl text-left space-y-4">
-            <div className="flex items-start justify-between pb-2 border-b border-zinc-800">
-              <div>
-                <span className="text-[10px] font-mono font-bold uppercase text-emerald-400">Commute to Location</span>
-                <h3 className="text-lg font-black text-white">{pendingCommuteTarget.name}</h3>
-                <p className="text-xs text-zinc-400">{pendingCommuteTarget.desc}</p>
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-zinc-950 border-2 border-amber-500/60 rounded-3xl p-6 shadow-2xl text-left space-y-4 relative overflow-hidden">
+            {/* Ambient Background Glow */}
+            <div className="absolute top-0 right-0 w-36 h-36 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+            <div className="absolute bottom-0 left-0 w-36 h-36 bg-yellow-500/10 rounded-full blur-2xl pointer-events-none" />
+
+            {/* Header & Construction Ribbon */}
+            <div className="flex items-start justify-between pb-3 border-b border-zinc-800 relative z-10">
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-mono font-black uppercase">
+                  <span>🚧</span>
+                  <span>INTERIOR FIT-OUT & ACTIVE RENOVATION</span>
+                </div>
+                <h3 className="text-xl font-black text-white tracking-tight">
+                  {pendingCommuteTarget.name}
+                </h3>
+                <p className="text-xs text-zinc-400 font-mono">
+                  📍 {currentState.name} State · {pendingCommuteTarget.desc || 'Commercial Landmark'}
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setPendingCommuteTarget(null)}
-                className="text-zinc-500 hover:text-white cursor-pointer"
+                className="p-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-2">
-              {/* Option 1: Trek (FREE) */}
-              <button
-                type="button"
-                onClick={() => handleConfirmCommute('trek')}
-                className="w-full p-3 rounded-2xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 flex items-center justify-between text-left cursor-pointer transition-all hover:scale-[1.01]"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">🚶</span>
-                  <div>
-                    <div className="text-xs font-black text-white">Trek on Foot (Legediz Benz)</div>
-                    <div className="text-[10px] text-zinc-400">Walk under the sun. Burns energy (-6), hunger (-5).</div>
-                  </div>
-                </div>
-                <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-black text-xs">
-                  FREE (₦0)
-                </span>
-              </button>
-
-              {/* Option 2: Keke Napep */}
-              <button
-                type="button"
-                onClick={() => handleConfirmCommute('keke')}
-                className="w-full p-3 rounded-2xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 flex items-center justify-between text-left cursor-pointer transition-all hover:scale-[1.01]"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">🛺</span>
-                  <div>
-                    <div className="text-xs font-black text-white">Keke Napep Commercial Tricycle</div>
-                    <div className="text-[10px] text-zinc-400">Quick local commute through streets.</div>
-                  </div>
-                </div>
-                <span className="px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-200 font-mono font-bold text-xs">
-                  ₦300
-                </span>
-              </button>
-
-              {/* Option 3: Danfo Bus */}
-              <button
-                type="button"
-                onClick={() => handleConfirmCommute('danfo')}
-                className="w-full p-3 rounded-2xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 flex items-center justify-between text-left cursor-pointer transition-all hover:scale-[1.01]"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">🚐</span>
-                  <div>
-                    <div className="text-xs font-black text-white">Commercial Danfo Yellow Bus</div>
-                    <div className="text-[10px] text-zinc-400">Classic Naija street hustle & conductor vibes.</div>
-                  </div>
-                </div>
-                <span className="px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-200 font-mono font-bold text-xs">
-                  ₦600
-                </span>
-              </button>
-
-              {/* Option 4: Bolt / Private Taxi */}
-              <button
-                type="button"
-                onClick={() => handleConfirmCommute('bolt')}
-                className="w-full p-3 rounded-2xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 flex items-center justify-between text-left cursor-pointer transition-all hover:scale-[1.01]"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">🚕</span>
-                  <div>
-                    <div className="text-xs font-black text-white">Bolt / Private Air-Conditioned Cab</div>
-                    <div className="text-[10px] text-zinc-400">Arrive comfortably (+8 Joy).</div>
-                  </div>
-                </div>
-                <span className="px-2.5 py-1 rounded-full bg-zinc-800 text-zinc-200 font-mono font-bold text-xs">
-                  ₦2,500
-                </span>
-              </button>
-
-              {/* Option 5: Drive Own Car */}
-              {ownedVehicles.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => handleConfirmCommute('car')}
-                  className="w-full p-3 rounded-2xl bg-zinc-900 hover:bg-zinc-850 border border-emerald-500/50 flex items-center justify-between text-left cursor-pointer transition-all hover:scale-[1.01]"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl">🚗</span>
-                    <div>
-                      <div className="text-xs font-black text-emerald-400">Drive Personal Vehicle ({ownedVehicles[0].name})</div>
-                      <div className="text-[10px] text-zinc-400">Cruising in style (+10 Joy). Fuel cost.</div>
-                    </div>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs">
-                    ₦1,200 Fuel
+            {/* Renovation Notice Details */}
+            <div className="space-y-3 relative z-10">
+              <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-950/60 via-zinc-900/80 to-black border border-amber-500/30 text-xs text-zinc-300 leading-relaxed space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-mono font-bold text-amber-300">
+                  <span className="flex items-center gap-1">
+                    <span>🏗️</span>
+                    <span>Federal Works & Urban Planning Directive</span>
                   </span>
-                </button>
-              )}
+                  <span className="text-[10px] bg-amber-500/20 px-2 py-0.5 rounded text-amber-200">
+                    PERMIT #NJA-2025-ARCH
+                  </span>
+                </div>
+                <p>
+                  Please bear with us! The indoor interiors of <strong>{pendingCommuteTarget.name}</strong> are currently undergoing intensive architectural remodeling, marble flooring installation, soundproof acoustic wall fit-outs, and customized interactive station setups.
+                </p>
+                <p className="text-[11px] text-zinc-400">
+                  Our master construction teams and electrical engineers are working round the clock to deliver hyper-realistic walkthroughs. No manual commuting is needed to access services!
+                </p>
+              </div>
+
+              {/* Progress Indicator */}
+              <div className="p-3 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
+                <div className="flex justify-between items-center text-xs font-mono">
+                  <span className="text-zinc-400 flex items-center gap-1.5">
+                    <span>👷‍♂️</span>
+                    <span>Interior Remodeling Completion:</span>
+                  </span>
+                  <span className="text-amber-300 font-bold">84% Finalized</span>
+                </div>
+                <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-amber-500 via-yellow-400 to-emerald-400 rounded-full w-[84%]" />
+                </div>
+                <div className="flex justify-between text-[10px] font-mono text-zinc-500">
+                  <span>Structural Framing ✓</span>
+                  <span>Acoustics & Lighting ✓</span>
+                  <span>3D Walkthrough Fit-Out (Active)</span>
+                </div>
+              </div>
+
+              {/* Work Phone Hint */}
+              <div className="p-2.5 rounded-xl bg-blue-950/40 border border-blue-500/30 flex items-center gap-2.5 text-xs text-blue-200">
+                <span className="text-base">📱</span>
+                <div>
+                  <strong>Work Shift Notice:</strong> All occupational shifts and career tasks are performed directly through your <strong>Smartphone Job Portal</strong> without needing physical interior entry.
+                </div>
+              </div>
             </div>
+
+            {/* Primary Action Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setPendingCommuteTarget(null);
+                triggerSound?.('coin');
+              }}
+              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 text-black font-black text-sm tracking-wide shadow-xl shadow-amber-500/20 cursor-pointer active:scale-98 transition-all flex items-center justify-center gap-2 relative z-10"
+            >
+              <span>Understood (Bear With Us & Be Patient)</span>
+              <Check className="w-4 h-4 text-black" />
+            </button>
           </div>
         </div>
       )}
