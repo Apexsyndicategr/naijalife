@@ -205,27 +205,19 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
 
       // Purge all legacy fake accounts and test storage keys
       try {
-        ['naija_life_citizens_v12_release', 'naija_life_citizens_v1', 'naija_life_citizens_v10_reset', 'naija_life_global_players', 'naija_life_global_chats'].forEach((k) => {
+        [
+          'naija_life_citizens_v15_gmail',
+          'naija_life_active_citizen_v15_gmail',
+          'naija_life_citizens_v12_release',
+          'naija_life_citizens_v1',
+          'naija_life_citizens_v10_reset',
+          'naija_life_global_players',
+          'naija_life_global_chats',
+          'naija_life_saved_game',
+          'naija_life_saved_game_backup',
+        ].forEach((k) => {
           localStorage.removeItem(k);
         });
-      } catch {}
-
-      let localCitizens: any = {};
-      try {
-        const raw = localStorage.getItem('naija_life_citizens_v15_gmail');
-        if (raw) localCitizens = JSON.parse(raw);
-        // Purge any fake or test account keys
-        const fakeKeys = ['testcitizen', 'citizen_emeka', 'test_citizen', 'emeka', 'johnny', 'teststudent@yahoo.com'];
-        let cleaned = false;
-        for (const fk of fakeKeys) {
-          if (localCitizens[fk]) {
-            delete localCitizens[fk];
-            cleaned = true;
-          }
-        }
-        if (cleaned) {
-          localStorage.setItem('naija_life_citizens_v15_gmail', JSON.stringify(localCitizens));
-        }
       } catch {}
 
       try {

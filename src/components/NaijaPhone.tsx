@@ -109,6 +109,7 @@ import { GROCERIES_100_CATALOG, GroceryItem } from '../data/groceriesCatalog';
 import { CharacterRenderer } from './CharacterRenderer';
 import { ThreeCharacterAvatar } from './ThreeCharacterAvatar';
 import { CharacterAvatar } from '../types/game';
+import { STORAGE_SESSION_KEY, STORAGE_USERS_KEY } from './AuthPortal';
 import {
   calculateInterstateTrip,
   calculateDomesticFlightDetails,
@@ -123,7 +124,7 @@ import {
   CANADA_CABIN_CLASSES,
 } from '../utils/travelPricing';
 import { formatNaira, formatCAD, formatFullNumberDigits } from '../utils/formatNaira';
-import { getStoredUsers, STORAGE_USERS_KEY, saveSession } from './AuthPortal';
+import { getStoredUsers, saveSession } from './AuthPortal';
 import { LUXURY_CATALOG, LuxuryVehicleItem } from '../data/luxuryCatalog';
 import { PET_CATALOG, PetItem } from '../data/petCatalog';
 import {
@@ -10303,14 +10304,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     };
 
                     try {
-                      localStorage.setItem('naija_life_active_citizen_v15_gmail', JSON.stringify(updatedProfile));
-                      const rawStored = localStorage.getItem('naija_life_citizens_v15_gmail');
+                      localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedProfile));
+                      const rawStored = localStorage.getItem(STORAGE_USERS_KEY);
                       if (rawStored) {
                         const stored = JSON.parse(rawStored);
                         const k = userProfile.username.toLowerCase().trim();
                         if (stored[k]) {
                           stored[k].profile = updatedProfile;
-                          localStorage.setItem('naija_life_citizens_v15_gmail', JSON.stringify(stored));
+                          localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(stored));
                         }
                       }
                     } catch {}

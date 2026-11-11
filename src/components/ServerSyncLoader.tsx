@@ -111,22 +111,21 @@ export const ServerSyncLoader: React.FC<ServerSyncLoaderProps> = ({ onSyncComple
           const keys = Object.keys(serverCitizens);
           fetchedCount = keys.length;
 
-          // Merge server citizens into client localStorage so cross-device accounts exist locally!
-          const localStored = getStoredUsers();
-          const merged: Record<string, any> = { ...localStored };
+          // Authoritative Server Mirror: exactly reflects server citizens across all devices
+          const cleanAccounts: Record<string, any> = {};
 
           for (const [k, val] of Object.entries(serverCitizens)) {
             const cleanKey = k.toLowerCase().trim();
             const record = val as any;
             if (record?.profile) {
-              merged[cleanKey] = {
+              cleanAccounts[cleanKey] = {
                 password: record.password || '',
                 profile: record.profile,
               };
             }
           }
 
-          localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(merged));
+          localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(cleanAccounts));
           setSyncedCount(fetchedCount);
         }
       } catch (err) {

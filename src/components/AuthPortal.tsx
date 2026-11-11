@@ -42,14 +42,27 @@ interface AuthPortalProps {
   triggerSound?: (type: 'coin' | 'alert' | 'stamp' | 'success') => void;
 }
 
-// Clean storage namespace for accounts (Fresh reset with multi-device server sync)
-export const STORAGE_USERS_KEY = 'naija_life_citizens_v15_gmail';
-export const STORAGE_SESSION_KEY = 'naija_life_active_citizen_v15_gmail';
+// Clean storage namespace for accounts (Complete fresh reset with authoritative server sync)
+export const STORAGE_USERS_KEY = 'naija_life_citizens_v20_clean';
+export const STORAGE_SESSION_KEY = 'naija_life_active_citizen_v20_clean';
 
 export function purgeAllLegacyAccounts(): void {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
-      // Retain user persistence
+      const keysToPurge = [
+        'naija_life_citizens_v15_gmail',
+        'naija_life_active_citizen_v15_gmail',
+        'naija_life_citizens_v12_release',
+        'naija_life_citizens_v1',
+        'naija_life_citizens_v10_reset',
+        'naija_life_global_players',
+        'naija_life_global_chats',
+        'naija_life_saved_game',
+        'naija_life_saved_game_backup',
+      ];
+      for (const k of keysToPurge) {
+        localStorage.removeItem(k);
+      }
     }
   } catch (err) {
     console.error('Error in account cleanup:', err);
@@ -58,6 +71,7 @@ export function purgeAllLegacyAccounts(): void {
 
 export function getStoredSession(): UserProfile | null {
   try {
+    purgeAllLegacyAccounts();
     const raw = localStorage.getItem(STORAGE_SESSION_KEY);
     if (!raw) return null;
     return JSON.parse(raw);
@@ -84,6 +98,7 @@ export function clearSession(): void {
 
 export function getStoredUsers(): Record<string, { password: string; profile: UserProfile }> {
   try {
+    purgeAllLegacyAccounts();
     const raw = localStorage.getItem(STORAGE_USERS_KEY);
     if (!raw) return {};
     return JSON.parse(raw);
@@ -103,12 +118,17 @@ function saveUserRecord(username: string, record: { password: string; profile: U
 }
 
 export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSound }) => {
+  // Purge legacy storage immediately
+  useEffect(() => {
+    purgeAllLegacyAccounts();
+  }, []);
+
   // Detect saved account or session on device
   const initialSession = getStoredSession();
   const allStoredUsers = getStoredUsers();
   const [syncedUsers, setSyncedUsers] = useState<Record<string, { password: string; profile: UserProfile }>>(allStoredUsers);
 
-  // Synchronize with Naija Life server on load so accounts are available across all devices
+  // Synchronize with Naija Life server on load (Server is authoritative; does not restore deleted accounts)
   useEffect(() => {
     let isMounted = true;
     const fetchServerAccounts = async () => {
@@ -118,20 +138,19 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
           const data = await res.json();
           const serverUsers = data?.citizens || data?.accounts;
           if (serverUsers && typeof serverUsers === 'object') {
-            const localUsers = getStoredUsers();
-            const merged = { ...localUsers };
+            const cleanFromCentralServer: Record<string, any> = {};
             for (const [uKey, rec] of Object.entries(serverUsers)) {
               const r = rec as { password?: string; profile?: UserProfile };
               if (r?.profile) {
-                merged[uKey.toLowerCase().trim()] = {
+                cleanFromCentralServer[uKey.toLowerCase().trim()] = {
                   password: r.password || '',
                   profile: r.profile,
                 };
               }
             }
             if (isMounted) {
-              localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(merged));
-              setSyncedUsers(merged);
+              localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(cleanFromCentralServer));
+              setSyncedUsers(cleanFromCentralServer);
             }
           }
         }

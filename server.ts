@@ -520,6 +520,16 @@ app.get('/api/auth/all-accounts', (req, res) => {
   });
 });
 
+app.post('/api/auth/reset-all-accounts', (req, res) => {
+  citizensDB = {};
+  saveCitizensDB({});
+  return res.json({
+    success: true,
+    count: 0,
+    message: 'All accounts completely deleted from Naija Life Central Servers.',
+  });
+});
+
 app.get('/api/auth/sync-all', (req, res) => {
   citizensDB = loadCitizensDB();
   return res.json({
