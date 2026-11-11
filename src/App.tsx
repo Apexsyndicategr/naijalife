@@ -81,6 +81,7 @@ import {
   DeviceOptimizationLoader,
   DeviceOptimizationProfile,
 } from './components/DeviceOptimizationLoader';
+import { ServerSyncLoader } from './components/ServerSyncLoader';
 
 /* =========================================================================
    1. RANDOM NIGERIAN SPAWN ENGINE: ALL 36 STATES + FCT
@@ -1230,6 +1231,8 @@ export default function App() {
 
   // Device hardware profile & optimization state (unskippable authentic scan before login)
   const [deviceOptimizationProfile, setDeviceOptimizationProfile] = useState<DeviceOptimizationProfile | null>(null);
+  // Special animated server sync state (synchronizes all accounts across Naija Life central servers)
+  const [isServerSyncCompleted, setIsServerSyncCompleted] = useState<boolean>(false);
 
   // Storage, Save & Load State
   const [showStorageModal, setShowStorageModal] = useState(false);
@@ -3063,6 +3066,20 @@ export default function App() {
   }
 
   /* =========================================================================
+     0b. SPECIAL ANIMATED NAIJA LIFE CENTRAL SERVERS SYNCHRONIZATION SCREEN
+     Runs immediately after hardware optimization:
+     Performs real cryptographic handshake with Lagos, Abuja, Port Harcourt & Canada nodes,
+     pulling all registered accounts so cross-device login works seamlessly on any device!
+     ========================================================================= */
+  if (!isServerSyncCompleted) {
+    return (
+      <ServerSyncLoader
+        onSyncComplete={() => setIsServerSyncCompleted(true)}
+      />
+    );
+  }
+
+  /* =========================================================================
      AUTH GATEKEEPER: IF NOT LOGGED IN, RENDER AUTH PORTAL!
      ========================================================================= */
   if (!currentUser) {
@@ -3227,6 +3244,7 @@ export default function App() {
     <div className="fixed inset-0 w-screen h-screen overflow-hidden bg-black text-white select-none">
       <LagosLifeMap
         userProfile={currentUser}
+        onUpdateUserProfile={(newProf) => setCurrentUser(newProf)}
         currentState={currentState as any}
         spawnState={birthState as any}
         deviceOptimizationProfile={deviceOptimizationProfile || undefined}

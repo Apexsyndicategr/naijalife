@@ -52,6 +52,7 @@ import {
   Bus,
   Award,
   Users,
+  User,
   Compass,
   Mic,
   MicOff,
@@ -106,6 +107,8 @@ import {
 } from '../data/expandedLifeData';
 import { GROCERIES_100_CATALOG, GroceryItem } from '../data/groceriesCatalog';
 import { CharacterRenderer } from './CharacterRenderer';
+import { ThreeCharacterAvatar } from './ThreeCharacterAvatar';
+import { CharacterAvatar } from '../types/game';
 import {
   calculateInterstateTrip,
   calculateDomesticFlightDetails,
@@ -234,6 +237,7 @@ export interface NaijaPhoneProps {
   onFlightTravel?: (targetState: any, fare: number, airlineName?: string, aircraftModel?: string) => void;
   onBusTravel?: (targetState: any, fare: number, busOperator?: string) => void;
   initialApp?: PhoneAppType;
+  onUpdateProfile?: (updatedProfile: UserProfile) => void;
 }
 
 export type PhoneAppType =
@@ -314,6 +318,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   onFlightTravel,
   onBusTravel,
   initialApp = 'home',
+  onUpdateProfile,
 }) => {
   const [currentApp, setCurrentApp] = useState<PhoneAppType>(initialApp);
 
@@ -397,6 +402,19 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [isWallpaperGalleryOpen, setIsWallpaperGalleryOpen] = useState<boolean>(false);
   const [wallpaperCategoryFilter, setWallpaperCategoryFilter] = useState<string>('All');
   const [wallpaperSearch, setWallpaperSearch] = useState<string>('');
+  const [isAvatarModalOpen, setIsAvatarModalOpen] = useState<boolean>(false);
+  const [tempAvatar, setTempAvatar] = useState<CharacterAvatar>(
+    userProfile?.avatar || {
+      gender: 'male',
+      skinTone: '#8d5524',
+      hairstyle: 'peaky_cap',
+      hairColor: '#18181b',
+      outfit: 'corporate',
+      pants: 'slacks',
+      shoes: 'loafers',
+      accessory: 'none',
+    }
+  );
 
   // Canada & Region tabs for apps
   const [foodRegion, setFoodRegion] = useState<'nigeria' | 'canada'>('nigeria');
@@ -7692,8 +7710,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 {/* Account Profile Card */}
                 <div className="bg-gradient-to-br from-zinc-900 via-zinc-950 to-neutral-900 border border-zinc-800 rounded-3xl p-4 shadow-xl space-y-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-zinc-800 border border-amber-500/40 flex items-center justify-center text-2xl shadow">
-                      {typeof userProfile?.avatar === 'string' ? userProfile.avatar : '🇳🇬'}
+                    <div className="w-14 h-14 rounded-2xl bg-zinc-800 border-2 border-emerald-500/50 flex items-center justify-center overflow-hidden shadow-lg shrink-0">
+                      <CharacterRenderer avatar={userProfile?.avatar} size="sm" fullBody={false} showBackground={false} />
                     </div>
                     <div>
                       <h3 className="text-sm font-black text-white">
@@ -7702,6 +7720,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="text-xs font-mono text-emerald-400 font-bold">
                         @{userProfile?.username}
                       </div>
+                      <span className="text-[10px] text-zinc-400 font-medium block">
+                        {userProfile?.email || userProfile?.gmail || 'Registered Citizen'}
+                      </span>
                     </div>
                   </div>
 
@@ -7729,6 +7750,53 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <span className="text-emerald-400 font-bold">CBN Verified</span>
                     </div>
                   </div>
+                </div>
+
+                {/* Wardrobe & 3D Avatar Customization Card (Available to EVERY Citizen) */}
+                <div className="p-4 rounded-3xl bg-gradient-to-br from-emerald-950/60 via-zinc-950 to-teal-950/60 border border-emerald-500/40 shadow-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300">
+                        <Sparkles className="w-4 h-4 text-amber-400 animate-spin" style={{ animationDuration: '8s' }} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-white">Wardrobe & 3D Avatar</h4>
+                        <span className="text-[10px] text-emerald-400 font-mono font-bold">
+                          Live Server Sync Active
+                        </span>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[9px] font-bold">
+                      All Citizens
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    Customize your 3D avatar at any time: toggle gender, select your skin tone, switch between the Dapper Peaky Flat Cap, 3D Afro, Taper Fade, 360 Waves, Locs, and tailored tweed waistcoat outfits. Changes sync across all devices!
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempAvatar(
+                        userProfile?.avatar || {
+                          gender: 'male',
+                          skinTone: '#8d5524',
+                          hairstyle: 'peaky_cap',
+                          hairColor: '#18181b',
+                          outfit: 'corporate',
+                          pants: 'slacks',
+                          shoes: 'loafers',
+                          accessory: 'none',
+                        }
+                      );
+                      setIsAvatarModalOpen(true);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 transition-all active:scale-98"
+                  >
+                    <User className="w-4 h-4" />
+                    <span>👔 Edit Avatar & Wardrobe</span>
+                  </button>
                 </div>
 
                 <div className="space-y-2">
@@ -10027,6 +10095,252 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     </div>
                   );
                 })()}
+              </div>
+            </div>
+          )}
+
+          {/* =============================================================
+              WARDROBE & 3D AVATAR CUSTOMIZATION MODAL (ALL PLAYERS)
+              ============================================================= */}
+          {isAvatarModalOpen && (
+            <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-xl flex flex-col p-4 text-left animate-in fade-in zoom-in-95 duration-200 overflow-y-auto">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black text-white">Wardrobe & 3D Avatar</h3>
+                    <p className="text-[10px] text-zinc-400 font-mono">Real-Time 3D Mesh Customizer</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAvatarModalOpen(false)}
+                  className="p-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* 3D Model Interactive Stage */}
+              <div className="mt-3 w-full h-52 bg-gradient-to-b from-zinc-900/90 via-zinc-950 to-black rounded-2xl border border-zinc-800 flex items-center justify-center relative overflow-hidden shrink-0 shadow-inner">
+                <ThreeCharacterAvatar avatar={tempAvatar} size="lg" interactive={true} className="mx-auto" />
+                <div className="absolute bottom-2 left-2 z-10 pointer-events-none">
+                  <span className="px-2 py-0.5 rounded-md bg-black/70 text-zinc-400 text-[9px] font-mono border border-white/10">
+                    Drag to rotate 360°
+                  </span>
+                </div>
+              </div>
+
+              {/* Customization Options */}
+              <div className="space-y-4 py-3 flex-1">
+                {/* 1. GENDER SELECTION */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-black text-white block uppercase tracking-wider">
+                    1. Select Gender
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTempAvatar({ ...tempAvatar, gender: 'male' })}
+                      className={`py-2 px-3 rounded-xl border text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                        tempAvatar.gender === 'male'
+                          ? 'bg-emerald-500 text-black border-emerald-400 shadow-md'
+                          : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:border-zinc-700'
+                      }`}
+                    >
+                      <span>👨 Male Character</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTempAvatar({ ...tempAvatar, gender: 'female' })}
+                      className={`py-2 px-3 rounded-xl border text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                        tempAvatar.gender === 'female'
+                          ? 'bg-emerald-500 text-black border-emerald-400 shadow-md'
+                          : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:border-zinc-700'
+                      }`}
+                    >
+                      <span>👩 Female Character</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. SKIN TONE SELECTION */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black text-white block uppercase tracking-wider">
+                      2. Skin Tone
+                    </span>
+                    <span className="text-[10px] font-mono text-emerald-400">
+                      {tempAvatar.skinTone}
+                    </span>
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto py-1 scrollbar-none">
+                    {[
+                      { id: '#3b220d', label: 'Ebony Rich' },
+                      { id: '#4a2c11', label: 'Deep Espresso' },
+                      { id: '#6b3a1a', label: 'Dark Cocoa' },
+                      { id: '#8d5524', label: 'Warm Bronze' },
+                      { id: '#b07946', label: 'Caramel Honey' },
+                      { id: '#c68642', label: 'Almond Glow' },
+                      { id: '#d99b66', label: 'Golden Sand' },
+                    ].map((tone) => (
+                      <button
+                        key={tone.id}
+                        type="button"
+                        onClick={() => setTempAvatar({ ...tempAvatar, skinTone: tone.id })}
+                        className={`w-9 h-9 rounded-full border-2 transition-transform cursor-pointer shrink-0 ${
+                          tempAvatar.skinTone === tone.id
+                            ? 'border-emerald-400 scale-110 ring-2 ring-emerald-400/50'
+                            : 'border-zinc-700 hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: tone.id }}
+                        title={tone.label}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. 3D HAIRSTYLE SELECTION */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-black text-white block uppercase tracking-wider">
+                    3. 3D Hairstyle & Headwear
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { id: 'peaky_cap', name: '🧢 Peaky Flat Cap', sub: 'Tweed Wool Brim' },
+                      { id: 'afro', name: '👑 Classic 3D Afro', sub: 'High Crown, Clear Face' },
+                      { id: 'fade', name: '💈 Low / Mid Fade', sub: 'Crisp Edge-up Line' },
+                      { id: 'waves', name: '🌊 360 Waves', sub: 'Concentric Specular Flow' },
+                      { id: 'braids', name: '🧵 Braids / Plats', sub: 'Intricate Platted' },
+                      { id: 'dreads', name: '🧶 Dreadlocks / Locs', sub: 'Natural Strands' },
+                      { id: 'buzz', name: '✂️ Clean Buzz Cut', sub: 'Sharp Low Crop' },
+                      { id: 'gele', name: '👒 Nigerian Gele', sub: 'Traditional Head-Tie' },
+                    ].map((hair) => (
+                      <button
+                        key={hair.id}
+                        type="button"
+                        onClick={() => setTempAvatar({ ...tempAvatar, hairstyle: hair.id as any })}
+                        className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                          tempAvatar.hairstyle === hair.id
+                            ? 'bg-emerald-950/80 border-emerald-400 text-white ring-1 ring-emerald-400'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                        }`}
+                      >
+                        <span className="text-xs font-black block">{hair.name}</span>
+                        <span className="text-[9px] text-zinc-400 font-mono block">{hair.sub}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 4. OUTFIT SELECTION */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-black text-white block uppercase tracking-wider">
+                    4. Tailored Outfits
+                  </span>
+                  <div className="space-y-1.5">
+                    {[
+                      {
+                        id: 'corporate',
+                        name: '👔 Dapper Tweed Vest & Red Tie',
+                        desc: 'Tailored tweed grey waistcoat with crisp white shirt, red silk tie & pinstripe trousers.',
+                      },
+                      {
+                        id: 'casual',
+                        name: '👕 Simple White Tee & Blue Jeans',
+                        desc: 'Classic crewneck with blue denim jeans and clean white sneakers.',
+                      },
+                      {
+                        id: 'trad_senator',
+                        name: '🧥 Casual Grey Polo & Chinos',
+                        desc: 'Comfortable casual polo shirt with light beige chinos and dark loafers.',
+                      },
+                      {
+                        id: 'streetwear',
+                        name: '🏃 Everyday Cotton Shirt & Trackpants',
+                        desc: 'Relaxed forest green cotton tee with dark charcoal sweatpants and clean trainers.',
+                      },
+                      {
+                        id: 'ankara',
+                        name: '👘 Basic Local Ankara Native',
+                        desc: 'Short-sleeve wax print native top with dark casual trousers.',
+                      },
+                    ].map((fit) => (
+                      <button
+                        key={fit.id}
+                        type="button"
+                        onClick={() => setTempAvatar({ ...tempAvatar, outfit: fit.id as any })}
+                        className={`w-full p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                          tempAvatar.outfit === fit.id
+                            ? 'bg-emerald-950/80 border-emerald-400 text-white ring-1 ring-emerald-400'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black text-white">{fit.name}</span>
+                          {tempAvatar.outfit === fit.id && (
+                            <span className="text-[10px] text-emerald-400 font-bold">Active</span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-zinc-400 mt-0.5">{fit.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Save & Synchronize Button */}
+              <div className="pt-3 border-t border-zinc-800 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const updatedProfile: UserProfile = {
+                      ...userProfile,
+                      avatar: tempAvatar,
+                    };
+
+                    try {
+                      localStorage.setItem('naija_life_active_citizen_v15_gmail', JSON.stringify(updatedProfile));
+                      const rawStored = localStorage.getItem('naija_life_citizens_v15_gmail');
+                      if (rawStored) {
+                        const stored = JSON.parse(rawStored);
+                        const k = userProfile.username.toLowerCase().trim();
+                        if (stored[k]) {
+                          stored[k].profile = updatedProfile;
+                          localStorage.setItem('naija_life_citizens_v15_gmail', JSON.stringify(stored));
+                        }
+                      }
+                    } catch {}
+
+                    try {
+                      await fetch('/api/auth/sync', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          username: userProfile.username,
+                          email: userProfile.email || userProfile.gmail,
+                          profileUpdates: {
+                            avatar: tempAvatar,
+                          },
+                        }),
+                      });
+                    } catch (err) {
+                      console.warn('Backend avatar sync fallback:', err);
+                    }
+
+                    onUpdateProfile?.(updatedProfile);
+                    setIsAvatarModalOpen(false);
+                    triggerSound?.('coin');
+                    onShowToast('✅ Wardrobe & 3D Avatar saved & synchronized across Naija Life servers!');
+                  }}
+                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-black font-black text-xs cursor-pointer shadow-lg flex items-center justify-center gap-2 transition-all active:scale-98"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>SAVE & SYNCHRONIZE 3D AVATAR</span>
+                </button>
               </div>
             </div>
           )}

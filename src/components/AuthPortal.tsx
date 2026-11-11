@@ -296,9 +296,22 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
           return;
         }
       } else if (res.status === 401) {
-        setErrorMessage('Incorrect password. Please verify your credentials.');
+        setErrorMessage('Incorrect password! You can only log in with the password you signed up with.');
         triggerSound?.('alert');
         return;
+      } else if (res.status === 404) {
+        setErrorMessage('Citizen account not found on Naija Life servers. Please click "CREATE NEW LIFE" to sign up.');
+        triggerSound?.('alert');
+        return;
+      } else {
+        try {
+          const errData = await res.json();
+          if (errData?.error) {
+            setErrorMessage(errData.error);
+            triggerSound?.('alert');
+            return;
+          }
+        } catch {}
       }
     } catch {
       // Network/offline fallback
@@ -571,8 +584,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     };
 
     // Save on Naija Life servers so this account is accessible from any other device!
+    let userToLaunch = finalUser;
     try {
-      await fetch('/api/auth/register', {
+      const resp = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -583,23 +597,29 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
           profile: finalUser,
         }),
       });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data?.profile) {
+          userToLaunch = { ...userToLaunch, ...data.profile };
+        }
+      }
     } catch (err) {
       console.warn('Server registration offline fallback:', err);
     }
 
     // Save into all registered users
-    saveUserRecord(finalUser.username, {
+    saveUserRecord(userToLaunch.username, {
       password: signupPassword,
-      profile: finalUser,
+      profile: userToLaunch,
     });
     setSyncedUsers(getStoredUsers());
 
     // Save as current active session
-    saveSession(finalUser);
+    saveSession(userToLaunch);
 
     triggerSound?.('stamp');
     // Launch directly to the map!
-    onAuthSuccess(finalUser, spawnState);
+    onAuthSuccess(userToLaunch, spawnState);
   };
 
   // Optional: Customization complete -> go to Spawn State Picker

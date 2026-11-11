@@ -45,6 +45,18 @@ interface HairOption {
 
 const HAIR_OPTIONS: HairOption[] = [
   {
+    id: 'peaky_cap',
+    label: 'Peaky Flat Cap',
+    type: 'Dapper Wool Tweed',
+    renderPreview: (c) => (
+      <svg viewBox="0 0 40 40" className="w-9 h-9">
+        <path d="M10 24 C10 16 18 12 28 14 C32 15 34 18 34 22 L8 24 Z" fill="#475569" />
+        <path d="M8 24 Q20 22 34 22 L36 25 Q20 27 6 25 Z" fill="#334155" />
+        <ellipse cx="20" cy="27" rx="7" ry="6" fill="#8d5524" />
+      </svg>
+    ),
+  },
+  {
     id: 'afro',
     label: 'Classic Afro',
     type: 'Natural Volume',
@@ -159,6 +171,32 @@ interface StarterOutfitOption {
 }
 
 const STARTER_OUTFITS: StarterOutfitOption[] = [
+  {
+    id: 'corporate',
+    name: 'Dapper Tweed Vest & Red Tie',
+    category: 'Gentleman Classic',
+    description: 'Tailored tweed grey waistcoat with crisp white shirt, crimson red silk tie, navy pinstripe trousers & Oxford shoes.',
+    pants: 'slacks',
+    pantsColor: '#1e293b',
+    shoes: 'loafers',
+    shoesColor: '#18181b',
+    renderMiniGraphic: () => (
+      <svg viewBox="0 0 40 48" className="w-9 h-11 shrink-0">
+        {/* White shirt base */}
+        <path d="M10 10 L16 4 L24 4 L30 10 L28 26 L12 26 Z" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="0.8" />
+        {/* Grey tweed vest */}
+        <path d="M13 14 L17 18 L23 18 L27 14 L26 26 L14 26 Z" fill="#64748b" />
+        {/* Red tie */}
+        <polygon points="19,10 21,10 20.5,19 19.5,19" fill="#b91c1c" />
+        {/* Dark trousers */}
+        <rect x="12" y="26" width="6" height="18" rx="2" fill="#1e293b" />
+        <rect x="22" y="26" width="6" height="18" rx="2" fill="#1e293b" />
+        {/* Oxford shoes */}
+        <rect x="10" y="44" width="8" height="4" rx="1.5" fill="#18181b" />
+        <rect x="22" y="44" width="8" height="4" rx="1.5" fill="#18181b" />
+      </svg>
+    ),
+  },
   {
     id: 'casual',
     name: 'Simple White Tee & Blue Jeans',

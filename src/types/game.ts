@@ -8,14 +8,14 @@ export type SocialClass = 'lapo' | 'mapo' | 'nepo';
 export interface CharacterAvatar {
   gender: 'male' | 'female' | 'unisex';
   skinTone: string;
-  hairstyle: 'afro' | 'fade' | 'braids' | 'dreads' | 'gele' | 'buzz' | 'waves' | 'locs' | 'cornrows';
+  hairstyle: 'afro' | 'fade' | 'braids' | 'dreads' | 'gele' | 'buzz' | 'waves' | 'locs' | 'cornrows' | 'peaky_cap';
   hairColor: string;
-  outfit: 'ankara' | 'agbada' | 'streetwear' | 'corporate' | 'casual' | 'trad_senator' | 'designer';
-  pants?: 'jeans' | 'sweatpants' | 'slacks' | 'wrapper' | 'shorts';
+  outfit: 'ankara' | 'agbada' | 'streetwear' | 'corporate' | 'casual' | 'trad_senator' | 'designer' | 'peaky_dapper';
+  pants?: 'jeans' | 'sweatpants' | 'slacks' | 'wrapper' | 'shorts' | 'pinstripe';
   pantsColor?: string;
-  shoes?: 'sneakers' | 'loafers' | 'sandals' | 'boots' | 'heels';
+  shoes?: 'sneakers' | 'loafers' | 'sandals' | 'boots' | 'heels' | 'oxford';
   shoesColor?: string;
-  accessory: 'none' | 'sunglasses' | 'gold_chain' | 'fila_cap' | 'designer_shades' | 'coral_beads' | 'rolex_watch' | 'diamond_chain';
+  accessory: 'none' | 'sunglasses' | 'gold_chain' | 'fila_cap' | 'designer_shades' | 'coral_beads' | 'rolex_watch' | 'diamond_chain' | 'peaky_cap' | 'red_tie';
   height?: 'short' | 'average' | 'tall' | 'towering';
 }
 

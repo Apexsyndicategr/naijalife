@@ -146,6 +146,7 @@ export interface LagosLifeMapProps {
   onLogAction?: (category: 'finance' | 'career' | 'lifestyle' | 'social', text: string) => void;
   onShowToast?: (message: string) => void;
   triggerSound?: (type: 'coin' | 'stamp' | 'alert' | 'success') => void;
+  onUpdateUserProfile?: (updatedProfile: UserProfile) => void;
 }
 
 export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
@@ -182,6 +183,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
   onLogAction,
   onShowToast = () => {},
   triggerSound,
+  onUpdateUserProfile,
 }) => {
   // Map pan drag state (Zero-Lag Direct Hardware GPU Composited Transform)
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: -750, y: -500 });
@@ -1967,7 +1969,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       <div className="absolute bottom-[66px] sm:bottom-5 left-2 sm:left-5 z-30 pointer-events-auto flex items-center gap-2 sm:gap-3 bg-[#101b14]/95 border border-zinc-750/90 rounded-2xl sm:rounded-3xl p-1.5 sm:p-2.5 shadow-2xl backdrop-blur-md scale-90 sm:scale-100 origin-bottom-left">
         {/* Circular Avatar Portrait with Neon Green Ring */}
         <div className="w-11 h-11 sm:w-14 sm:h-14 rounded-full bg-emerald-950 border-2 sm:border-3 border-emerald-400 p-0.5 shadow-[0_0_15px_rgba(52,211,153,0.5)] flex items-center justify-center shrink-0 overflow-hidden ring-2 ring-emerald-500/30">
-          <CharacterRenderer avatar={userProfile?.avatar} size="sm" showBackground={false} />
+          <CharacterRenderer avatar={userProfile?.avatar} size="sm" fullBody={false} showBackground={false} />
         </div>
 
         {/* 6 Mini Need Status Bars in 2 Rows of 3 */}
@@ -3026,6 +3028,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
         onLogAction={onLogAction || (() => {})}
         onShowToast={onShowToast}
         onLogout={onLogout}
+        onUpdateProfile={onUpdateUserProfile}
         triggerSound={triggerSound}
         currentStateId={currentState.id}
         initialApp={phoneInitialApp}

@@ -461,12 +461,19 @@ app.post('/api/auth/login', (req, res) => {
 
   citizensDB = loadCitizensDB();
 
-  // Search by username key directly or by matching stored email/gmail
+  // Search by username key directly or by matching stored email/gmail, citizenName, or profile username
   let foundKey = citizensDB[loginKey] ? loginKey : '';
   if (!foundKey) {
     for (const [key, rec] of Object.entries(citizensDB)) {
       const recEm = (rec.gmail || rec.profile?.email || '').toLowerCase().trim();
-      if (recEm && recEm === loginKey) {
+      const recUser = (rec.profile?.username || key).toLowerCase().trim();
+      const recCit = (rec.profile?.citizenName || rec.profile?.firstName || '').toLowerCase().trim();
+      if (
+        (recEm && recEm === loginKey) ||
+        (recUser && recUser === loginKey) ||
+        (recCit && recCit === loginKey) ||
+        key.toLowerCase().trim() === loginKey
+      ) {
         foundKey = key;
         break;
       }

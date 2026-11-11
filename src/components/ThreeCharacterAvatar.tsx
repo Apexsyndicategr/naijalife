@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { CharacterAvatar } from '../types/game';
 
@@ -30,19 +30,19 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
   const safeAvatar: CharacterAvatar = avatar || {
     gender: 'male',
     skinTone: '#8d5524',
-    hairstyle: 'fade',
+    hairstyle: 'peaky_cap',
     hairColor: '#18181b',
-    outfit: 'streetwear',
-    pants: 'jeans',
-    shoes: 'sneakers',
+    outfit: 'corporate',
+    pants: 'pinstripe',
+    shoes: 'oxford',
     accessory: 'none',
   };
 
   const isFemale = safeAvatar.gender === 'female';
   const skinColor = safeAvatar.skinTone || '#8d5524';
   const hairColor = safeAvatar.hairColor || '#18181b';
-  const outfitType = safeAvatar.outfit || 'streetwear';
-  const hairstyle = safeAvatar.hairstyle || 'fade';
+  const outfitType = safeAvatar.outfit || 'corporate';
+  const hairstyle = safeAvatar.hairstyle || 'peaky_cap';
   const heightPreset = safeAvatar.height || 'average';
 
   useEffect(() => {
@@ -70,9 +70,8 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     // Scene & Camera
     const scene = new THREE.Scene();
 
-    const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 50);
-    // Framed to capture full character from head to toe with good margins
-    camera.position.set(0, 1.25, 4.0);
+    const camera = new THREE.PerspectiveCamera(34, width / height, 0.1, 50);
+    camera.position.set(0, 1.25, 3.9);
     camera.lookAt(0, 1.05, 0);
 
     // Renderer
@@ -85,22 +84,22 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.18;
+    renderer.toneMappingExposure = 1.15;
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     container.appendChild(renderer.domElement);
 
-    // Cinematic 3-Point Lighting Setup
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    // Studio 3-Point Lighting Setup
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
     scene.add(ambientLight);
 
-    const hemiLight = new THREE.HemisphereLight(0xfff7ed, 0x18181b, 0.75);
+    const hemiLight = new THREE.HemisphereLight(0xfff7ed, 0x1c1917, 0.8);
     scene.add(hemiLight);
 
     // Warm Key Light (Front-Right)
-    const keyLight = new THREE.DirectionalLight(0xfffaf0, 1.45);
-    keyLight.position.set(2.4, 3.8, 3.2);
+    const keyLight = new THREE.DirectionalLight(0xfffaf0, 1.5);
+    keyLight.position.set(2.4, 4.0, 3.2);
     keyLight.castShadow = !isSoftwareGl;
     if (!isSoftwareGl) {
       keyLight.shadow.mapSize.width = 1024;
@@ -111,17 +110,17 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     scene.add(keyLight);
 
     // Soft Cool Fill Light (Front-Left)
-    const fillLight = new THREE.DirectionalLight(0xe0f2fe, 0.65);
+    const fillLight = new THREE.DirectionalLight(0xe0f2fe, 0.7);
     fillLight.position.set(-2.5, 2.8, 2.5);
     scene.add(fillLight);
 
-    // Vivid Cyan/Sky-Blue Rim Light (Back-Left - AAA Character Silhouette Highlight)
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.1);
+    // Vivid Cyan/Sky-Blue Rim Light (Back-Left - Silhouette Highlight)
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.15);
     rimLight.position.set(-2.8, 3.0, -3.0);
     scene.add(rimLight);
 
     // Subtle Amber Warm Rim (Back-Right)
-    const warmRim = new THREE.DirectionalLight(0xf59e0b, 0.55);
+    const warmRim = new THREE.DirectionalLight(0xf59e0b, 0.6);
     warmRim.position.set(2.5, 2.5, -2.5);
     scene.add(warmRim);
 
@@ -133,7 +132,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     if (sCtx) {
       const grad = sCtx.createRadialGradient(128, 128, 15, 128, 128, 120);
       grad.addColorStop(0, 'rgba(0, 0, 0, 0.65)');
-      grad.addColorStop(0.45, 'rgba(0, 0, 0, 0.3)');
+      grad.addColorStop(0.45, 'rgba(0, 0, 0, 0.28)');
       grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
       sCtx.fillStyle = grad;
       sCtx.fillRect(0, 0, 256, 256);
@@ -152,8 +151,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     scene.add(shadowMesh);
 
     // =========================================================================
-    // 3D PROCEDURAL CHARACTER MODEL
-    // Realistic proportions, natural relaxed standing posture, human anatomical structure
+    // 3D PROCEDURAL CHARACTER MODEL (MATCHING USER'S DAPPER GENTLEMAN REFERENCE)
     // =========================================================================
     const charGroup = new THREE.Group();
     characterGroupRef.current = charGroup;
@@ -179,7 +177,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
 
     const skinToneObj = new THREE.Color(skinColor);
     const lipsMat = new THREE.MeshStandardMaterial({
-      color: skinToneObj.clone().lerp(new THREE.Color(0xb91c1c), 0.28),
+      color: skinToneObj.clone().lerp(new THREE.Color(0xb91c1c), 0.26),
       roughness: 0.45,
       metalness: 0.04,
     });
@@ -190,132 +188,144 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
       metalness: 0.02,
     });
 
-    // Outfit Palette
-    let shirtColorHex = 0xffffff;
-    let pantsColorHex = 0x1e3a8a;
-    let accentColorHex = 0xd97706;
+    // Peaky Tweed & Dapper Vest materials
+    const tweedVestMat = new THREE.MeshStandardMaterial({
+      color: 0x8a929a, // Tailored heather grey/charcoal tweed
+      roughness: 0.72,
+      metalness: 0.05,
+    });
 
-    if (outfitType === 'corporate') {
-      shirtColorHex = 0x1d4ed8; // Crisp royal blue corporate shirt
-      pantsColorHex = 0x27272a; // Charcoal tailored trousers
-      accentColorHex = 0xd4af37;
-    } else if (outfitType === 'casual') {
-      shirtColorHex = 0x059669; // Forest green casual crewneck
-      pantsColorHex = 0x18181b; // Pitch black street joggers
-      accentColorHex = 0x10b981;
-    } else if (outfitType === 'ankara' || outfitType === 'trad_senator') {
-      shirtColorHex = 0x7c2d12; // Rich African mahogany rust with gold embroidery
-      pantsColorHex = 0x7c2d12; // Matching tailored senator trousers
-      accentColorHex = 0xf59e0b; // Gold embroidery
-    } else {
-      // streetwear: clean crisp white designer tee & indigo wash jeans
-      shirtColorHex = 0xf8fafc;
-      pantsColorHex = 0x1e3a8a;
-      accentColorHex = 0xef4444;
-    }
+    const whiteShirtMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc, // Crisp white collared dress shirt
+      roughness: 0.65,
+      metalness: 0.02,
+    });
 
-    if (safeAvatar.pantsColor) {
-      try {
-        pantsColorHex = new THREE.Color(safeAvatar.pantsColor).getHex();
-      } catch {}
-    }
+    const redTieMat = new THREE.MeshStandardMaterial({
+      color: 0x991b1b, // Deep crimson red silk necktie
+      roughness: 0.38,
+      metalness: 0.12,
+    });
 
-    const shirtMat = new THREE.MeshStandardMaterial({
-      color: shirtColorHex,
+    const pinstripePantsMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b, // Dark navy tailored trousers
       roughness: 0.75,
-      metalness: 0.02,
+      metalness: 0.04,
     });
 
-    const pantsMat = new THREE.MeshStandardMaterial({
-      color: pantsColorHex,
-      roughness: 0.80,
-      metalness: 0.02,
-    });
-
-    const beltMat = new THREE.MeshStandardMaterial({
-      color: 0x1c1917,
-      roughness: 0.5,
-      metalness: 0.1,
-    });
-
-    const goldBuckleMat = new THREE.MeshStandardMaterial({
-      color: 0xf59e0b,
-      roughness: 0.25,
-      metalness: 0.85,
-    });
-
-    const shoeMainMat = new THREE.MeshStandardMaterial({
-      color: 0x18181b,
-      roughness: 0.45,
-      metalness: 0.08,
-    });
-
-    const shoeSoleMat = new THREE.MeshStandardMaterial({
-      color: 0xf8fafc,
+    const oxfordShoeMat = new THREE.MeshStandardMaterial({
+      color: 0x18181b, // Polished black leather dress shoes
       roughness: 0.35,
-      metalness: 0.02,
+      metalness: 0.15,
     });
+
+    const buttonMat = new THREE.MeshStandardMaterial({
+      color: 0x27272a,
+      roughness: 0.3,
+      metalness: 0.6,
+    });
+
+    // Other outfit choices
+    const isDapperOutfit = outfitType === 'corporate' || outfitType === 'peaky_dapper' || outfitType === 'designer';
+    const isSenatorOutfit = outfitType === 'trad_senator' || outfitType === 'ankara';
+    const isCasualOutfit = outfitType === 'casual';
+
+    let shirtMat = isDapperOutfit ? whiteShirtMat : whiteShirtMat;
+    let pantsMat = isDapperOutfit ? pinstripePantsMat : pinstripePantsMat;
+
+    if (isSenatorOutfit) {
+      shirtMat = new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.65 });
+      pantsMat = new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.65 });
+    } else if (isCasualOutfit) {
+      shirtMat = new THREE.MeshStandardMaterial({ color: 0x059669, roughness: 0.75 });
+      pantsMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.8 });
+    }
 
     // 1. Torso Group (Gender Proportions)
     const torsoGroup = new THREE.Group();
     torsoGroup.position.set(0, 1.26, 0);
 
     const chestWidth = isFemale ? 0.38 : 0.46;
-    const waistWidth = isFemale ? 0.31 : 0.39;
+    const waistWidth = isFemale ? 0.31 : 0.38;
     const hipWidth = isFemale ? 0.42 : 0.39;
 
-    // Upper Chest
+    // Upper Chest Base (White Dress Shirt)
     const chestGeo = new THREE.CylinderGeometry(chestWidth / 2, waistWidth / 2, 0.36, 16);
-    const chestMesh = new THREE.Mesh(chestGeo, shirtMat);
+    const chestMesh = new THREE.Mesh(chestGeo, whiteShirtMat);
     chestMesh.position.y = 0.16;
     chestMesh.castShadow = !isSoftwareGl;
     chestMesh.receiveShadow = !isSoftwareGl;
     torsoGroup.add(chestMesh);
 
-    // Shirt Collar Band
-    const collarGeo = new THREE.TorusGeometry(0.09, 0.016, 8, 20);
-    const collarMesh = new THREE.Mesh(collarGeo, shirtMat);
-    collarMesh.rotation.x = Math.PI / 2;
-    collarMesh.position.set(0, 0.33, 0);
-    torsoGroup.add(collarMesh);
+    // TAILORED TWEED WAISTCOAT / VEST (As seen in the uploaded reference photo)
+    if (isDapperOutfit) {
+      // Vest body wrapped over shirt
+      const vestGeo = new THREE.CylinderGeometry((chestWidth / 2) + 0.008, (waistWidth / 2) + 0.008, 0.32, 16);
+      const vestMesh = new THREE.Mesh(vestGeo, tweedVestMat);
+      vestMesh.position.y = 0.14;
+      vestMesh.castShadow = !isSoftwareGl;
+      torsoGroup.add(vestMesh);
 
-    // Traditional Senator / Ankara Chest Embroidery Detail
-    if (outfitType === 'trad_senator' || outfitType === 'ankara') {
-      const embroGeo = new THREE.BoxGeometry(0.08, 0.26, 0.01);
-      const embroMat = new THREE.MeshStandardMaterial({
-        color: accentColorHex,
-        roughness: 0.4,
-        metalness: 0.3,
-      });
-      const embroMesh = new THREE.Mesh(embroGeo, embroMat);
-      embroMesh.position.set(0, 0.16, (chestWidth / 2) * 0.9 + 0.01);
-      torsoGroup.add(embroMesh);
+      // V-neck cutout revealing white shirt & red tie
+      const vCutGeo = new THREE.ConeGeometry(0.09, 0.22, 4);
+      const vCutMat = whiteShirtMat;
+      const vCutMesh = new THREE.Mesh(vCutGeo, vCutMat);
+      vCutMesh.rotation.x = Math.PI;
+      vCutMesh.position.set(0, 0.25, (chestWidth / 2) + 0.009);
+      torsoGroup.add(vCutMesh);
+
+      // RED SILK NECKTIE (Tucked neatly into the vest)
+      const tieKnotGeo = new THREE.ConeGeometry(0.022, 0.038, 6);
+      const tieKnot = new THREE.Mesh(tieKnotGeo, redTieMat);
+      tieKnot.rotation.x = Math.PI;
+      tieKnot.position.set(0, 0.31, (chestWidth / 2) + 0.012);
+      torsoGroup.add(tieKnot);
+
+      const tieBodyGeo = new THREE.BoxGeometry(0.032, 0.20, 0.008);
+      const tieBody = new THREE.Mesh(tieBodyGeo, redTieMat);
+      tieBody.position.set(0, 0.20, (chestWidth / 2) + 0.011);
+      torsoGroup.add(tieBody);
+
+      // Vest Buttons down the front
+      for (let b = 0; b < 4; b++) {
+        const btnGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.006, 8);
+        const btnMesh = new THREE.Mesh(btnGeo, buttonMat);
+        btnMesh.rotation.x = Math.PI / 2;
+        btnMesh.position.set(0, 0.12 - b * 0.05, (waistWidth / 2) + 0.012);
+        torsoGroup.add(btnMesh);
+      }
     }
 
-    // Female bust curvature
+    // Shirt Collar Band & Wings
+    const collarGeo = new THREE.TorusGeometry(0.09, 0.016, 8, 20);
+    const collarMesh = new THREE.Mesh(collarGeo, whiteShirtMat);
+    collarMesh.rotation.x = Math.PI / 2;
+    collarMesh.position.set(0, 0.34, 0);
+    torsoGroup.add(collarMesh);
+
+    // Collar wings
+    const collarWingGeo = new THREE.ConeGeometry(0.03, 0.05, 4);
+    const collarWingL = new THREE.Mesh(collarWingGeo, whiteShirtMat);
+    collarWingL.rotation.z = -0.5;
+    collarWingL.position.set(-0.045, 0.33, 0.09);
+    const collarWingR = new THREE.Mesh(collarWingGeo, whiteShirtMat);
+    collarWingR.rotation.z = 0.5;
+    collarWingR.position.set(0.045, 0.33, 0.09);
+    torsoGroup.add(collarWingL, collarWingR);
+
+    // Female bust curvature if female
     if (isFemale) {
-      const bustGeo = new THREE.SphereGeometry(0.09, 14, 14);
-      const bustL = new THREE.Mesh(bustGeo, shirtMat);
+      const bustGeo = new THREE.SphereGeometry(0.088, 14, 14);
+      const bustL = new THREE.Mesh(bustGeo, isDapperOutfit ? tweedVestMat : shirtMat);
       bustL.position.set(-0.085, 0.16, 0.13);
       bustL.scale.set(1.0, 0.9, 1.15);
-      const bustR = new THREE.Mesh(bustGeo, shirtMat);
+      const bustR = new THREE.Mesh(bustGeo, isDapperOutfit ? tweedVestMat : shirtMat);
       bustR.position.set(0.085, 0.16, 0.13);
       bustR.scale.set(1.0, 0.9, 1.15);
       torsoGroup.add(bustL, bustR);
     }
 
-    // Belt & Buckle
-    const beltGeo = new THREE.CylinderGeometry(waistWidth / 2 + 0.006, waistWidth / 2 + 0.006, 0.045, 16);
-    const beltMesh = new THREE.Mesh(beltGeo, beltMat);
-    beltMesh.position.y = -0.02;
-    torsoGroup.add(beltMesh);
-
-    const buckleGeo = new THREE.BoxGeometry(0.05, 0.04, 0.02);
-    const buckleMesh = new THREE.Mesh(buckleGeo, goldBuckleMat);
-    buckleMesh.position.set(0, -0.02, waistWidth / 2 + 0.01);
-    torsoGroup.add(buckleMesh);
-
-    // Pelvis / Hips
+    // Pelvis / High-Waisted Tailored Trousers Top
     const pelvisGeo = new THREE.CylinderGeometry(waistWidth / 2, hipWidth / 2, 0.20, 16);
     const pelvisMesh = new THREE.Mesh(pelvisGeo, pantsMat);
     pelvisMesh.position.y = -0.12;
@@ -342,20 +352,20 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     headMesh.castShadow = !isSoftwareGl;
     headGroup.add(headMesh);
 
-    // Tapered Jaw & Chin
+    // Sculpted Jaw & Chin
     const jawGeo = new THREE.CylinderGeometry(0.13, isFemale ? 0.085 : 0.115, 0.15, 14);
     const jawMesh = new THREE.Mesh(jawGeo, skinMat);
     jawMesh.position.set(0, -0.065, 0.035);
     headGroup.add(jawMesh);
 
     // Defined Nose Bridge
-    const noseGeo = new THREE.ConeGeometry(0.028, 0.07, 8);
+    const noseGeo = new THREE.ConeGeometry(0.026, 0.072, 8);
     const noseMesh = new THREE.Mesh(noseGeo, skinMat);
     noseMesh.rotation.x = Math.PI / 2.2;
     noseMesh.position.set(0, -0.01, 0.18);
     headGroup.add(noseMesh);
 
-    // Stylized Expressive 3D Eyes
+    // Expressive 3D Eyes
     const eyeWhiteGeo = new THREE.SphereGeometry(0.026, 10, 10);
     const eyeWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1 });
     const pupilGeo = new THREE.SphereGeometry(0.015, 10, 10);
@@ -402,7 +412,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     lipMesh.scale.set(1.2, 0.6, 0.9);
     headGroup.add(lipMesh);
 
-    // Realistic Ears with Lobes
+    // Ears with Lobes
     const earGeo = new THREE.SphereGeometry(0.042, 10, 10);
     earGeo.scale(0.35, 1.15, 0.85);
     const earL = new THREE.Mesh(earGeo, skinMat);
@@ -411,26 +421,59 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     earR.position.set(0.168, 0.01, -0.01);
     headGroup.add(earL, earR);
 
-    // 3. 3D HAIRSTYLES (Sitting comfortably above cranium - never obscuring eyes!)
+    // =========================================================================
+    // 3. 3D HAIRSTYLES (INCLUDING FLAT / PEAKY CAP LIKE THE UPLOADED PHOTO!)
+    // AFRO SITS NEATLY ON TOP & NEVER OBSCOURES THE FOREHEAD OR FACE
+    // =========================================================================
     const hairGroup = new THREE.Group();
 
-    if (hairstyle === 'afro') {
-      // Volumetric Afro Crown
-      const afroBaseGeo = new THREE.SphereGeometry(0.23, 18, 18);
-      afroBaseGeo.scale(1.15, 1.08, 1.15);
+    if (hairstyle === 'peaky_cap' || safeAvatar.accessory === 'peaky_cap') {
+      // 3D FLAT CAP / PEAKY BLINDER CAP (Matches reference image perfectly!)
+      const capMat = new THREE.MeshStandardMaterial({
+        color: 0x475569, // Slate/charcoal tweed wool
+        roughness: 0.82,
+        metalness: 0.03,
+      });
+
+      // Cap Crown (Puffed low rounded dome)
+      const capCrownGeo = new THREE.SphereGeometry(0.19, 18, 18);
+      capCrownGeo.scale(1.15, 0.55, 1.25);
+      const capCrown = new THREE.Mesh(capCrownGeo, capMat);
+      capCrown.rotation.x = -0.15;
+      capCrown.position.set(0, 0.14, -0.01);
+      capCrown.castShadow = !isSoftwareGl;
+      hairGroup.add(capCrown);
+
+      // Stiff Curved Visor / Brim
+      const brimGeo = new THREE.CylinderGeometry(0.17, 0.18, 0.015, 16, 1, false, 0, Math.PI);
+      const brimMesh = new THREE.Mesh(brimGeo, capMat);
+      brimMesh.rotation.x = 0.28;
+      brimMesh.rotation.y = Math.PI;
+      brimMesh.position.set(0, 0.09, 0.12);
+      hairGroup.add(brimMesh);
+
+      // Top Button
+      const btnGeo = new THREE.SphereGeometry(0.016, 8, 8);
+      const capBtn = new THREE.Mesh(btnGeo, capMat);
+      capBtn.position.set(0, 0.23, -0.02);
+      hairGroup.add(capBtn);
+    } else if (hairstyle === 'afro') {
+      // 3D COMPACT AFRO CROWN (Elevated high above forehead, clear face!)
+      const afroBaseGeo = new THREE.SphereGeometry(0.20, 18, 18);
+      afroBaseGeo.scale(1.1, 1.0, 1.05);
       const afroMesh = new THREE.Mesh(afroBaseGeo, hairMat);
-      afroMesh.position.set(0, 0.13, -0.03);
+      // Lifted up & back so forehead and eyes remain 100% visible
+      afroMesh.position.set(0, 0.16, -0.04);
       hairGroup.add(afroMesh);
 
-      // Fluffy textured density nodes
-      for (let i = 0; i < 9; i++) {
-        const angle = (i / 9) * Math.PI * 2;
-        const bumpGeo = new THREE.SphereGeometry(0.095, 10, 10);
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const bumpGeo = new THREE.SphereGeometry(0.08, 10, 10);
         const bumpMesh = new THREE.Mesh(bumpGeo, hairMat);
         bumpMesh.position.set(
-          Math.cos(angle) * 0.15,
-          0.17 + Math.sin(angle) * 0.06,
-          Math.sin(angle) * 0.15 - 0.03
+          Math.cos(angle) * 0.13,
+          0.19 + Math.sin(angle) * 0.05,
+          Math.sin(angle) * 0.13 - 0.04
         );
         hairGroup.add(bumpMesh);
       }
@@ -442,7 +485,6 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
       fadeMesh.position.set(0, 0.015, 0);
       hairGroup.add(fadeMesh);
 
-      // Crisp front edge-up line
       const edgeGeo = new THREE.BoxGeometry(0.11, 0.012, 0.02);
       const edgeMesh = new THREE.Mesh(edgeGeo, hairMat);
       edgeMesh.position.set(0, 0.11, 0.158);
@@ -462,7 +504,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
         hairGroup.add(ringMesh);
       }
     } else if (hairstyle === 'braids' || hairstyle === 'dreads' || hairstyle === 'locs') {
-      // Crown cap + Hanging segmented dreads/braids
+      // Dreads/Braids falling backward and sideways
       const capGeo = new THREE.SphereGeometry(0.176, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.52);
       const cap = new THREE.Mesh(capGeo, hairMat);
       hairGroup.add(cap);
@@ -470,7 +512,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
       const strandCount = 16;
       for (let b = 0; b < strandCount; b++) {
         const angle = (b / strandCount) * Math.PI * 1.5 + Math.PI * 0.75;
-        const length = 0.32 + (b % 3) * 0.04;
+        const length = 0.30 + (b % 3) * 0.04;
         const strandGeo = new THREE.CylinderGeometry(0.014, 0.01, length, 8);
         const strandMesh = new THREE.Mesh(strandGeo, hairMat);
         const radius = 0.16;
@@ -482,6 +524,17 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
         strandMesh.rotation.z = Math.cos(angle) * -0.16;
         hairGroup.add(strandMesh);
       }
+    } else if (hairstyle === 'gele') {
+      // Traditional Nigerian Gele Head-Tie
+      const geleMat = new THREE.MeshStandardMaterial({
+        color: 0xb91c1c,
+        roughness: 0.5,
+        metalness: 0.2,
+      });
+      const geleCrownGeo = new THREE.CylinderGeometry(0.24, 0.18, 0.22, 18);
+      const geleCrown = new THREE.Mesh(geleCrownGeo, geleMat);
+      geleCrown.position.set(0, 0.16, 0);
+      hairGroup.add(geleCrown);
     } else {
       // Clean buzz cut
       const buzzGeo = new THREE.SphereGeometry(0.174, 18, 18, 0, Math.PI * 2, 0, Math.PI * 0.50);
@@ -493,77 +546,68 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     headGroup.add(hairGroup);
     charGroup.add(headGroup);
 
-    // 4. Natural Relaxed Arms (Resting along torso at ~15°, NOT T-Pose)
+    // =========================================================================
+    // 4. NATURAL RELAXED ARMS (Resting alongside body at ~12°, NOT T-Pose)
+    // White shirt sleeves with cuffs + natural curved hands
+    // =========================================================================
     const armWidth = isFemale ? 0.082 : 0.098;
     const shoulderSpan = (chestWidth / 2) + 0.055;
 
-    // Left Arm
-    const armLGroup = new THREE.Group();
-    armLGroup.position.set(-shoulderSpan, 1.40, 0);
+    // Sleeve material: White dress shirt
+    const sleeveMat = whiteShirtMat;
 
-    // Shoulder Deltoid
-    const deltoidGeo = new THREE.SphereGeometry(armWidth * 0.7, 10, 10);
-    const deltoidL = new THREE.Mesh(deltoidGeo, shirtMat);
-    armLGroup.add(deltoidL);
+    // Helper for structured arm
+    const createArm = (isRight: boolean) => {
+      const armGroup = new THREE.Group();
+      armGroup.position.set(isRight ? shoulderSpan : -shoulderSpan, 1.40, 0);
 
-    // Bicep / Upper Arm
-    const upperArmGeo = new THREE.CylinderGeometry(armWidth / 2, (armWidth * 0.88) / 2, 0.32, 12);
-    const upperArmL = new THREE.Mesh(upperArmGeo, shirtMat);
-    upperArmL.position.y = -0.15;
-    armLGroup.add(upperArmL);
+      // Deltoid
+      const deltoidGeo = new THREE.SphereGeometry(armWidth * 0.7, 10, 10);
+      const deltoid = new THREE.Mesh(deltoidGeo, sleeveMat);
+      armGroup.add(deltoid);
 
-    // Forearm (Skin)
-    const forearmGeo = new THREE.CylinderGeometry((armWidth * 0.88) / 2, (armWidth * 0.74) / 2, 0.30, 12);
-    const forearmL = new THREE.Mesh(forearmGeo, skinMat);
-    forearmL.position.y = -0.42;
-    armLGroup.add(forearmL);
+      // Upper Arm (White sleeve)
+      const upperArmGeo = new THREE.CylinderGeometry(armWidth / 2, (armWidth * 0.88) / 2, 0.32, 12);
+      const upperArm = new THREE.Mesh(upperArmGeo, sleeveMat);
+      upperArm.position.y = -0.15;
+      armGroup.add(upperArm);
 
-    // Wristwatch on Left Arm
-    const watchBandGeo = new THREE.CylinderGeometry(armWidth * 0.39, armWidth * 0.39, 0.035, 12);
-    const watchBandMesh = new THREE.Mesh(watchBandGeo, goldBuckleMat);
-    watchBandMesh.position.y = -0.54;
-    armLGroup.add(watchBandMesh);
+      // Forearm (White sleeve extending down to cuff)
+      const forearmGeo = new THREE.CylinderGeometry((armWidth * 0.88) / 2, (armWidth * 0.74) / 2, 0.30, 12);
+      const forearm = new THREE.Mesh(forearmGeo, sleeveMat);
+      forearm.position.y = -0.42;
+      armGroup.add(forearm);
 
-    // Resting Curled Hand
-    const handGeo = new THREE.SphereGeometry(0.044, 10, 10);
-    handGeo.scale(0.8, 1.25, 0.95);
-    const handL = new THREE.Mesh(handGeo, skinMat);
-    handL.position.y = -0.61;
-    armLGroup.add(handL);
+      // Shirt Cuff & Button
+      const cuffGeo = new THREE.CylinderGeometry((armWidth * 0.76) / 2, (armWidth * 0.76) / 2, 0.04, 12);
+      const cuff = new THREE.Mesh(cuffGeo, whiteShirtMat);
+      cuff.position.y = -0.54;
+      armGroup.add(cuff);
 
-    // Natural 16-degree relaxed angle
-    armLGroup.rotation.z = 0.16;
-    armLGroup.rotation.x = 0.06;
-    charGroup.add(armLGroup);
+      // Hand (Skin tone with subtle thumb)
+      const handGeo = new THREE.SphereGeometry(0.042, 10, 10);
+      handGeo.scale(0.8, 1.25, 0.95);
+      const hand = new THREE.Mesh(handGeo, skinMat);
+      hand.position.y = -0.61;
+      armGroup.add(hand);
 
-    // Right Arm
-    const armRGroup = new THREE.Group();
-    armRGroup.position.set(shoulderSpan, 1.40, 0);
+      // Relaxed angle along the body
+      armGroup.rotation.z = isRight ? -0.12 : 0.12;
+      armGroup.rotation.x = 0.04;
 
-    const deltoidR = new THREE.Mesh(deltoidGeo, shirtMat);
-    armRGroup.add(deltoidR);
+      return armGroup;
+    };
 
-    const upperArmR = new THREE.Mesh(upperArmGeo, shirtMat);
-    upperArmR.position.y = -0.15;
-    armRGroup.add(upperArmR);
+    const armLGroup = createArm(false);
+    const armRGroup = createArm(true);
+    charGroup.add(armLGroup, armRGroup);
 
-    const forearmR = new THREE.Mesh(forearmGeo, skinMat);
-    forearmR.position.y = -0.42;
-    armRGroup.add(forearmR);
-
-    const handR = new THREE.Mesh(handGeo, skinMat);
-    handR.position.y = -0.61;
-    armRGroup.add(handR);
-
-    armRGroup.rotation.z = -0.16;
-    armRGroup.rotation.x = 0.06;
-    charGroup.add(armRGroup);
-
-    // 5. Anatomical Legs & Realistic Footwear
+    // =========================================================================
+    // 5. ANATOMICAL LEGS & OXFORD DRESS SHOES (High-waisted tailored trousers)
+    // =========================================================================
     const legWidth = isFemale ? 0.11 : 0.13;
     const legSpacing = isFemale ? 0.115 : 0.135;
 
-    // Helper for structured leg (Thigh + Knee + Calf + Shoe)
     const createLeg = (isRight: boolean) => {
       const legGroup = new THREE.Group();
       legGroup.position.set(isRight ? legSpacing : -legSpacing, 1.08, 0);
@@ -589,27 +633,33 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
       calfMesh.castShadow = !isSoftwareGl;
       legGroup.add(calfMesh);
 
-      // Sneaker / Shoe Group
+      // Oxford Dress Shoes (Polished black leather with defined heel & welt)
       const shoeGroup = new THREE.Group();
       shoeGroup.position.set(0, -0.97, 0.04);
 
       // Shoe Upper
-      const shoeUpperGeo = new THREE.BoxGeometry(0.12, 0.075, 0.22);
-      const shoeUpper = new THREE.Mesh(shoeUpperGeo, shoeMainMat);
+      const shoeUpperGeo = new THREE.BoxGeometry(0.115, 0.075, 0.22);
+      const shoeUpper = new THREE.Mesh(shoeUpperGeo, oxfordShoeMat);
       shoeUpper.castShadow = !isSoftwareGl;
       shoeGroup.add(shoeUpper);
 
-      // Rounded Toe Cap
-      const toeGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.06, 12);
-      const toeMesh = new THREE.Mesh(toeGeo, shoeMainMat);
+      // Tapered Dress Shoe Toe Cap
+      const toeGeo = new THREE.CylinderGeometry(0.055, 0.058, 0.065, 12);
+      const toeMesh = new THREE.Mesh(toeGeo, oxfordShoeMat);
       toeMesh.position.set(0, 0, 0.11);
       shoeGroup.add(toeMesh);
 
-      // White Rubber Midsole / Outsole
-      const soleGeo = new THREE.BoxGeometry(0.124, 0.024, 0.23);
-      const soleMesh = new THREE.Mesh(soleGeo, shoeSoleMat);
+      // Polished Leather Outsole & Heel
+      const soleGeo = new THREE.BoxGeometry(0.12, 0.02, 0.23);
+      const soleMesh = new THREE.Mesh(soleGeo, oxfordShoeMat);
       soleMesh.position.set(0, -0.042, 0.005);
       shoeGroup.add(soleMesh);
+
+      // Stacked Dress Heel
+      const heelGeo = new THREE.BoxGeometry(0.11, 0.02, 0.07);
+      const heelMesh = new THREE.Mesh(heelGeo, oxfordShoeMat);
+      heelMesh.position.set(0, -0.05, -0.07);
+      shoeGroup.add(heelMesh);
 
       legGroup.add(shoeGroup);
       return legGroup;
@@ -619,11 +669,10 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     const rightLeg = createLeg(true);
     charGroup.add(leftLeg, rightLeg);
 
-    // Shift whole group so soles rest flush on floor (y = 0.04)
     charGroup.position.y = 0.04;
 
     // =========================================================================
-    // RENDER LOOP & INTERACTION (Idle Breathing & Orbit Rotation)
+    // 6. RENDER LOOP & 360-DEGREE ORBIT INTERACTION
     // =========================================================================
     let frameId = 0;
     const clock = new THREE.Clock();
@@ -662,7 +711,6 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
       frameId = requestAnimationFrame(animate);
       const elapsed = clock.getElapsedTime();
 
-      // Smooth rotational damping
       if (characterGroupRef.current) {
         if (isAutoSpinningRef.current && !isDraggingRef.current) {
           targetRotationYRef.current += 0.003;
@@ -670,14 +718,14 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
         characterGroupRef.current.rotation.y +=
           (targetRotationYRef.current - characterGroupRef.current.rotation.y) * 0.08;
 
-        // Subtle idle breathing animation
-        const breath = Math.sin(elapsed * 1.6) * 0.015;
+        // Subtle idle breathing
+        const breath = Math.sin(elapsed * 1.8) * 0.012;
         torsoGroup.position.y = 1.26 + breath * 0.5;
-        torsoGroup.scale.set(1 + breath * 0.4, 1 + breath * 0.3, 1 + breath * 0.4);
+        torsoGroup.scale.set(1 + breath * 0.3, 1 + breath * 0.2, 1 + breath * 0.3);
 
         // Subtle arm idle sway
-        armLGroup.rotation.z = 0.16 + Math.sin(elapsed * 1.6) * 0.015;
-        armRGroup.rotation.z = -0.16 - Math.sin(elapsed * 1.6) * 0.015;
+        armLGroup.rotation.z = 0.12 + Math.sin(elapsed * 1.8) * 0.012;
+        armRGroup.rotation.z = -0.12 - Math.sin(elapsed * 1.8) * 0.012;
       }
 
       renderer.render(scene, camera);
@@ -685,7 +733,6 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
 
     animate();
 
-    // Resize observer
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth || 320;
@@ -723,7 +770,7 @@ export const ThreeCharacterAvatar: React.FC<ThreeCharacterAvatarProps> = ({
     outfitType,
     hairstyle,
     heightPreset,
-    safeAvatar.pantsColor,
+    safeAvatar.accessory,
     interactive,
   ]);
 
