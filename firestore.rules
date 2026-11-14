@@ -183,7 +183,7 @@ service cloud.firestore {
         && isValidUserAccount(incoming(), uid)
         && incoming().role == 'citizen'
         && incoming().accountStatus == 'active'
-        && incoming().emailVerified == false
+        && incoming().emailVerified == (request.auth.token.email_verified == true)
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
         && existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower));

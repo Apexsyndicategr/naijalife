@@ -7876,6 +7876,15 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     </div>
                   )}
 
+                  {(() => {
+                    const hasPasswordProvider = auth.currentUser?.providerData?.some((p) => p.providerId === 'password') ?? false;
+                    return !hasPasswordProvider && auth.currentUser ? (
+                      <p className="text-[10px] text-emerald-300/90 bg-emerald-950/40 border border-emerald-500/30 rounded-xl px-2.5 py-1.5">
+                        Signed in via Google ({auth.currentUser.email}). Username updates work directly here; email &amp; password security are managed by your Google Account.
+                      </p>
+                    ) : null;
+                  })()}
+
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
                       type="button"
@@ -7897,6 +7906,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        const hasPwd = auth.currentUser?.providerData?.some((p) => p.providerId === 'password') ?? false;
+                        if (!hasPwd) {
+                          setAccountSecurityFeedback({
+                            type: 'err',
+                            text: 'This account uses Google Sign-In. Manage your password directly in your Google Account security settings.',
+                          });
+                          return;
+                        }
                         setAccountActionTab(accountActionTab === 'password' ? 'none' : 'password');
                         setCurPwdInput('');
                         setNewPwdInput('');
@@ -7915,6 +7932,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     <button
                       type="button"
                       onClick={() => {
+                        const hasPwd = auth.currentUser?.providerData?.some((p) => p.providerId === 'password') ?? false;
+                        if (!hasPwd) {
+                          setAccountSecurityFeedback({
+                            type: 'err',
+                            text: 'This account uses Google Sign-In. Your email identity is synced with your Google Account.',
+                          });
+                          return;
+                        }
                         setAccountActionTab(accountActionTab === 'email' ? 'none' : 'email');
                         setNewEmailInput('');
                         setEmailChangePwdInput('');

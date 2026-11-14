@@ -26,8 +26,9 @@ import {
   Check,
   Loader2,
   ShieldCheck,
+  ExternalLink,
 } from 'lucide-react';
-import { auth } from '../firebase';
+import { auth, firebaseConfig } from '../firebase';
 import { UserProfile, CharacterAvatar, StateData, SocialClass } from '../types/game';
 export type { UserProfile };
 import { CharacterRenderer } from './CharacterRenderer';
@@ -48,12 +49,14 @@ import {
   checkEmailVerificationStatus,
   checkUsernameAvailable,
   CloudGameSaveDoc,
+  completeGoogleCitizenRegistration,
   loadAuthenticatedCitizenSession,
   loginCitizenAccount,
   logoutFirebaseUser,
   registerCitizenAccount,
   resendCurrentUserVerification,
   sendPasswordReset,
+  signInWithGooglePopup,
   syncProfileToCloud,
 } from '../services/firebaseAccountService';
 
@@ -61,6 +64,7 @@ interface AuthPortalProps {
   onAuthSuccess: (user: UserProfile, spawnState: StateData, cloudSave?: CloudGameSaveDoc | null) => void;
   triggerSound?: (type: 'coin' | 'alert' | 'stamp' | 'success') => void;
   initialVerificationEmail?: string | null;
+  initialGoogleCompletionEmail?: string | null;
   initialSuspendedReason?: string | null;
 }
 
@@ -254,6 +258,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   onAuthSuccess,
   triggerSound,
   initialVerificationEmail,
+  initialGoogleCompletionEmail,
   initialSuspendedReason,
 }) => {
   useEffect(() => {
@@ -263,6 +268,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   type PortalStep =
     | 'AUTH_GATE'
     | 'VERIFY_EMAIL'
+    | 'COMPLETE_GOOGLE_PROFILE'
     | 'FORGOT_PASSWORD'
     | 'SUSPENDED'
     | 'CUSTOMIZE'
@@ -272,12 +278,15 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [currentStep, setCurrentStep] = useState<PortalStep>(
     initialSuspendedReason
       ? 'SUSPENDED'
+      : initialGoogleCompletionEmail
+      ? 'COMPLETE_GOOGLE_PROFILE'
       : initialVerificationEmail
       ? 'VERIFY_EMAIL'
       : 'AUTH_GATE'
   );
   const [authMode, setAuthMode] = useState<'LOGIN' | 'SIGNUP'>('LOGIN');
   const [isNewSignupFlow, setIsNewSignupFlow] = useState(false);
+  const [pendingGoogleEmail, setPendingGoogleEmail] = useState(initialGoogleCompletionEmail || '');
 
   // Registration form fields (all 6 required fields)
   const [signupEmail, setSignupEmail] = useState('');
@@ -333,9 +342,19 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     return () => clearTimeout(t);
   }, [resendCooldown]);
 
-  // Debounced live username uniqueness check during signup
+  // Sync external initial step transitions (e.g. page reload while mid-Google profile completion)
   useEffect(() => {
-    if (authMode !== 'SIGNUP' || currentStep !== 'AUTH_GATE') return;
+    if (initialGoogleCompletionEmail && auth.currentUser) {
+      setPendingGoogleEmail(initialGoogleCompletionEmail);
+      setCurrentStep('COMPLETE_GOOGLE_PROFILE');
+    }
+  }, [initialGoogleCompletionEmail]);
+
+  // Debounced live username uniqueness check during signup or Google profile completion
+  useEffect(() => {
+    const isCheckingSignup = authMode === 'SIGNUP' && currentStep === 'AUTH_GATE';
+    const isCheckingGoogleProfile = currentStep === 'COMPLETE_GOOGLE_PROFILE';
+    if (!isCheckingSignup && !isCheckingGoogleProfile) return;
     const raw = signupUsername.trim();
     if (!raw) {
       setUsernameStatus({ checking: false });
@@ -492,6 +511,14 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         return;
       }
 
+      if (result.status === 'NEEDS_PROFILE_COMPLETION') {
+        setPendingGoogleEmail(result.email || emailCheck.normalized);
+        setIsNewSignupFlow(true);
+        setCurrentStep('COMPLETE_GOOGLE_PROFILE');
+        triggerSound?.('coin');
+        return;
+      }
+
       // Authenticated and verified -> load existing cross-device account directly into game!
       saveSession(result.profile);
       triggerSound?.('stamp');
@@ -499,6 +526,108 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       onAuthSuccess(result.profile, getStateById(targetLocId), result.cloudSave);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Login failed.');
+      triggerSound?.('alert');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // =========================================================================
+  // GOOGLE SIGN-IN HANDLER (Popup Auth + Cross-Device Sync + First-Time Profile)
+  // =========================================================================
+  const handleGoogleSignIn = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsSubmitting(true);
+    try {
+      const result = await signInWithGooglePopup(rememberMe);
+      if (result.status === 'SUSPENDED') {
+        setSuspendedReason(result.reason);
+        setCurrentStep('SUSPENDED');
+        triggerSound?.('alert');
+        return;
+      }
+      if (result.status === 'NEEDS_PROFILE_COMPLETION') {
+        setPendingGoogleEmail(result.email || result.user.email || '');
+        setIsNewSignupFlow(true);
+        setCurrentStep('COMPLETE_GOOGLE_PROFILE');
+        triggerSound?.('coin');
+        return;
+      }
+      if (result.status === 'NEEDS_VERIFICATION') {
+        setPendingVerifyEmail(result.email);
+        setCurrentStep('VERIFY_EMAIL');
+        triggerSound?.('alert');
+        return;
+      }
+
+      saveSession(result.profile);
+      triggerSound?.('stamp');
+      const targetLocId = result.profile.lastLocationStateId || result.profile.spawnStateId || 'lagos';
+      onAuthSuccess(result.profile, getStateById(targetLocId), result.cloudSave);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Google Sign-In failed.');
+      triggerSound?.('alert');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCompleteGoogleProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const fbUser = auth.currentUser;
+    if (!fbUser) {
+      setErrorMessage('Google session expired. Please click Continue with Google again.');
+      setCurrentStep('AUTH_GATE');
+      return;
+    }
+
+    const unameCheck = validateUsernameInput(signupUsername);
+    if (!unameCheck.valid) {
+      setErrorMessage(unameCheck.error || 'Invalid username.');
+      triggerSound?.('alert');
+      return;
+    }
+
+    const dobCheck = validateBirthdayInput(dateOfBirth);
+    if (!dobCheck.valid) {
+      setErrorMessage(dobCheck.error || 'Invalid date of birth.');
+      triggerSound?.('alert');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const starterProfile = buildStarterProfile({
+        email: (fbUser.email || pendingGoogleEmail).toLowerCase(),
+        username: unameCheck.trimmed,
+        dateOfBirth,
+        avatar,
+        spawnStateId: signupStateId,
+      });
+
+      const session = await completeGoogleCitizenRegistration({
+        user: fbUser,
+        username: unameCheck.trimmed,
+        dateOfBirth,
+        starterProfile,
+      });
+
+      if (session.status !== 'AUTHENTICATED') {
+        setErrorMessage('Could not finalize your citizen profile. Please try again.');
+        return;
+      }
+
+      triggerSound?.('stamp');
+      setPendingProfile(session.profile);
+      setPendingCloudSave(session.cloudSave);
+      setAvatar(session.profile.avatar || avatar);
+      setCurrentStep('CUSTOMIZE');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to complete registration.');
       triggerSound?.('alert');
     } finally {
       setIsSubmitting(false);
@@ -743,6 +872,118 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     );
   }
 
+  if (currentStep === 'COMPLETE_GOOGLE_PROFILE') {
+    const activeGoogleEmail = (auth.currentUser?.email || pendingGoogleEmail || '').trim().toLowerCase();
+    const isPendingOwnerMatch =
+      activeGoogleEmail === OWNER_EMAIL && signupUsername.trim().toLowerCase() === OWNER_USERNAME;
+
+    return (
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#060809] text-white p-4 overflow-y-auto">
+        <div className="w-full max-w-md bg-zinc-950 border-2 border-emerald-500/50 rounded-3xl p-7 shadow-2xl space-y-4">
+          <div className="text-center space-y-2">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center mx-auto">
+              <ShieldCheck className="w-7 h-7 text-emerald-400" />
+            </div>
+            <h2 className="text-2xl font-black text-white">COMPLETE CITIZEN PROFILE</h2>
+            <p className="text-xs text-zinc-400">
+              Google verified <strong className="text-emerald-300 font-mono">{activeGoogleEmail}</strong>. Choose your unique username and private birthday to activate your cross-device account.
+            </p>
+          </div>
+
+          {errorMessage && (
+            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-200 text-xs flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleCompleteGoogleProfile} className="space-y-3.5">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-zinc-300">Username</label>
+                <span className="text-[10px] text-zinc-400 font-mono">A-Z, 0-9, _ . -</span>
+              </div>
+              <div className="relative">
+                <User className="w-4 h-4 text-orange-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={signupUsername}
+                  onChange={(e) => setSignupUsername(e.target.value)}
+                  placeholder="e.g. chiboy_52 or naija.gamer"
+                  required
+                  minLength={3}
+                  maxLength={24}
+                  autoComplete="username"
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-8 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-orange-400 font-mono"
+                />
+                {usernameStatus.checking && (
+                  <Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+                )}
+              </div>
+              {usernameStatus.message && (
+                <p
+                  className={`text-[10px] mt-1 font-medium ${
+                    usernameStatus.checking
+                      ? 'text-zinc-400'
+                      : usernameStatus.available
+                      ? 'text-emerald-400'
+                      : 'text-rose-400'
+                  }`}
+                >
+                  {usernameStatus.message}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-zinc-300">Date of Birth</label>
+                <span className="text-[10px] text-zinc-500">Private · Never shown publicly</span>
+              </div>
+              <div className="relative">
+                <Calendar className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="date"
+                  value={dateOfBirth}
+                  max={todayMaxDate}
+                  min="1900-01-01"
+                  onChange={(e) => setDateOfBirth(e.target.value)}
+                  required
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                />
+              </div>
+            </div>
+
+            {isPendingOwnerMatch && (
+              <p className="text-[11px] text-amber-300 text-center font-medium bg-amber-950/40 border border-amber-500/30 rounded-xl p-2">
+                Verified Apex Syndicate Owner identity detected — master Owner privileges will be provisioned server-side upon activation.
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={isSubmitting || (usernameStatus.available === false && !usernameStatus.checking)}
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              <span>{isSubmitting ? 'Activating Account...' : 'Activate Citizen Account & Continue'}</span>
+              {!isSubmitting && <ArrowRight className="w-4 h-4" />}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLogoutAndReturn}
+              className="w-full py-2.5 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer flex items-center justify-center gap-1.5"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Use a Different Account</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   if (currentStep === 'FORGOT_PASSWORD') {
     return (
       <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-black text-white p-4">
@@ -973,6 +1214,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     errorMessage?.includes('Email/Password sign-in is not yet enabled') ||
     errorMessage?.includes('PASSWORD_LOGIN_DISABLED');
 
+  const firebaseProvidersUrl = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`;
+
   return (
     <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#060809] text-white select-none overflow-y-auto overflow-x-hidden py-6 px-4">
       <div className="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/15 rounded-full blur-[110px] pointer-events-none" />
@@ -1042,15 +1285,37 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           )}
 
           {errorMessage && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-200 text-xs space-y-1.5">
+            <div className="mb-4 p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-200 text-xs space-y-2">
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
                 <span>{errorMessage}</span>
               </div>
               {isAuthDisabledError && (
-                <p className="text-[11px] text-amber-300 pl-6">
-                  Project Owner Action: Open Firebase Console → Authentication → Sign-in method → Enable Email/Password.
-                </p>
+                <div className="pl-6 space-y-2">
+                  <p className="text-[11px] text-amber-300">
+                    Firebase provisions Google Sign-In immediately by default. To also allow Email/Password login, enable Email/Password in Firebase Console, or continue instantly with Google right now:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={handleGoogleSignIn}
+                      className="px-3 py-1.5 rounded-lg bg-white text-zinc-950 font-black text-[11px] hover:bg-zinc-200 cursor-pointer flex items-center gap-1.5"
+                    >
+                      <span>Continue with Google Now</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                    <a
+                      href={firebaseProvidersUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-amber-400/50 text-amber-300 font-bold text-[11px] hover:bg-zinc-800 inline-flex items-center gap-1"
+                    >
+                      <span>Enable in Firebase Console</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -1309,6 +1574,39 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </button>
             </form>
           )}
+
+          <div className="my-4 flex items-center gap-3">
+            <div className="h-px flex-1 bg-zinc-800" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Or instant Google Auth</span>
+            <div className="h-px flex-1 bg-zinc-800" />
+          </div>
+
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={handleGoogleSignIn}
+            className="w-full py-3 px-4 rounded-xl bg-white hover:bg-zinc-100 disabled:opacity-60 text-zinc-950 font-black text-xs tracking-wide shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2.5"
+          >
+            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="#4285F4"
+                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.37 24 12 24Z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+              />
+            </svg>
+            <span>{authMode === 'SIGNUP' ? 'Register / Continue with Google' : 'Sign In with Google'}</span>
+          </button>
         </div>
       </div>
     </div>

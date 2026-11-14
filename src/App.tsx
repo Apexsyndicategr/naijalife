@@ -1240,6 +1240,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [isRestoringAuth, setIsRestoringAuth] = useState<boolean>(true);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
+  const [pendingGoogleCompletionEmail, setPendingGoogleCompletionEmail] = useState<string | null>(null);
   const [suspendedNoticeReason, setSuspendedNoticeReason] = useState<string | null>(null);
 
   // Device hardware profile & optimization state (unskippable authentic scan before login)
@@ -3248,6 +3249,12 @@ export default function App() {
         const result = await loadAuthenticatedCitizenSession(fbUser);
         if (result.status === 'NEEDS_VERIFICATION') {
           setPendingVerificationEmail(result.email);
+          setPendingGoogleCompletionEmail(null);
+          setSuspendedNoticeReason(null);
+          setCurrentUser(null);
+        } else if (result.status === 'NEEDS_PROFILE_COMPLETION') {
+          setPendingGoogleCompletionEmail(result.email || fbUser.email || 'Google Account');
+          setPendingVerificationEmail(null);
           setSuspendedNoticeReason(null);
           setCurrentUser(null);
         } else if (result.status === 'SUSPENDED') {
@@ -3255,8 +3262,11 @@ export default function App() {
           clearSession();
           setSuspendedNoticeReason(result.reason);
           setPendingVerificationEmail(null);
+          setPendingGoogleCompletionEmail(null);
           setCurrentUser(null);
         } else if (result.status === 'AUTHENTICATED') {
+          setPendingVerificationEmail(null);
+          setPendingGoogleCompletionEmail(null);
           const spawnState = getStateById(result.profile.spawnStateId);
           applyAuthenticatedSession(result.profile, spawnState, result.cloudSave);
         }
@@ -3340,6 +3350,7 @@ export default function App() {
     cloudSaveVersionRef.current = 0;
     setSaveConflictData(null);
     setPendingVerificationEmail(null);
+    setPendingGoogleCompletionEmail(null);
     setSuspendedNoticeReason(null);
     setCurrentUser(null);
     showToast('Logged out cleanly. Your progress has been saved to the cloud.');
@@ -3388,8 +3399,11 @@ export default function App() {
       <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] bg-black overflow-hidden flex items-center justify-center select-none">
         <AuthPortal
           initialVerificationEmail={pendingVerificationEmail}
+          initialGoogleCompletionEmail={pendingGoogleCompletionEmail}
           initialSuspendedReason={suspendedNoticeReason}
           onAuthSuccess={(profile, spawnState, cloudSave) => {
+            setPendingGoogleCompletionEmail(null);
+            setPendingVerificationEmail(null);
             applyAuthenticatedSession(profile, spawnState, cloudSave);
           }}
           triggerSound={(t: any) => triggerSound(t === 'success' ? 'coin' : t)}

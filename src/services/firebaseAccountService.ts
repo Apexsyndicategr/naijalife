@@ -9,12 +9,14 @@ import {
   createUserWithEmailAndPassword,
   deleteUser,
   EmailAuthProvider,
+  GoogleAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
   sendEmailVerification,
   sendPasswordResetEmail,
   setPersistence,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
   updatePassword,
   User,
@@ -568,6 +570,7 @@ export async function registerCitizenAccount(params: {
 
 export type LoginResult =
   | { status: 'NEEDS_VERIFICATION'; user: User; email: string }
+  | { status: 'NEEDS_PROFILE_COMPLETION'; user: User; email: string }
   | { status: 'SUSPENDED'; user: User; reason: string }
   | {
       status: 'AUTHENTICATED';
@@ -578,6 +581,118 @@ export type LoginResult =
       cloudSave: CloudGameSaveDoc | null;
       isOwner: boolean;
     };
+
+export async function signInWithGooglePopup(rememberMe = true): Promise<LoginResult> {
+  try {
+    await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const cred = await signInWithPopup(auth, provider);
+    await cred.user.reload();
+    return await loadAuthenticatedCitizenSession(cred.user);
+  } catch (err) {
+    throw new Error(mapFirebaseAuthError(err));
+  }
+}
+
+export async function completeGoogleCitizenRegistration(params: {
+  user: User;
+  username: string;
+  dateOfBirth: string;
+  starterProfile: UserProfile;
+}): Promise<LoginResult> {
+  const { user } = params;
+  const emailCheck = validateEmailInput(user.email || '');
+  if (!emailCheck.valid) {
+    throw new Error(emailCheck.error || 'Your Google account did not provide a valid email address.');
+  }
+
+  const usernameCheck = validateUsernameInput(params.username);
+  if (!usernameCheck.valid) throw new Error(usernameCheck.error);
+
+  const dobCheck = validateBirthdayInput(params.dateOfBirth);
+  if (!dobCheck.valid) throw new Error(dobCheck.error);
+
+  const availability = await checkUsernameAvailable(usernameCheck.trimmed);
+  if (!availability.available) {
+    throw new Error(availability.error || 'Username is already taken.');
+  }
+
+  const uid = user.uid;
+  const usernameRef = doc(db, 'usernames', usernameCheck.normalized);
+  const userRef = doc(db, 'users', uid);
+  const privateRef = doc(db, 'users_private', uid);
+  const profileRef = doc(db, 'profiles', uid);
+  const verifiedNow = user.emailVerified === true;
+
+  const accountDoc: CloudUserAccount = {
+    uid,
+    username: usernameCheck.trimmed,
+    usernameLower: usernameCheck.normalized,
+    role: 'citizen', // Owner role is ONLY granted server-side via verifyAndProvisionOwnerServerSide
+    accountStatus: 'active',
+    emailVerified: verifiedNow,
+  };
+
+  const privateDoc: CloudPrivateInfo = {
+    uid,
+    email: emailCheck.normalized,
+    emailLower: emailCheck.normalized,
+    dateOfBirth: params.dateOfBirth,
+    lastDevice: getDeviceSummary(),
+  };
+
+  const profilePayload = buildFirestoreProfilePayload(
+    {
+      ...params.starterProfile,
+      username: usernameCheck.trimmed,
+      isOwner: false,
+      isOwnerAccount: false,
+      isVerified: verifiedNow,
+    },
+    uid,
+    true
+  );
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const existingUname = await tx.get(usernameRef);
+      if (existingUname.exists()) {
+        throw new Error(`USERNAME_TAKEN:${usernameCheck.trimmed}`);
+      }
+
+      tx.set(usernameRef, {
+        uid,
+        username: usernameCheck.trimmed,
+        usernameLower: usernameCheck.normalized,
+        createdAt: serverTimestamp(),
+      });
+
+      tx.set(userRef, {
+        ...accountDoc,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
+      });
+
+      tx.set(privateRef, {
+        ...privateDoc,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
+      });
+
+      tx.set(profileRef, profilePayload);
+    });
+
+    return await loadAuthenticatedCitizenSession(user);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('USERNAME_TAKEN:')) {
+      throw new Error(`Username "${usernameCheck.trimmed}" is already taken! Please choose another.`);
+    }
+    throw new Error(mapFirebaseAuthError(err));
+  }
+}
 
 export async function loginCitizenAccount(params: {
   email: string;
@@ -631,7 +746,11 @@ export async function loadAuthenticatedCitizenSession(user: User): Promise<Login
   }
 
   if (!accountSnap.exists()) {
-    throw new Error('Citizen account record was not found in the database.');
+    return {
+      status: 'NEEDS_PROFILE_COMPLETION',
+      user,
+      email: user.email || '',
+    };
   }
 
   let account = accountSnap.data() as CloudUserAccount;

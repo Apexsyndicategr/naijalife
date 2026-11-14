@@ -172,10 +172,18 @@ export function mapFirebaseAuthError(error: unknown): string {
     case 'auth/invalid-action-code':
       return 'That verification or password reset link is invalid or has already been used.';
     case 'auth/operation-not-allowed':
-      return 'Email/Password sign-in is not yet enabled in the Firebase Console for this project. Enable Authentication -> Sign-in method -> Email/Password in Firebase Console.';
+      return 'Email/Password sign-in is not yet enabled in the Firebase Console for this project. Enable Authentication -> Sign-in method -> Email/Password in Firebase Console, or use Continue with Google below.';
+    case 'auth/popup-closed-by-user':
+      return 'Google sign-in popup was closed before completing authentication.';
+    case 'auth/cancelled-popup-request':
+      return 'Another sign-in popup is already open. Please complete or close it and try again.';
+    case 'auth/popup-blocked':
+      return 'Browser blocked the Google sign-in popup. Please allow popups for this site and try again.';
+    case 'auth/unauthorized-domain':
+      return 'This preview domain is not yet authorized in Firebase Authentication -> Settings -> Authorized domains.';
     default:
       if (msg.includes('PASSWORD_LOGIN_DISABLED') || msg.includes('OPERATION_NOT_ALLOWED')) {
-        return 'Email/Password sign-in is not yet enabled in Firebase Console -> Authentication -> Sign-in method.';
+        return 'Email/Password sign-in is not yet enabled in Firebase Console -> Authentication -> Sign-in method. You can use Continue with Google immediately below.';
       }
       return msg || 'An unexpected authentication error occurred.';
   }
