@@ -608,11 +608,17 @@ export async function checkEmailPasswordProviderEnabled(): Promise<boolean> {
   }
 }
 
-export async function signInWithGooglePopup(rememberMe = true): Promise<LoginResult> {
+export async function applyAuthPersistence(rememberMe: boolean): Promise<void> {
   try {
     await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
+  } catch {}
+}
+
+export async function signInWithGooglePopup(): Promise<LoginResult> {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try {
+    // Call signInWithPopup immediately on click gesture without any preceding await
     const cred = await signInWithPopup(auth, provider);
     await cred.user.reload();
     return await loadAuthenticatedCitizenSession(cred.user);

@@ -46,6 +46,7 @@ import {
   validateUsernameInput,
 } from '../utils/authValidation';
 import {
+  applyAuthPersistence,
   checkEmailPasswordProviderEnabled,
   checkEmailVerificationStatus,
   checkUsernameAvailable,
@@ -347,6 +348,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   };
 
   useEffect(() => {
+    applyAuthPersistence(rememberMe);
+  }, [rememberMe]);
+
+  useEffect(() => {
     let active = true;
     checkEmailPasswordProviderEnabled().then((enabled) => {
       if (active) setIsPasswordAuthEnabled(enabled);
@@ -556,15 +561,16 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   // GOOGLE SIGN-IN HANDLER (Popup Auth + Cross-Device Sync + First-Time Profile)
   // =========================================================================
   const handleGoogleSignIn = async () => {
+    // Call signInWithGooglePopup() before any state/await overhead that could risk losing transient activation
+    const popupPromise = signInWithGooglePopup();
     setErrorMessage(null);
     setSuccessMessage(null);
-    // Capture prefilled signup username/DOB synchronously before popup await
     const prefilledUname = authMode === 'SIGNUP' ? validateUsernameInput(signupUsername) : null;
     const prefilledDob = authMode === 'SIGNUP' ? validateBirthdayInput(dateOfBirth) : null;
 
     setIsSubmitting(true);
     try {
-      const result = await signInWithGooglePopup(rememberMe);
+      const result = await popupPromise;
       if (result.status === 'SUSPENDED') {
         setSuspendedReason(result.reason);
         setCurrentStep('SUSPENDED');
@@ -1418,6 +1424,22 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
                 <span>{errorMessage}</span>
               </div>
+              {errorMessage.toLowerCase().includes('popup') && (
+                <div className="pl-6 space-y-2">
+                  <p className="text-[11px] text-amber-200">
+                    Tip: Click the blocked pop-up icon in your browser&apos;s address bar to allow pop-ups, or open Naija Life in a full browser tab to sign in with Google cleanly:
+                  </p>
+                  <a
+                    href={typeof window !== 'undefined' ? window.location.href : '/'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-white text-zinc-950 font-black text-[11px] hover:bg-zinc-200 inline-flex items-center gap-1.5"
+                  >
+                    <span>Open App in Full Browser Tab</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
               {isAuthDisabledError && (
                 <div className="pl-6 space-y-2">
                   <div className="flex flex-wrap gap-2">
