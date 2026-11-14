@@ -36,7 +36,7 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from '../firebase';
+import { auth, db, firebaseConfig, handleFirestoreError, OperationType } from '../firebase';
 import { InvestmentAsset, PropertyAsset, UserProfile, VehicleAsset } from '../types/game';
 import { SavedGameState } from '../types/saveGame';
 import {
@@ -581,6 +581,32 @@ export type LoginResult =
       cloudSave: CloudGameSaveDoc | null;
       isOwner: boolean;
     };
+
+export async function checkEmailPasswordProviderEnabled(): Promise<boolean> {
+  if (!firebaseConfig.apiKey) return true;
+  try {
+    const resp = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'provider-check@invalid.local',
+          password: 'CheckOnly123!',
+          returnSecureToken: false,
+        }),
+      }
+    );
+    const data = (await resp.json().catch(() => ({}))) as { error?: { message?: string } };
+    const msg = String(data?.error?.message || '');
+    if (msg.includes('PASSWORD_LOGIN_DISABLED') || msg.includes('OPERATION_NOT_ALLOWED')) {
+      return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 export async function signInWithGooglePopup(rememberMe = true): Promise<LoginResult> {
   try {

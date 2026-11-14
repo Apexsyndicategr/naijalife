@@ -46,6 +46,7 @@ import {
   validateUsernameInput,
 } from '../utils/authValidation';
 import {
+  checkEmailPasswordProviderEnabled,
   checkEmailVerificationStatus,
   checkUsernameAvailable,
   CloudGameSaveDoc,
@@ -335,6 +336,25 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isPasswordAuthEnabled, setIsPasswordAuthEnabled] = useState<boolean | null>(null);
+  const [checkingProviderStatus, setCheckingProviderStatus] = useState(false);
+
+  const refreshProviderStatus = async () => {
+    setCheckingProviderStatus(true);
+    const enabled = await checkEmailPasswordProviderEnabled();
+    setIsPasswordAuthEnabled(enabled);
+    setCheckingProviderStatus(false);
+  };
+
+  useEffect(() => {
+    let active = true;
+    checkEmailPasswordProviderEnabled().then((enabled) => {
+      if (active) setIsPasswordAuthEnabled(enabled);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -344,11 +364,11 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
   // Sync external initial step transitions (e.g. page reload while mid-Google profile completion)
   useEffect(() => {
-    if (initialGoogleCompletionEmail && auth.currentUser) {
+    if (initialGoogleCompletionEmail && auth.currentUser && currentStep === 'AUTH_GATE' && !isSubmitting) {
       setPendingGoogleEmail(initialGoogleCompletionEmail);
       setCurrentStep('COMPLETE_GOOGLE_PROFILE');
     }
-  }, [initialGoogleCompletionEmail]);
+  }, [initialGoogleCompletionEmail, currentStep, isSubmitting]);
 
   // Debounced live username uniqueness check during signup or Google profile completion
   useEffect(() => {
@@ -538,6 +558,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const handleGoogleSignIn = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
+    // Capture prefilled signup username/DOB synchronously before popup await
+    const prefilledUname = authMode === 'SIGNUP' ? validateUsernameInput(signupUsername) : null;
+    const prefilledDob = authMode === 'SIGNUP' ? validateBirthdayInput(dateOfBirth) : null;
+
     setIsSubmitting(true);
     try {
       const result = await signInWithGooglePopup(rememberMe);
@@ -548,8 +572,39 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         return;
       }
       if (result.status === 'NEEDS_PROFILE_COMPLETION') {
-        setPendingGoogleEmail(result.email || result.user.email || '');
+        const googleEmail = result.email || result.user.email || '';
+        setPendingGoogleEmail(googleEmail);
         setIsNewSignupFlow(true);
+
+        // If citizen already filled a valid username & birthday on the signup form, complete registration directly!
+        if (prefilledUname?.valid && prefilledDob?.valid) {
+          try {
+            const starterProfile = buildStarterProfile({
+              email: googleEmail.toLowerCase(),
+              username: prefilledUname.trimmed,
+              dateOfBirth,
+              avatar,
+              spawnStateId: signupStateId,
+            });
+            const completed = await completeGoogleCitizenRegistration({
+              user: result.user,
+              username: prefilledUname.trimmed,
+              dateOfBirth,
+              starterProfile,
+            });
+            if (completed.status === 'AUTHENTICATED') {
+              triggerSound?.('stamp');
+              setPendingProfile(completed.profile);
+              setPendingCloudSave(completed.cloudSave);
+              setAvatar(completed.profile.avatar || avatar);
+              setCurrentStep('CUSTOMIZE');
+              return;
+            }
+          } catch (regErr) {
+            setErrorMessage(regErr instanceof Error ? regErr.message : 'Please choose your username and birthday.');
+          }
+        }
+
         setCurrentStep('COMPLETE_GOOGLE_PROFILE');
         triggerSound?.('coin');
         return;
@@ -1217,33 +1272,33 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const firebaseProvidersUrl = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`;
 
   return (
-    <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#060809] text-white select-none overflow-y-auto overflow-x-hidden py-6 px-4">
+    <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#060809] text-white select-none overflow-y-auto overflow-x-hidden py-4 px-4">
       <div className="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/15 rounded-full blur-[110px] pointer-events-none" />
       <div className="absolute bottom-0 -right-32 w-96 h-96 bg-orange-500/15 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#0596690a_1px,transparent_1px),linear-gradient(to_bottom,#0596690a_1px,transparent_1px)] bg-[size:36px_36px] pointer-events-none" />
 
-      <div className="relative z-10 w-full max-w-md mx-auto my-auto">
-        <div className="text-center mb-5">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900/90 border border-orange-500/40 text-orange-300 text-[11px] font-black tracking-widest uppercase mb-3 shadow-lg">
+      <div className="relative z-10 w-full max-w-lg mx-auto my-auto">
+        <div className="text-center mb-3">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900/90 border border-orange-500/40 text-orange-300 text-[10px] font-black tracking-widest uppercase mb-2 shadow-lg">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
             <span>CROSS-DEVICE CLOUD ACCOUNTS ACTIVE</span>
           </div>
 
-          <div className="flex items-center justify-center gap-3.5 mb-1.5">
-            <div className="relative w-12 h-12 rounded-2xl overflow-hidden shadow-[0_0_25px_rgba(16,185,129,0.45)] border-2 border-emerald-400/60 shrink-0">
+          <div className="flex items-center justify-center gap-3 mb-1">
+            <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-[0_0_20px_rgba(16,185,129,0.45)] border-2 border-emerald-400/60 shrink-0">
               <img src="/nl-logo.png" alt="Naija Life NL Emblem" className="w-full h-full object-cover" />
             </div>
-            <h1 className="text-4xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-amber-200 to-orange-400">
+            <h1 className="text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-amber-200 to-orange-400">
               NAIJA LIFE
             </h1>
           </div>
-          <p className="text-xs text-zinc-400 font-medium">
+          <p className="text-[11px] text-zinc-400 font-medium">
             36 Real States · Live Economy · Persistent Cross-Device Save
           </p>
         </div>
 
         {/* Auth Mode Switcher */}
-        <div className="grid grid-cols-2 p-1 bg-zinc-900/90 border border-zinc-800 rounded-2xl mb-4 shadow-xl">
+        <div className="grid grid-cols-2 p-1 bg-zinc-900/90 border border-zinc-800 rounded-2xl mb-3 shadow-xl">
           <button
             type="button"
             onClick={() => {
@@ -1251,7 +1306,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               setErrorMessage(null);
               setSuccessMessage(null);
             }}
-            className={`py-2.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
+            className={`py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
               authMode === 'LOGIN'
                 ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-zinc-950 shadow-lg'
                 : 'text-zinc-400 hover:text-white'
@@ -1266,7 +1321,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               setErrorMessage(null);
               setSuccessMessage(null);
             }}
-            className={`py-2.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
+            className={`py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
               authMode === 'SIGNUP'
                 ? 'bg-gradient-to-r from-orange-500 to-amber-400 text-zinc-950 shadow-lg'
                 : 'text-zinc-400 hover:text-white'
@@ -1276,25 +1331,95 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           </button>
         </div>
 
-        <div className="bg-zinc-950/95 border border-zinc-800 rounded-3xl p-6 shadow-2xl backdrop-blur-xl">
+        <div className="bg-zinc-950/95 border border-zinc-800 rounded-3xl p-5 shadow-2xl backdrop-blur-xl">
+          {/* Primary Instant Google Sign-In / Sign-Up CTA — Always visible without scrolling */}
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={handleGoogleSignIn}
+            className="w-full py-3 px-4 rounded-xl bg-white hover:bg-zinc-100 disabled:opacity-60 text-zinc-950 font-black text-xs tracking-wide shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2.5"
+          >
+            {isSubmitting ? (
+              <Loader2 className="w-4 h-4 animate-spin text-zinc-900" />
+            ) : (
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.37 24 12 24Z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+                />
+              </svg>
+            )}
+            <span>
+              {authMode === 'SIGNUP'
+                ? 'Sign Up Instantly with Google (Verified Cloud Account)'
+                : 'Sign In with Google'}
+            </span>
+          </button>
+
+          <div className="my-3.5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-zinc-800" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Or Email &amp; Password</span>
+            <div className="h-px flex-1 bg-zinc-800" />
+          </div>
+
+          {isPasswordAuthEnabled === false && !errorMessage && (
+            <div className="mb-3 p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-[11px] flex flex-col gap-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <span>
+                  <strong className="text-amber-300">Tip:</strong> Email/Password login is currently off in Firebase Console, so use <strong className="text-white">Sign Up / Sign In with Google</strong> above to enter immediately.
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={firebaseProvidersUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-bold text-amber-300 underline hover:text-amber-200 inline-flex items-center gap-1"
+                >
+                  <span>Enable Email/Password in Firebase Console</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+                <span className="text-zinc-600">·</span>
+                <button
+                  type="button"
+                  disabled={checkingProviderStatus}
+                  onClick={refreshProviderStatus}
+                  className="text-[10px] font-bold text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className={`w-2.5 h-2.5 ${checkingProviderStatus ? 'animate-spin' : ''}`} />
+                  <span>{checkingProviderStatus ? 'Checking...' : 'Re-check Status'}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {successMessage && (
-            <div className="mb-4 p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2">
+            <div className="mb-3 p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
               <span>{successMessage}</span>
             </div>
           )}
 
           {errorMessage && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-200 text-xs space-y-2">
+            <div className="mb-3 p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-200 text-xs space-y-2">
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
                 <span>{errorMessage}</span>
               </div>
               {isAuthDisabledError && (
                 <div className="pl-6 space-y-2">
-                  <p className="text-[11px] text-amber-300">
-                    Firebase provisions Google Sign-In immediately by default. To also allow Email/Password login, enable Email/Password in Firebase Console, or continue instantly with Google right now:
-                  </p>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -1321,12 +1446,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           )}
 
           {authMode === 'SIGNUP' ? (
-            <form onSubmit={handleSignupSubmit} className="space-y-3">
+            <form onSubmit={handleSignupSubmit} className="space-y-2.5">
               {/* 1. Email Address */}
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">Email Address</label>
+                <label className="text-[11px] font-bold text-zinc-300 block mb-1">Email Address</label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Mail className="w-3.5 h-3.5 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="email"
                     value={signupEmail}
@@ -1334,150 +1459,154 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                     placeholder="citizen@example.com"
                     required
                     autoComplete="email"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 font-mono"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 font-mono"
                   />
                 </div>
               </div>
 
-              {/* 2. Username */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-zinc-300">Username</label>
-                  <span className="text-[10px] text-zinc-400 font-mono">A-Z, 0-9, _ . -</span>
-                </div>
-                <div className="relative">
-                  <User className="w-4 h-4 text-orange-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={signupUsername}
-                    onChange={(e) => setSignupUsername(e.target.value)}
-                    placeholder="e.g. chiboy_52 or naija.gamer"
-                    required
-                    minLength={3}
-                    maxLength={24}
-                    autoComplete="username"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-8 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-orange-400 font-mono"
-                  />
-                  {usernameStatus.checking && (
-                    <Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+              {/* 2 & 3. Username + Date of Birth side by side on wider screens */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-zinc-300">Username</label>
+                    <span className="text-[9px] text-zinc-400 font-mono">A-Z 0-9 _ . -</span>
+                  </div>
+                  <div className="relative">
+                    <User className="w-3.5 h-3.5 text-orange-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={signupUsername}
+                      onChange={(e) => setSignupUsername(e.target.value)}
+                      placeholder="chiboy_52"
+                      required
+                      minLength={3}
+                      maxLength={24}
+                      autoComplete="username"
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-8 pr-7 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-orange-400 font-mono"
+                    />
+                    {usernameStatus.checking && (
+                      <Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                    )}
+                  </div>
+                  {usernameStatus.message && (
+                    <p
+                      className={`text-[10px] mt-1 font-medium ${
+                        usernameStatus.checking
+                          ? 'text-zinc-400'
+                          : usernameStatus.available
+                          ? 'text-emerald-400'
+                          : 'text-rose-400'
+                      }`}
+                    >
+                      {usernameStatus.message}
+                    </p>
                   )}
                 </div>
-                {usernameStatus.message && (
-                  <p
-                    className={`text-[10px] mt-1 font-medium ${
-                      usernameStatus.checking
-                        ? 'text-zinc-400'
-                        : usernameStatus.available
-                        ? 'text-emerald-400'
-                        : 'text-rose-400'
-                    }`}
-                  >
-                    {usernameStatus.message}
-                  </p>
-                )}
-              </div>
 
-              {/* 3. Date of Birth / Birthday */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-zinc-300">Date of Birth</label>
-                  <span className="text-[10px] text-zinc-500">Private · Never shown publicly</span>
-                </div>
-                <div className="relative">
-                  <Calendar className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="date"
-                    value={dateOfBirth}
-                    max={todayMaxDate}
-                    min="1900-01-01"
-                    onChange={(e) => setDateOfBirth(e.target.value)}
-                    required
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
-
-              {/* 4. Password */}
-              <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">Password</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-teal-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type={showSignupPassword ? 'text' : 'password'}
-                    value={signupPassword}
-                    onChange={(e) => setSignupPassword(e.target.value)}
-                    placeholder="Min 8 chars, Upper + Lower + Number/Symbol"
-                    required
-                    autoComplete="new-password"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-9 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowSignupPassword(!showSignupPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
-                    aria-label="Toggle password visibility"
-                  >
-                    {showSignupPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-                {signupPassword.length > 0 && (
-                  <div className="mt-1.5 space-y-1">
-                    <div className="grid grid-cols-4 gap-1">
-                      {[1, 2, 3, 4].map((lvl) => (
-                        <div
-                          key={lvl}
-                          className={`h-1 rounded-full ${
-                            pwdStrength.score >= lvl
-                              ? pwdStrength.score >= 4
-                                ? 'bg-emerald-400'
-                                : pwdStrength.score >= 3
-                                ? 'bg-amber-400'
-                                : 'bg-rose-400'
-                              : 'bg-zinc-800'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-zinc-400">
-                      {pwdStrength.valid ? 'Strong password ready.' : pwdStrength.error}
-                    </p>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-zinc-300">Date of Birth</label>
+                    <span className="text-[9px] text-zinc-500">Private</span>
                   </div>
-                )}
+                  <div className="relative">
+                    <Calendar className="w-3.5 h-3.5 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="date"
+                      value={dateOfBirth}
+                      max={todayMaxDate}
+                      min="1900-01-01"
+                      onChange={(e) => setDateOfBirth(e.target.value)}
+                      required
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-8 pr-2.5 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                </div>
               </div>
 
-              {/* 5. Confirm Password */}
-              <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">Confirm Password</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-teal-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Re-enter your password"
-                    required
-                    autoComplete="new-password"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-9 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
-                    aria-label="Toggle confirm password visibility"
-                  >
-                    {showConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                  </button>
+              {/* 4 & 5. Password + Confirm Password */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[11px] font-bold text-zinc-300 block mb-1">Password</label>
+                  <div className="relative">
+                    <Lock className="w-3.5 h-3.5 text-teal-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type={showSignupPassword ? 'text' : 'password'}
+                      value={signupPassword}
+                      onChange={(e) => setSignupPassword(e.target.value)}
+                      placeholder="Min 8 chars, strong"
+                      required
+                      autoComplete="new-password"
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-8 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSignupPassword(!showSignupPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                      aria-label="Toggle password visibility"
+                    >
+                      {showSignupPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
                 </div>
-                {confirmPassword.length > 0 && confirmPassword !== signupPassword && (
-                  <p className="text-[10px] text-rose-400 mt-1">Passwords do not match.</p>
-                )}
+
+                <div>
+                  <label className="text-[11px] font-bold text-zinc-300 block mb-1">Confirm Password</label>
+                  <div className="relative">
+                    <Lock className="w-3.5 h-3.5 text-teal-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type={showConfirmPassword ? 'text' : 'password'}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter password"
+                      required
+                      autoComplete="new-password"
+                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-8 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                      aria-label="Toggle confirm password visibility"
+                    >
+                      {showConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
               </div>
+
+              {signupPassword.length > 0 && (
+                <div className="space-y-1">
+                  <div className="grid grid-cols-4 gap-1">
+                    {[1, 2, 3, 4].map((lvl) => (
+                      <div
+                        key={lvl}
+                        className={`h-1 rounded-full ${
+                          pwdStrength.score >= lvl
+                            ? pwdStrength.score >= 4
+                              ? 'bg-emerald-400'
+                              : pwdStrength.score >= 3
+                              ? 'bg-amber-400'
+                              : 'bg-rose-400'
+                            : 'bg-zinc-800'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-zinc-400">
+                    {pwdStrength.valid ? 'Strong password ready.' : pwdStrength.error}
+                  </p>
+                </div>
+              )}
+
+              {confirmPassword.length > 0 && confirmPassword !== signupPassword && (
+                <p className="text-[10px] text-rose-400">Passwords do not match.</p>
+              )}
 
               {/* 6. Create Account Button */}
               <button
                 type="submit"
                 disabled={isSubmitting || (usernameStatus.available === false && !usernameStatus.checking)}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-orange-500 via-amber-400 to-orange-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wider shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2 mt-1"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-orange-500 via-amber-400 to-orange-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wider shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2 mt-1"
               >
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                 <span>{isSubmitting ? 'Creating Account...' : 'Create Account & Send Verification'}</span>
@@ -1492,9 +1621,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                 )}
             </form>
           ) : (
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <form onSubmit={handleLoginSubmit} className="space-y-3.5">
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Email Address</label>
+                <label className="text-xs font-bold text-zinc-300 block mb-1">Email Address</label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
@@ -1504,13 +1633,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                     placeholder="Enter your registered email"
                     required
                     autoComplete="email"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 font-mono"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Password</label>
+                <label className="text-xs font-bold text-zinc-300 block mb-1">Password</label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-teal-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
@@ -1520,7 +1649,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                     placeholder="Enter your password"
                     required
                     autoComplete="current-password"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-10 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
                   />
                   <button
                     type="button"
@@ -1566,7 +1695,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-sm tracking-wide shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-sm tracking-wide shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 <span>{isSubmitting ? 'Signing In & Loading Cloud Save...' : 'Log In & Enter Naija Life'}</span>
@@ -1574,39 +1703,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </button>
             </form>
           )}
-
-          <div className="my-4 flex items-center gap-3">
-            <div className="h-px flex-1 bg-zinc-800" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Or instant Google Auth</span>
-            <div className="h-px flex-1 bg-zinc-800" />
-          </div>
-
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={handleGoogleSignIn}
-            className="w-full py-3 px-4 rounded-xl bg-white hover:bg-zinc-100 disabled:opacity-60 text-zinc-950 font-black text-xs tracking-wide shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2.5"
-          >
-            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="#4285F4"
-                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.37 24 12 24Z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
-              />
-              <path
-                fill="#EA4335"
-                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
-              />
-            </svg>
-            <span>{authMode === 'SIGNUP' ? 'Register / Continue with Google' : 'Sign In with Google'}</span>
-          </button>
         </div>
       </div>
     </div>
