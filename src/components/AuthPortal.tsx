@@ -27,6 +27,7 @@ import {
   Loader2,
   ShieldCheck,
   ExternalLink,
+  Copy,
 } from 'lucide-react';
 import { auth, firebaseConfig } from '../firebase';
 import { UserProfile, CharacterAvatar, StateData, SocialClass } from '../types/game';
@@ -52,13 +53,18 @@ import {
   checkUsernameAvailable,
   CloudGameSaveDoc,
   completeGoogleCitizenRegistration,
+  consumeGoogleRedirectResult,
+  FirebaseAuthUiError,
   loadAuthenticatedCitizenSession,
   loginCitizenAccount,
+  LoginResult,
   logoutFirebaseUser,
   registerCitizenAccount,
   resendCurrentUserVerification,
   sendPasswordReset,
+  signInWithGoogleIdToken,
   signInWithGooglePopup,
+  signInWithGoogleRedirect,
   syncProfileToCloud,
 } from '../services/firebaseAccountService';
 
@@ -335,10 +341,23 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
   // Loading & Feedback
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isProcessingRedirect, setIsProcessingRedirect] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isPasswordAuthEnabled, setIsPasswordAuthEnabled] = useState<boolean | null>(null);
   const [checkingProviderStatus, setCheckingProviderStatus] = useState(false);
+  const [copiedAppLink, setCopiedAppLink] = useState(false);
+  const [gisReady, setGisReady] = useState(false);
+
+  const isEmbeddedIframe =
+    typeof window !== 'undefined' &&
+    (() => {
+      try {
+        return window.self !== window.top;
+      } catch {
+        return true;
+      }
+    })();
 
   const refreshProviderStatus = async () => {
     setCheckingProviderStatus(true);
@@ -359,6 +378,28 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     return () => {
       active = false;
     };
+  }, []);
+
+  // Preload Google Identity Services script quietly for FedCM popup-free fallback if needed
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const w = window as unknown as { google?: { accounts?: { id?: unknown } } };
+    if (w.google?.accounts?.id) {
+      setGisReady(true);
+      return;
+    }
+    const existing = document.querySelector('script[data-naija-gis="true"]') as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => setGisReady(true));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.dataset.naijaGis = 'true';
+    script.onload = () => setGisReady(true);
+    document.head.appendChild(script);
   }, []);
 
   useEffect(() => {
@@ -558,76 +599,272 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   };
 
   // =========================================================================
-  // GOOGLE SIGN-IN HANDLER (Popup Auth + Cross-Device Sync + First-Time Profile)
+  // GOOGLE SIGN-IN HELPERS (Popup + Redirect Fallback + FedCM Account Chooser)
   // =========================================================================
-  const handleGoogleSignIn = async () => {
-    // Call signInWithGooglePopup() before any state/await overhead that could risk losing transient activation
-    const popupPromise = signInWithGooglePopup();
+  const GOOGLE_DRAFT_KEY = 'naija_life_google_redirect_draft';
+
+  const stashGoogleDraftToSession = () => {
+    try {
+      sessionStorage.setItem(
+        GOOGLE_DRAFT_KEY,
+        JSON.stringify({
+          authMode,
+          signupUsername,
+          dateOfBirth,
+          signupStateId,
+        })
+      );
+    } catch {}
+  };
+
+  const popGoogleDraftFromSession = (): {
+    authMode?: 'LOGIN' | 'SIGNUP';
+    signupUsername?: string;
+    dateOfBirth?: string;
+    signupStateId?: string;
+  } | null => {
+    try {
+      const raw = sessionStorage.getItem(GOOGLE_DRAFT_KEY);
+      if (!raw) return null;
+      sessionStorage.removeItem(GOOGLE_DRAFT_KEY);
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+
+  const processGoogleLoginResult = async (
+    result: LoginResult,
+    prefilled?: { username?: string; dob?: string; spawnStateId?: string; mode?: 'LOGIN' | 'SIGNUP' }
+  ) => {
+    if (result.status === 'SUSPENDED') {
+      setSuspendedReason(result.reason);
+      setCurrentStep('SUSPENDED');
+      triggerSound?.('alert');
+      return;
+    }
+    if (result.status === 'NEEDS_PROFILE_COMPLETION') {
+      const googleEmail = result.email || result.user.email || '';
+      setPendingGoogleEmail(googleEmail);
+      setIsNewSignupFlow(true);
+
+      const candidateUname = prefilled?.username ?? (authMode === 'SIGNUP' ? signupUsername : '');
+      const candidateDob = prefilled?.dob ?? (authMode === 'SIGNUP' ? dateOfBirth : '');
+      const candidateStateId = prefilled?.spawnStateId ?? signupStateId;
+      const candidateMode = prefilled?.mode ?? authMode;
+
+      const prefilledUname = candidateMode === 'SIGNUP' ? validateUsernameInput(candidateUname) : null;
+      const prefilledDob = candidateMode === 'SIGNUP' ? validateBirthdayInput(candidateDob) : null;
+
+      if (candidateUname) setSignupUsername(candidateUname);
+      if (candidateDob) setDateOfBirth(candidateDob);
+
+      // If citizen already filled a valid username & birthday on the signup form, complete registration directly!
+      if (prefilledUname?.valid && prefilledDob?.valid) {
+        try {
+          const starterProfile = buildStarterProfile({
+            email: googleEmail.toLowerCase(),
+            username: prefilledUname.trimmed,
+            dateOfBirth: candidateDob,
+            avatar,
+            spawnStateId: candidateStateId,
+          });
+          const completed = await completeGoogleCitizenRegistration({
+            user: result.user,
+            username: prefilledUname.trimmed,
+            dateOfBirth: candidateDob,
+            starterProfile,
+          });
+          if (completed.status === 'AUTHENTICATED') {
+            triggerSound?.('stamp');
+            setPendingProfile(completed.profile);
+            setPendingCloudSave(completed.cloudSave);
+            setAvatar(completed.profile.avatar || avatar);
+            setCurrentStep('CUSTOMIZE');
+            return;
+          }
+        } catch (regErr) {
+          setErrorMessage(regErr instanceof Error ? regErr.message : 'Please choose your username and birthday.');
+        }
+      }
+
+      setCurrentStep('COMPLETE_GOOGLE_PROFILE');
+      triggerSound?.('coin');
+      return;
+    }
+    if (result.status === 'NEEDS_VERIFICATION') {
+      setPendingVerifyEmail(result.email);
+      setCurrentStep('VERIFY_EMAIL');
+      triggerSound?.('alert');
+      return;
+    }
+
+    saveSession(result.profile);
+    triggerSound?.('stamp');
+    const targetLocId = result.profile.lastLocationStateId || result.profile.spawnStateId || 'lagos';
+    onAuthSuccess(result.profile, getStateById(targetLocId), result.cloudSave);
+  };
+
+  // Consume any Google signInWithRedirect return on mount
+  useEffect(() => {
+    let active = true;
+    setIsProcessingRedirect(true);
+    const draft = popGoogleDraftFromSession();
+    consumeGoogleRedirectResult()
+      .then(async (result) => {
+        if (!active || !result) return;
+        await processGoogleLoginResult(result, {
+          username: draft?.signupUsername,
+          dob: draft?.dateOfBirth,
+          spawnStateId: draft?.signupStateId,
+          mode: draft?.authMode,
+        });
+      })
+      .catch((err) => {
+        if (!active) return;
+        setErrorMessage(err instanceof Error ? err.message : 'Google redirect sign-in failed.');
+      })
+      .finally(() => {
+        if (active) setIsProcessingRedirect(false);
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleGoogleRedirectSignIn = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
-    const prefilledUname = authMode === 'SIGNUP' ? validateUsernameInput(signupUsername) : null;
-    const prefilledDob = authMode === 'SIGNUP' ? validateBirthdayInput(dateOfBirth) : null;
+    if (isEmbeddedIframe) {
+      setErrorMessage(
+        'Embedded viewer frames cannot open Google Sign-In via redirect. Click "Open Published App in Full Tab" below and sign in there cleanly.'
+      );
+      triggerSound?.('alert');
+      return;
+    }
+    setIsSubmitting(true);
+    stashGoogleDraftToSession();
+    try {
+      await signInWithGoogleRedirect();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to start Google redirect sign-in.');
+      setIsSubmitting(false);
+      triggerSound?.('alert');
+    }
+  };
 
+  const handleGoogleFedCmPrompt = () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    const w = window as unknown as {
+      google?: {
+        accounts?: {
+          id?: {
+            initialize: (cfg: Record<string, unknown>) => void;
+            prompt: (cb?: (notif: { isNotDisplayed?: () => boolean; isSkippedMoment?: () => boolean }) => void) => void;
+          };
+        };
+      };
+    };
+    const oAuthClientId = (firebaseConfig as { oAuthClientId?: string }).oAuthClientId;
+    if (!w.google?.accounts?.id || !oAuthClientId) {
+      setErrorMessage('Browser account chooser is unavailable here. Use "Open Published App in Full Tab" below.');
+      return;
+    }
+    const capturedDraft = {
+      username: signupUsername,
+      dob: dateOfBirth,
+      spawnStateId: signupStateId,
+      mode: authMode,
+    };
     setIsSubmitting(true);
     try {
-      const result = await popupPromise;
-      if (result.status === 'SUSPENDED') {
-        setSuspendedReason(result.reason);
-        setCurrentStep('SUSPENDED');
-        triggerSound?.('alert');
-        return;
-      }
-      if (result.status === 'NEEDS_PROFILE_COMPLETION') {
-        const googleEmail = result.email || result.user.email || '';
-        setPendingGoogleEmail(googleEmail);
-        setIsNewSignupFlow(true);
-
-        // If citizen already filled a valid username & birthday on the signup form, complete registration directly!
-        if (prefilledUname?.valid && prefilledDob?.valid) {
-          try {
-            const starterProfile = buildStarterProfile({
-              email: googleEmail.toLowerCase(),
-              username: prefilledUname.trimmed,
-              dateOfBirth,
-              avatar,
-              spawnStateId: signupStateId,
-            });
-            const completed = await completeGoogleCitizenRegistration({
-              user: result.user,
-              username: prefilledUname.trimmed,
-              dateOfBirth,
-              starterProfile,
-            });
-            if (completed.status === 'AUTHENTICATED') {
-              triggerSound?.('stamp');
-              setPendingProfile(completed.profile);
-              setPendingCloudSave(completed.cloudSave);
-              setAvatar(completed.profile.avatar || avatar);
-              setCurrentStep('CUSTOMIZE');
-              return;
-            }
-          } catch (regErr) {
-            setErrorMessage(regErr instanceof Error ? regErr.message : 'Please choose your username and birthday.');
+      w.google.accounts.id.initialize({
+        client_id: oAuthClientId,
+        use_fedcm_for_prompt: true,
+        ux_mode: 'popup',
+        callback: async (resp: { credential?: string }) => {
+          if (!resp?.credential) {
+            setIsSubmitting(false);
+            return;
           }
+          try {
+            const res = await signInWithGoogleIdToken(resp.credential);
+            await processGoogleLoginResult(res, capturedDraft);
+          } catch (err) {
+            setErrorMessage(err instanceof Error ? err.message : 'Google credential sign-in failed.');
+            triggerSound?.('alert');
+          } finally {
+            setIsSubmitting(false);
+          }
+        },
+      });
+      w.google.accounts.id.prompt((notification) => {
+        if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
+          setIsSubmitting(false);
+          setErrorMessage(
+            isEmbeddedIframe
+              ? 'Your browser blocked Google prompts inside this embedded frame. Click "Open Published App in Full Tab" below to sign in.'
+              : 'Account chooser could not appear automatically. Click "Sign In via Redirect (No Popup)" below.'
+          );
         }
+      });
+    } catch {
+      setIsSubmitting(false);
+      setErrorMessage('Browser account chooser could not open. Try opening in a full browser tab.');
+    }
+  };
 
-        setCurrentStep('COMPLETE_GOOGLE_PROFILE');
-        triggerSound?.('coin');
-        return;
-      }
-      if (result.status === 'NEEDS_VERIFICATION') {
-        setPendingVerifyEmail(result.email);
-        setCurrentStep('VERIFY_EMAIL');
-        triggerSound?.('alert');
-        return;
-      }
+  const handleCopyPublishedUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopiedAppLink(true);
+      setTimeout(() => setCopiedAppLink(false), 2500);
+    } catch {}
+  };
 
-      saveSession(result.profile);
-      triggerSound?.('stamp');
-      const targetLocId = result.profile.lastLocationStateId || result.profile.spawnStateId || 'lagos';
-      onAuthSuccess(result.profile, getStateById(targetLocId), result.cloudSave);
+  const handleGoogleSignIn = async () => {
+    // Call signInWithGooglePopup() immediately on click gesture before any awaits so Chrome preserves transient activation
+    const popupPromise = signInWithGooglePopup();
+    const capturedDraft = {
+      username: signupUsername,
+      dob: dateOfBirth,
+      spawnStateId: signupStateId,
+      mode: authMode,
+    };
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsSubmitting(true);
+
+    try {
+      const result = await popupPromise;
+      await processGoogleLoginResult(result, capturedDraft);
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Google Sign-In failed.');
+      const code = err instanceof FirebaseAuthUiError ? err.code : '';
+      const msg = err instanceof Error ? err.message : 'Google Sign-In failed.';
+      const isPopupBlocked =
+        code === 'auth/popup-blocked' ||
+        (msg.toLowerCase().includes('popup') && msg.toLowerCase().includes('block'));
+
+      // On standalone published/top-level tabs, seamlessly fall back to full-page redirect (zero popup required!)
+      if (isPopupBlocked && !isEmbeddedIframe) {
+        stashGoogleDraftToSession();
+        setSuccessMessage('Popup was blocked by browser — redirecting to Google Sign-In automatically...');
+        try {
+          await signInWithGoogleRedirect();
+          return;
+        } catch (redirErr) {
+          setSuccessMessage(null);
+          setErrorMessage(
+            redirErr instanceof Error
+              ? redirErr.message
+              : 'Popup was blocked and redirect could not start. Allow popups or try again.'
+          );
+        }
+      } else {
+        setErrorMessage(msg);
+      }
       triggerSound?.('alert');
     } finally {
       setIsSubmitting(false);
@@ -1341,11 +1578,11 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           {/* Primary Instant Google Sign-In / Sign-Up CTA — Always visible without scrolling */}
           <button
             type="button"
-            disabled={isSubmitting}
+            disabled={isSubmitting || isProcessingRedirect}
             onClick={handleGoogleSignIn}
             className="w-full py-3 px-4 rounded-xl bg-white hover:bg-zinc-100 disabled:opacity-60 text-zinc-950 font-black text-xs tracking-wide shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2.5"
           >
-            {isSubmitting ? (
+            {isSubmitting || isProcessingRedirect ? (
               <Loader2 className="w-4 h-4 animate-spin text-zinc-900" />
             ) : (
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
@@ -1368,11 +1605,52 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </svg>
             )}
             <span>
-              {authMode === 'SIGNUP'
+              {isProcessingRedirect
+                ? 'Completing Google Sign-In...'
+                : authMode === 'SIGNUP'
                 ? 'Sign Up Instantly with Google (Verified Cloud Account)'
                 : 'Sign In with Google'}
             </span>
           </button>
+
+          {/* Published / Popup-Blocked Direct Fallback Strip (visible on first sight without scrolling) */}
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-zinc-400">
+            {isEmbeddedIframe ? (
+              <>
+                <a
+                  href={typeof window !== 'undefined' ? window.location.href : '/'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-400 hover:text-emerald-300 font-bold underline inline-flex items-center gap-1"
+                >
+                  <span>Popup blocked when published? Open in Full Tab</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+                {gisReady && (
+                  <>
+                    <span className="text-zinc-700">·</span>
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={handleGoogleFedCmPrompt}
+                      className="text-amber-300 hover:text-amber-200 font-bold cursor-pointer"
+                    >
+                      Try No-Popup Account Chooser
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={isSubmitting || isProcessingRedirect}
+                onClick={handleGoogleRedirectSignIn}
+                className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer"
+              >
+                Popup not opening? Sign in via Google Redirect (No Popup)
+              </button>
+            )}
+          </div>
 
           <div className="my-3.5 flex items-center gap-3">
             <div className="h-px flex-1 bg-zinc-800" />
@@ -1424,20 +1702,53 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
                 <span>{errorMessage}</span>
               </div>
-              {errorMessage.toLowerCase().includes('popup') && (
+              {(errorMessage.toLowerCase().includes('popup') || errorMessage.toLowerCase().includes('embedded')) && (
                 <div className="pl-6 space-y-2">
                   <p className="text-[11px] text-amber-200">
-                    Tip: Click the blocked pop-up icon in your browser&apos;s address bar to allow pop-ups, or open Naija Life in a full browser tab to sign in with Google cleanly:
+                    {isEmbeddedIframe
+                      ? 'Published viewer frames often block pop-up sign-in windows. Open Naija Life directly in a full browser tab (or use the no-popup chooser) to sign in with Google:'
+                      : 'Your browser blocked the pop-up window. Sign in directly using full-page Google Redirect (no pop-up required):'}
                   </p>
-                  <a
-                    href={typeof window !== 'undefined' ? window.location.href : '/'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 rounded-lg bg-white text-zinc-950 font-black text-[11px] hover:bg-zinc-200 inline-flex items-center gap-1.5"
-                  >
-                    <span>Open App in Full Browser Tab</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!isEmbeddedIframe && (
+                      <button
+                        type="button"
+                        disabled={isSubmitting}
+                        onClick={handleGoogleRedirectSignIn}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-400 text-zinc-950 font-black text-[11px] hover:bg-emerald-300 inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>Continue via Google Redirect (No Popup)</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    )}
+                    <a
+                      href={typeof window !== 'undefined' ? window.location.href : '/'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-lg bg-white text-zinc-950 font-black text-[11px] hover:bg-zinc-200 inline-flex items-center gap-1.5"
+                    >
+                      <span>Open Published App in Full Tab</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={handleCopyPublishedUrl}
+                      className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-200 font-bold text-[11px] hover:bg-zinc-800 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>{copiedAppLink ? 'Link Copied!' : 'Copy App Link'}</span>
+                    </button>
+                    {gisReady && (
+                      <button
+                        type="button"
+                        disabled={isSubmitting}
+                        onClick={handleGoogleFedCmPrompt}
+                        className="px-3 py-1.5 rounded-lg bg-amber-400 text-zinc-950 font-black text-[11px] hover:bg-amber-300 inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>Try Account Chooser (No Popup)</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
               {isAuthDisabledError && (

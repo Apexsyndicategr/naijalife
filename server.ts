@@ -18,11 +18,12 @@ const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-// Enable CORS for cross-origin and multi-device preview access
+// Enable CORS and popup opener compatibility for cross-origin and multi-device access
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }

@@ -9,14 +9,17 @@ import {
   createUserWithEmailAndPassword,
   deleteUser,
   EmailAuthProvider,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
   sendEmailVerification,
   sendPasswordResetEmail,
   setPersistence,
+  signInWithCredential,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   updatePassword,
   User,
@@ -614,16 +617,68 @@ export async function applyAuthPersistence(rememberMe: boolean): Promise<void> {
   } catch {}
 }
 
-export async function signInWithGooglePopup(): Promise<LoginResult> {
+export class FirebaseAuthUiError extends Error {
+  code: string;
+  constructor(message: string, code = '') {
+    super(message);
+    this.name = 'FirebaseAuthUiError';
+    this.code = code;
+  }
+}
+
+function extractFirebaseAuthCode(err: unknown): string {
+  if (typeof err === 'object' && err !== null && 'code' in err) {
+    return String((err as { code?: unknown }).code || '');
+  }
+  return '';
+}
+
+function buildGoogleProvider(): GoogleAuthProvider {
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
+  return provider;
+}
+
+export async function signInWithGooglePopup(): Promise<LoginResult> {
+  const provider = buildGoogleProvider();
   try {
     // Call signInWithPopup immediately on click gesture without any preceding await
     const cred = await signInWithPopup(auth, provider);
     await cred.user.reload();
     return await loadAuthenticatedCitizenSession(cred.user);
   } catch (err) {
-    throw new Error(mapFirebaseAuthError(err));
+    throw new FirebaseAuthUiError(mapFirebaseAuthError(err), extractFirebaseAuthCode(err));
+  }
+}
+
+export async function signInWithGoogleRedirect(): Promise<void> {
+  const provider = buildGoogleProvider();
+  try {
+    await signInWithRedirect(auth, provider);
+  } catch (err) {
+    throw new FirebaseAuthUiError(mapFirebaseAuthError(err), extractFirebaseAuthCode(err));
+  }
+}
+
+export async function consumeGoogleRedirectResult(): Promise<LoginResult | null> {
+  try {
+    const cred = await getRedirectResult(auth);
+    if (!cred?.user) return null;
+    await cred.user.reload();
+    return await loadAuthenticatedCitizenSession(cred.user);
+  } catch (err) {
+    throw new FirebaseAuthUiError(mapFirebaseAuthError(err), extractFirebaseAuthCode(err));
+  }
+}
+
+export async function signInWithGoogleIdToken(idToken: string): Promise<LoginResult> {
+  try {
+    const credential = GoogleAuthProvider.credential(idToken);
+    const cred = await signInWithCredential(auth, credential);
+    await cred.user.reload();
+    return await loadAuthenticatedCitizenSession(cred.user);
+  } catch (err) {
+    throw new FirebaseAuthUiError(mapFirebaseAuthError(err), extractFirebaseAuthCode(err));
   }
 }
 
