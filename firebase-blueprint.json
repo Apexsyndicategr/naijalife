@@ -1,0 +1,389 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Core non-PII account identity, role, and account status for a registered Naija Life citizen.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Authentication unique user ID."
+        },
+        "username": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_.-]+$",
+          "description": "Display username supporting letters, numbers, underscores, periods, and hyphens."
+        },
+        "usernameLower": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-z0-9_.-]+$",
+          "description": "Lowercase canonical username for uniqueness checks."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["citizen", "owner"],
+          "description": "Authorization role. Must start as citizen; owner provisioned strictly server-side."
+        },
+        "accountStatus": {
+          "type": "string",
+          "enum": ["active", "suspended"],
+          "description": "Current standing of the citizen account."
+        },
+        "emailVerified": {
+          "type": "boolean",
+          "description": "Whether the player verified their email address."
+        },
+        "suspensionReason": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Optional reason recorded when an owner suspends an account."
+        },
+        "suspendedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Owner UID that performed a suspension action."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when account was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest account metadata update."
+        },
+        "lastLoginAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the latest successful login."
+        }
+      },
+      "required": ["uid", "username", "usernameLower", "role", "accountStatus", "emailVerified", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated Personally Identifiable Information (email and date of birth) accessible only by the account owner or verified game owner.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 120
+        },
+        "emailLower": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 120
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Private calendar date of birth. Never exposed publicly."
+        },
+        "lastDevice": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "emailLower", "dateOfBirth", "createdAt", "updatedAt"]
+    },
+    "UsernameReservation": {
+      "title": "UsernameReservation",
+      "description": "Unique username reservation index guaranteeing no duplicate usernames exist.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_.-]+$"
+        },
+        "usernameLower": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-z0-9_.-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "username", "usernameLower", "createdAt"]
+    },
+    "CitizenProfile": {
+      "title": "CitizenProfile",
+      "description": "Naija Life player profile, avatar customization, social class, wallet balances, and stats synced across devices.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_.-]+$"
+        },
+        "usernameLower": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-z0-9_.-]+$"
+        },
+        "firstName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "lastName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "citizenName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "socialClass": {
+          "type": "string",
+          "enum": ["lapo", "mapo", "nepo"]
+        },
+        "phoneModel": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 48
+        },
+        "spawnStateId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "lastLocationStateId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "cashNaira": {
+          "type": "number"
+        },
+        "bankNaira": {
+          "type": "number"
+        },
+        "cashUSD": {
+          "type": "number"
+        },
+        "bankCAD": {
+          "type": "number"
+        },
+        "energy": {
+          "type": "number"
+        },
+        "hunger": {
+          "type": "number"
+        },
+        "health": {
+          "type": "number"
+        },
+        "happiness": {
+          "type": "number"
+        },
+        "avatar": {
+          "type": "object"
+        },
+        "inventory": {
+          "type": "array"
+        },
+        "completedCourses": {
+          "type": "array"
+        },
+        "furnitureBought": {
+          "type": "array"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "username", "usernameLower", "socialClass", "spawnStateId", "avatar", "createdAt", "updatedAt"]
+    },
+    "CloudGameSave": {
+      "title": "CloudGameSave",
+      "description": "Cross-device cloud save state with monotonic version counter for conflict resolution.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "version": {
+          "type": "number",
+          "description": "Monotonically increasing save revision to prevent older local saves overwriting newer cloud saves."
+        },
+        "clientUpdatedAtMs": {
+          "type": "number"
+        },
+        "deviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "saveData": {
+          "type": "object"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "version", "clientUpdatedAtMs", "deviceId", "saveData", "updatedAt"]
+    },
+    "OwnerRoleGrant": {
+      "title": "OwnerRoleGrant",
+      "description": "Verified Apex Syndicate owner role record granted only when verified email is kchiboy50@gmail.com and username is chiboy_52.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "usernameLower": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner"]
+        },
+        "grantedBy": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "usernameLower", "role", "grantedBy", "grantedAt"]
+    },
+    "OwnerAuditLog": {
+      "title": "OwnerAuditLog",
+      "description": "Immutable audit log of privileged Apex Syndicate owner actions.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "actorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "actorEmail": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "action": {
+          "type": "string",
+          "enum": ["PROVISION_OWNER", "VIEW_REGISTRY", "VIEW_ACCOUNT", "SUSPEND_ACCOUNT", "RESTORE_ACCOUNT", "GLOBAL_SYNC", "NEPA_OVERRIDE", "BROADCAST_AUDIO"]
+        },
+        "targetUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "targetUsername": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "details": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "actorUid", "actorEmail", "action", "details", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Core non-PII user account records keyed by Firebase Auth UID."
+    },
+    "/users_private/{uid}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Private PII (email, date of birth) strictly accessible by owner of uid or verified Apex Syndicate Owner."
+    },
+    "/usernames/{usernameLower}": {
+      "schema": { "$ref": "#/entities/UsernameReservation" },
+      "description": "Unique lowercase username registry mapping to uid."
+    },
+    "/profiles/{uid}": {
+      "schema": { "$ref": "#/entities/CitizenProfile" },
+      "description": "Synchronized Naija Life citizen profile, avatar, wallet, and game stats."
+    },
+    "/game_saves/{uid}": {
+      "schema": { "$ref": "#/entities/CloudGameSave" },
+      "description": "Versioned cross-device cloud game save document."
+    },
+    "/owner_roles/{uid}": {
+      "schema": { "$ref": "#/entities/OwnerRoleGrant" },
+      "description": "Trusted owner role record restricted strictly to verified kchiboy50@gmail.com with username chiboy_52."
+    },
+    "/owner_audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/OwnerAuditLog" },
+      "description": "Immutable append-only audit logs for Apex Syndicate owner actions."
+    }
+  }
+}

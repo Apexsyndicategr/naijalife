@@ -76,7 +76,32 @@ import {
   Anchor,
   Dog,
   PawPrint,
+  Eye,
+  EyeOff,
+  Lock,
+  Mail,
+  KeyRound,
+  Ban,
+  UserCheck,
+  Cloud,
+  ChevronRight,
 } from 'lucide-react';
+import { auth, db } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { isStrictOwnerIdentity } from '../utils/authValidation';
+import {
+  changeCitizenUsername,
+  checkUsernameAvailable,
+  fetchOwnerAuditLogs,
+  fetchOwnerCitizenRegistry,
+  OwnerAuditLogEntry,
+  RegistryCitizenEntry,
+  requestCitizenEmailUpdate,
+  sendPasswordReset,
+  setCitizenSuspensionStatus,
+  syncProfileToCloud,
+  updateCitizenPassword,
+} from '../services/firebaseAccountService';
 import {
   UserProfile,
   PropertyAsset,
@@ -239,6 +264,8 @@ export interface NaijaPhoneProps {
   onBusTravel?: (targetState: any, fare: number, busOperator?: string) => void;
   initialApp?: PhoneAppType;
   onUpdateProfile?: (updatedProfile: UserProfile) => void;
+  cloudSyncStatus?: 'synced' | 'syncing' | 'conflict' | 'offline';
+  onTriggerCloudSync?: () => Promise<void> | void;
 }
 
 export type PhoneAppType =
@@ -320,6 +347,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   onBusTravel,
   initialApp = 'home',
   onUpdateProfile,
+  cloudSyncStatus = 'synced',
+  onTriggerCloudSync,
 }) => {
   const [currentApp, setCurrentApp] = useState<PhoneAppType>(initialApp);
 
@@ -699,13 +728,43 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [isNepaControlRoomOpen, setIsNepaControlRoomOpen] = useState<boolean>(false);
   const [nepaControlGrid, setNepaControlGrid] = useState<Record<string, { name: string; lightOn: boolean; voltage: number; megawatt: number }>>({});
   const [isPlayersRegistryModalOpen, setIsPlayersRegistryModalOpen] = useState<boolean>(false);
-  const [playersRegistryList, setPlayersRegistryList] = useState<any[]>([]);
+  const [playersRegistryList, setPlayersRegistryList] = useState<RegistryCitizenEntry[]>([]);
+  const [registryMetrics, setRegistryMetrics] = useState({
+    total: 0,
+    verified: 0,
+    unverified: 0,
+    recent: 0,
+    suspended: 0,
+    active: 0,
+  });
+  const [registryAuditLogs, setRegistryAuditLogs] = useState<OwnerAuditLogEntry[]>([]);
+  const [registryActiveTab, setRegistryActiveTab] = useState<'citizens' | 'audit'>('citizens');
   const [isRegistryScanning, setIsRegistryScanning] = useState<boolean>(false);
   const [registryScanPct, setRegistryScanPct] = useState<number>(0);
-  const [registryScanMsg, setRegistryScanMsg] = useState<string>('Connecting to Naija Life Server Core...');
+  const [registryScanMsg, setRegistryScanMsg] = useState<string>('Connecting to Firestore Citizen Ledger...');
   const [registryScanResult, setRegistryScanResult] = useState<string | null>(null);
   const [registrySearchTerm, setRegistrySearchTerm] = useState<string>('');
+  const [registryVerifyFilter, setRegistryVerifyFilter] = useState<'all' | 'verified' | 'unverified'>('all');
+  const [registryStatusFilter, setRegistryStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+  const [registrySortOrder, setRegistrySortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [registryPage, setRegistryPage] = useState<number>(1);
+  const [inspectedCitizen, setInspectedCitizen] = useState<RegistryCitizenEntry | null>(null);
+  const [suspendReasonInput, setSuspendReasonInput] = useState<string>('');
+  const [isSuspensionBusy, setIsSuspensionBusy] = useState<boolean>(false);
   const [academySearchQuery, setAcademySearchQuery] = useState<string>('');
+
+  // Account Settings & Security Panel state
+  const [accountActionTab, setAccountActionTab] = useState<'none' | 'username' | 'password' | 'email'>('none');
+  const [newUsernameInput, setNewUsernameInput] = useState<string>('');
+  const [usernameStatusMsg, setUsernameStatusMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [curPwdInput, setCurPwdInput] = useState<string>('');
+  const [newPwdInput, setNewPwdInput] = useState<string>('');
+  const [confirmPwdInput, setConfirmPwdInput] = useState<string>('');
+  const [showAccountPwds, setShowAccountPwds] = useState<boolean>(false);
+  const [newEmailInput, setNewEmailInput] = useState<string>('');
+  const [emailChangePwdInput, setEmailChangePwdInput] = useState<string>('');
+  const [accountSecurityBusy, setAccountSecurityBusy] = useState<boolean>(false);
+  const [accountSecurityFeedback, setAccountSecurityFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   // Interactive 15-question Work Shift State with 10-15 min countdown timer
   const [activeWorkShift, setActiveWorkShift] = useState<{
@@ -749,53 +808,50 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
     return () => clearInterval(shiftInterval);
   }, [activeWorkShift?.isComplete]);
 
-  // Universal Owner Account Validator in Phone
+  // Strict Apex Syndicate Owner Account Validator (NEVER trusts username alone!)
   const checkIsOwner = (prof?: any | null): boolean => {
     if (!prof) return false;
-    const u = String(prof.username || '').toLowerCase().trim();
-    const em = String(prof.gmail || prof.email || '').toLowerCase().trim();
-    const cName = String(prof.citizenName || prof.firstName || '').toLowerCase().trim();
-    return (
-      prof.isOwner === true ||
-      prof.isOwnerAccount === true ||
-      u === 'chiboy' ||
-      u === 'chiboy_52' ||
-      em === 'kchiboy50@gmail.com' ||
-      cName === 'chiboy' ||
-      cName.startsWith('chiboy')
-    );
+    // Registry entry check vs active userProfile check
+    if (prof.role === 'owner' && prof.isOwner === true && prof.isVerified === true) {
+      return isStrictOwnerIdentity({
+        email: prof.email || prof.gmail,
+        emailVerified: true,
+        username: prof.username,
+      });
+    }
+    if (prof.uid && prof.role === 'owner' && prof.emailVerified === true) {
+      return isStrictOwnerIdentity({
+        email: prof.email || prof.gmail,
+        emailVerified: true,
+        username: prof.username,
+      });
+    }
+    return false;
   };
 
-  const fetchPlayersRegistry = async () => {
+  const getAuthBearerHeaders = async (): Promise<Record<string, string>> => {
+    const token = await auth.currentUser?.getIdToken(true);
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  };
+
+  const fetchPlayersRegistry = async (): Promise<RegistryCitizenEntry[]> => {
     try {
-      const u = userProfile?.username || 'chiboy';
-      const em = userProfile?.gmail || userProfile?.email || 'kchiboy50@gmail.com';
-      const res = await fetch(`/api/owner/players-registry?username=${encodeURIComponent(u)}&email=${encodeURIComponent(em)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.players)) {
-          setPlayersRegistryList(data.players);
-          return data.players;
-        }
-      }
-    } catch {}
-    const stored = getStoredUsers();
-    const fallbackList = Object.entries(stored).map(([k, v]: [string, any]) => ({
-      username: v.profile?.username || k,
-      gmail: v.profile?.gmail || v.profile?.email || 'citizen@naijalife.ng',
-      citizenName: `${v.profile?.firstName || ''} ${v.profile?.lastName || ''}`.trim() || k,
-      gender: v.profile?.gender || v.profile?.avatar?.gender || 'male',
-      stateOfOrigin: v.profile?.spawnStateId || v.profile?.originState || 'Lagos',
-      socialClass: v.profile?.socialClass || 'mapo',
-      phoneModel: v.profile?.phoneModel || 'samsung_s24_base',
-      bankNaira: v.profile?.bankNaira || 0,
-      bankCAD: v.profile?.bankCAD || 0,
-      password: v.password || '(not set)',
-      registeredAt: v.updatedAt || new Date().toISOString(),
-      avatar: v.profile?.avatar || null,
-    }));
-    setPlayersRegistryList(fallbackList);
-    return fallbackList;
+      const [{ citizens, metrics }, logs] = await Promise.all([
+        fetchOwnerCitizenRegistry(),
+        fetchOwnerAuditLogs().catch(() => []),
+      ]);
+      setPlayersRegistryList(citizens);
+      setRegistryMetrics(metrics);
+      setRegistryAuditLogs(logs);
+      return citizens;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load Citizen Account Registry.';
+      onShowToast(msg);
+      return [];
+    }
   };
 
   // Live automatic synchronization of NEPA grid with server
@@ -3814,8 +3870,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             }
 
                             const storedUsers = getStoredUsers();
-                            const recipientRecord = storedUsers[cleanRecipient];
-                            if (!recipientRecord && cleanRecipient !== 'chiboy_52' && cleanRecipient !== 'chiboy') {
+                            let recipientRecord = storedUsers[cleanRecipient];
+                            if (!recipientRecord) {
+                              try {
+                                const unameSnap = await getDoc(doc(db, 'usernames', cleanRecipient));
+                                if (unameSnap.exists()) {
+                                  recipientRecord = { profile: { username: unameSnap.data().username } } as any;
+                                }
+                              } catch {}
+                            }
+                            if (!recipientRecord) {
                               onShowToast(`Citizen @${cleanRecipient} not found. Transfers can only be made to real registered citizens!`);
                               triggerSound?.('alert');
                               return;
@@ -4177,8 +4241,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             }
 
                             const storedUsers = getStoredUsers();
-                            const recipientRecord = storedUsers[cleanRecipient];
-                            if (!recipientRecord && cleanRecipient !== 'chiboy_52') {
+                            let recipientRecord = storedUsers[cleanRecipient];
+                            if (!recipientRecord) {
+                              try {
+                                const unameSnap = await getDoc(doc(db, 'usernames', cleanRecipient));
+                                if (unameSnap.exists()) {
+                                  recipientRecord = { profile: { username: unameSnap.data().username } } as any;
+                                }
+                              } catch {}
+                            }
+                            if (!recipientRecord) {
                               onShowToast(`Citizen @${cleanRecipient} not found. Transfers can only be made to real registered citizens!`);
                               triggerSound?.('alert');
                               return;
@@ -7704,7 +7776,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
             )}
 
             {/* =============================================================
-                15. SETTINGS (ACCOUNT INFORMATION & WALLPAPER PICKER)
+                15. SETTINGS (ACCOUNT, CLOUD SYNC, SECURITY, AVATAR, WALLPAPER & OWNER CONTROL)
                 ============================================================= */}
             {currentApp === 'settings' && (
               <div className="space-y-4">
@@ -7714,14 +7786,21 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     <div className="w-14 h-14 rounded-2xl bg-zinc-800 border-2 border-emerald-500/50 flex items-center justify-center overflow-hidden shadow-lg shrink-0">
                       <CharacterRenderer avatar={userProfile?.avatar} size="sm" fullBody={false} showBackground={false} />
                     </div>
-                    <div>
-                      <h3 className="text-sm font-black text-white">
-                        {userProfile?.firstName} {userProfile?.lastName}
-                      </h3>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h3 className="text-sm font-black text-white truncate">
+                          {userProfile?.firstName} {userProfile?.lastName}
+                        </h3>
+                        {checkIsOwner(userProfile) && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[8px] font-black uppercase">
+                            OWNER
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs font-mono text-emerald-400 font-bold">
                         @{userProfile?.username}
                       </div>
-                      <span className="text-[10px] text-zinc-400 font-medium block">
+                      <span className="text-[10px] text-zinc-400 font-medium block truncate">
                         {userProfile?.email || userProfile?.gmail || 'Registered Citizen'}
                       </span>
                     </div>
@@ -7729,28 +7808,341 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                   <div className="grid grid-cols-2 gap-2 text-[10px] font-mono pt-2 border-t border-zinc-800/80">
                     <div className="bg-zinc-900/60 p-2 rounded-xl border border-zinc-800">
-                      <span className="text-zinc-500 block uppercase">Social Class</span>
-                      <span className="text-amber-300 font-black">
-                        {userProfile?.socialClass?.toUpperCase() || 'MAPO'}
+                      <span className="text-zinc-500 block uppercase">Email Status</span>
+                      <span className={userProfile?.isVerified ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                        {userProfile?.isVerified ? 'Verified' : 'Unverified'}
                       </span>
                     </div>
                     <div className="bg-zinc-900/60 p-2 rounded-xl border border-zinc-800">
-                      <span className="text-zinc-500 block uppercase">Device</span>
-                      <span className="text-white font-bold truncate block">
-                        {userProfile?.phoneModel?.replace(/_/g, ' ')?.toUpperCase() || 'SMARTPHONE'}
+                      <span className="text-zinc-500 block uppercase">Cloud Sync</span>
+                      <span className={`font-bold uppercase ${
+                        cloudSyncStatus === 'synced'
+                          ? 'text-emerald-400'
+                          : cloudSyncStatus === 'syncing'
+                          ? 'text-sky-400'
+                          : cloudSyncStatus === 'conflict'
+                          ? 'text-amber-400'
+                          : 'text-rose-400'
+                      }`}>
+                        {cloudSyncStatus}
                       </span>
                     </div>
                     <div className="bg-zinc-900/60 p-2 rounded-xl border border-zinc-800">
-                      <span className="text-zinc-500 block uppercase">Origin State</span>
-                      <span className="text-white font-bold capitalize">
-                        {userProfile?.spawnStateId || 'Lagos'}
+                      <span className="text-zinc-500 block uppercase">Account ID</span>
+                      <span className="text-zinc-200 font-bold truncate block" title={userProfile?.uid || ''}>
+                        {userProfile?.uid ? `${userProfile.uid.slice(0, 10)}...` : 'Cloud UID'}
                       </span>
                     </div>
                     <div className="bg-zinc-900/60 p-2 rounded-xl border border-zinc-800">
-                      <span className="text-zinc-500 block uppercase">Account</span>
-                      <span className="text-emerald-400 font-bold">CBN Verified</span>
+                      <span className="text-zinc-500 block uppercase">Registered</span>
+                      <span className="text-white font-bold">
+                        {userProfile?.createdAt ? new Date(userProfile.createdAt).toLocaleDateString() : 'Active'}
+                      </span>
                     </div>
                   </div>
+
+                  {onTriggerCloudSync && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onTriggerCloudSync();
+                        onShowToast('Synchronizing progress with Naija Life Cloud...');
+                      }}
+                      className="w-full py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-emerald-300 font-bold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Cloud className="w-3.5 h-3.5" />
+                      <span>Sync Progress to Cloud Now</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* ACCOUNT & SECURITY CONTROLS */}
+                <div className="p-4 rounded-3xl bg-zinc-950 border border-zinc-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <h4 className="text-xs font-black text-white uppercase tracking-wider">Account &amp; Security</h4>
+                    </div>
+                    <span className="text-[9px] font-mono text-zinc-500">Cloud Identity</span>
+                  </div>
+
+                  {accountSecurityFeedback && (
+                    <div className={`p-2.5 rounded-xl text-[11px] border ${
+                      accountSecurityFeedback.type === 'ok'
+                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                        : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
+                    }`}>
+                      {accountSecurityFeedback.text}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccountActionTab(accountActionTab === 'username' ? 'none' : 'username');
+                        setNewUsernameInput(userProfile?.username || '');
+                        setUsernameStatusMsg(null);
+                        setAccountSecurityFeedback(null);
+                      }}
+                      className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border cursor-pointer flex items-center justify-center gap-1.5 ${
+                        accountActionTab === 'username'
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white'
+                      }`}
+                    >
+                      <User className="w-3 h-3" />
+                      <span>Change Username</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccountActionTab(accountActionTab === 'password' ? 'none' : 'password');
+                        setCurPwdInput('');
+                        setNewPwdInput('');
+                        setConfirmPwdInput('');
+                        setAccountSecurityFeedback(null);
+                      }}
+                      className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border cursor-pointer flex items-center justify-center gap-1.5 ${
+                        accountActionTab === 'password'
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white'
+                      }`}
+                    >
+                      <Lock className="w-3 h-3" />
+                      <span>Change Password</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccountActionTab(accountActionTab === 'email' ? 'none' : 'email');
+                        setNewEmailInput('');
+                        setEmailChangePwdInput('');
+                        setAccountSecurityFeedback(null);
+                      }}
+                      className={`py-2 px-2.5 rounded-xl text-[10px] font-bold border cursor-pointer flex items-center justify-center gap-1.5 ${
+                        accountActionTab === 'email'
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white'
+                      }`}
+                    >
+                      <Mail className="w-3 h-3" />
+                      <span>Change Email</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={accountSecurityBusy}
+                      onClick={async () => {
+                        const targetEmail = userProfile?.email || userProfile?.gmail || auth.currentUser?.email || '';
+                        if (!targetEmail) return;
+                        setAccountSecurityBusy(true);
+                        setAccountSecurityFeedback(null);
+                        try {
+                          await sendPasswordReset(targetEmail);
+                          setAccountSecurityFeedback({
+                            type: 'ok',
+                            text: `Password reset email sent to ${targetEmail}. Check your inbox or spam folder.`,
+                          });
+                          onShowToast('Password reset link sent!');
+                        } catch (err) {
+                          setAccountSecurityFeedback({
+                            type: 'err',
+                            text: err instanceof Error ? err.message : 'Failed to send reset link.',
+                          });
+                        } finally {
+                          setAccountSecurityBusy(false);
+                        }
+                      }}
+                      className="py-2 px-2.5 rounded-xl text-[10px] font-bold border bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <KeyRound className="w-3 h-3" />
+                      <span>Reset Password</span>
+                    </button>
+                  </div>
+
+                  {/* Change Username Form */}
+                  {accountActionTab === 'username' && (
+                    <div className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 space-y-2">
+                      <label className="text-[10px] font-bold text-zinc-400 block">
+                        New Username (letters, numbers, _, ., -)
+                      </label>
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={newUsernameInput}
+                          onChange={(e) => {
+                            setNewUsernameInput(e.target.value);
+                            setUsernameStatusMsg(null);
+                          }}
+                          placeholder="e.g. naija.gamer"
+                          className="flex-1 bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const res = await checkUsernameAvailable(newUsernameInput);
+                            setUsernameStatusMsg({
+                              type: res.available ? 'ok' : 'err',
+                              text: res.available ? `"${newUsernameInput.trim()}" is available!` : res.error || 'Unavailable',
+                            });
+                          }}
+                          className="px-2.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-[10px] font-bold text-zinc-200 cursor-pointer"
+                        >
+                          Check
+                        </button>
+                      </div>
+                      {usernameStatusMsg && (
+                        <p className={`text-[10px] ${usernameStatusMsg.type === 'ok' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {usernameStatusMsg.text}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        disabled={accountSecurityBusy}
+                        onClick={async () => {
+                          if (!userProfile) return;
+                          setAccountSecurityBusy(true);
+                          setAccountSecurityFeedback(null);
+                          try {
+                            const { newUsername } = await changeCitizenUsername({
+                              oldUsername: userProfile.username,
+                              newUsername: newUsernameInput,
+                            });
+                            const nextProf = { ...userProfile, username: newUsername, citizenName: newUsername };
+                            saveSession(nextProf);
+                            onUpdateProfile?.(nextProf);
+                            setAccountSecurityFeedback({ type: 'ok', text: `Username updated to @${newUsername}!` });
+                            setAccountActionTab('none');
+                            onShowToast(`Username updated to @${newUsername}!`);
+                            triggerSound?.('success');
+                          } catch (err) {
+                            setAccountSecurityFeedback({
+                              type: 'err',
+                              text: err instanceof Error ? err.message : 'Failed to change username.',
+                            });
+                          } finally {
+                            setAccountSecurityBusy(false);
+                          }
+                        }}
+                        className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs cursor-pointer disabled:opacity-50"
+                      >
+                        {accountSecurityBusy ? 'Updating...' : 'Save New Username'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Change Password Form */}
+                  {accountActionTab === 'password' && (
+                    <div className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-zinc-400">Update Password</span>
+                        <button
+                          type="button"
+                          onClick={() => setShowAccountPwds((v) => !v)}
+                          className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                        >
+                          {showAccountPwds ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                          <span>{showAccountPwds ? 'Hide' : 'Show'}</span>
+                        </button>
+                      </div>
+                      <input
+                        type={showAccountPwds ? 'text' : 'password'}
+                        value={curPwdInput}
+                        onChange={(e) => setCurPwdInput(e.target.value)}
+                        placeholder="Current password"
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <input
+                        type={showAccountPwds ? 'text' : 'password'}
+                        value={newPwdInput}
+                        onChange={(e) => setNewPwdInput(e.target.value)}
+                        placeholder="New strong password (min 8 chars)"
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <input
+                        type={showAccountPwds ? 'text' : 'password'}
+                        value={confirmPwdInput}
+                        onChange={(e) => setConfirmPwdInput(e.target.value)}
+                        placeholder="Confirm new password"
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={accountSecurityBusy}
+                        onClick={async () => {
+                          setAccountSecurityBusy(true);
+                          setAccountSecurityFeedback(null);
+                          try {
+                            await updateCitizenPassword(curPwdInput, newPwdInput, confirmPwdInput);
+                            setAccountSecurityFeedback({ type: 'ok', text: 'Password updated successfully!' });
+                            setAccountActionTab('none');
+                            onShowToast('Password updated!');
+                            triggerSound?.('success');
+                          } catch (err) {
+                            setAccountSecurityFeedback({
+                              type: 'err',
+                              text: err instanceof Error ? err.message : 'Failed to update password.',
+                            });
+                          } finally {
+                            setAccountSecurityBusy(false);
+                          }
+                        }}
+                        className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs cursor-pointer disabled:opacity-50"
+                      >
+                        {accountSecurityBusy ? 'Updating...' : 'Save New Password'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Change Email Form */}
+                  {accountActionTab === 'email' && (
+                    <div className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 space-y-2">
+                      <label className="text-[10px] font-bold text-zinc-400 block">
+                        A verification link will be sent to your new email before changing your login email.
+                      </label>
+                      <input
+                        type="email"
+                        value={newEmailInput}
+                        onChange={(e) => setNewEmailInput(e.target.value)}
+                        placeholder="New email address"
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <input
+                        type="password"
+                        value={emailChangePwdInput}
+                        onChange={(e) => setEmailChangePwdInput(e.target.value)}
+                        placeholder="Current password for verification"
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={accountSecurityBusy}
+                        onClick={async () => {
+                          setAccountSecurityBusy(true);
+                          setAccountSecurityFeedback(null);
+                          try {
+                            await requestCitizenEmailUpdate(emailChangePwdInput, newEmailInput);
+                            setAccountSecurityFeedback({
+                              type: 'ok',
+                              text: `Verification email sent to ${newEmailInput.trim()}. Click the link to finalize your email change.`,
+                            });
+                            setAccountActionTab('none');
+                            onShowToast('Verification link sent to new email!');
+                          } catch (err) {
+                            setAccountSecurityFeedback({
+                              type: 'err',
+                              text: err instanceof Error ? err.message : 'Failed to request email change.',
+                            });
+                          } finally {
+                            setAccountSecurityBusy(false);
+                          }
+                        }}
+                        className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs cursor-pointer disabled:opacity-50"
+                      >
+                        {accountSecurityBusy ? 'Sending Verification...' : 'Send Email Change Verification'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Wardrobe & 3D Avatar Customization Card (Available to EVERY Citizen) */}
@@ -7761,9 +8153,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <Sparkles className="w-4 h-4 text-amber-400 animate-spin" style={{ animationDuration: '8s' }} />
                       </div>
                       <div>
-                        <h4 className="text-xs font-black text-white">Wardrobe & 3D Avatar</h4>
+                        <h4 className="text-xs font-black text-white">Wardrobe &amp; 3D Avatar</h4>
                         <span className="text-[10px] text-emerald-400 font-mono font-bold">
-                          Live Server Sync Active
+                          Cloud Synced Character
                         </span>
                       </div>
                     </div>
@@ -7773,7 +8165,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   </div>
 
                   <p className="text-[11px] text-zinc-300 leading-relaxed">
-                    Customize your 3D avatar at any time: toggle gender, select your skin tone, switch between the Dapper Peaky Flat Cap, 3D Afro, Taper Fade, 360 Waves, Locs, and tailored tweed waistcoat outfits. Changes sync across all devices!
+                    Customize your 3D avatar at any time: toggle gender, select your skin tone, switch hairstyles and tailored outfits. Changes sync to your cloud profile and HUD portrait.
                   </p>
 
                   <button
@@ -7783,11 +8175,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         userProfile?.avatar || {
                           gender: 'male',
                           skinTone: '#8d5524',
-                          hairstyle: 'peaky_cap',
+                          hairstyle: 'fade',
                           hairColor: '#18181b',
-                          outfit: 'corporate',
-                          pants: 'slacks',
-                          shoes: 'loafers',
+                          outfit: 'streetwear',
+                          pants: 'jeans',
+                          shoes: 'sneakers',
                           accessory: 'none',
                         }
                       );
@@ -7796,7 +8188,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 transition-all active:scale-98"
                   >
                     <User className="w-4 h-4" />
-                    <span>👔 Edit Avatar & Wardrobe</span>
+                    <span>Edit 3D Avatar &amp; Wardrobe</span>
                   </button>
                 </div>
 
@@ -7821,12 +8213,12 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 transition-all active:scale-98"
                     >
                       <Palette className="w-4 h-4" />
-                      <span>📱 Browse All Wallpapers (105 Available)</span>
+                      <span>Browse All Wallpapers (105 Available)</span>
                     </button>
                   </div>
                 </div>
 
-                {/* OWNER RADIO BROADCAST PANEL (VISIBLE TO OWNER ACCOUNTS) */}
+                {/* APEX SYNDICATE OWNER CONTROLS (STRICTLY VERIFIED kchiboy50@gmail.com + chiboy_52 ONLY) */}
                 {checkIsOwner(userProfile) && (
                   <div className="p-4 rounded-3xl bg-gradient-to-br from-amber-950 via-zinc-950 to-amber-950/40 border-2 border-amber-500/80 shadow-[0_0_25px_rgba(245,158,11,0.25)] space-y-3 text-left">
                     <div className="flex items-center justify-between">
@@ -7834,23 +8226,53 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <Crown className="w-5 h-5 text-amber-400 fill-amber-400" />
                         <div>
                           <h4 className="text-xs font-black text-amber-300 uppercase tracking-wider">
-                            Owner Server Radio Broadcast
+                            Apex Syndicate Owner Controls
                           </h4>
                           <span className="text-[9px] font-mono text-zinc-400">
-                            Naija Life Central Synchronizer · @{userProfile?.username || 'chiboy'}
+                            Verified Master Admin · @{userProfile?.username}
                           </span>
                         </div>
                       </div>
                       <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono text-[9px] font-black border border-amber-500/40">
-                        OWNER VIP
+                        OWNER
                       </span>
                     </div>
 
-                    <p className="text-[10px] text-zinc-300 leading-relaxed">
-                      Upload an MP3 song to play as background music for <strong>every citizen connected to Naija Life servers</strong>. Loops continuously until changed or removed.
-                    </p>
+                    {/* CITIZEN ACCOUNT REGISTRY & NEPA LAUNCHERS */}
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          fetchPlayersRegistry();
+                          setIsPlayersRegistryModalOpen(true);
+                          setRegistryScanResult(null);
+                          setInspectedCitizen(null);
+                          triggerSound?.('coin');
+                        }}
+                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 active:scale-95 transition-all"
+                      >
+                        <Users className="w-3.5 h-3.5 text-black" />
+                        <span>Open Citizen Account Registry</span>
+                      </button>
 
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsNepaControlRoomOpen(true);
+                          triggerSound?.('coin');
+                        }}
+                        className="w-full py-2 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-yellow-300 font-bold text-xs cursor-pointer border border-yellow-500/40 flex items-center justify-center gap-2"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-yellow-400" />
+                        <span>NEPA National Control Room</span>
+                      </button>
+                    </div>
+
+                    {/* SERVER RADIO BROADCAST PANEL */}
                     <div className="p-2.5 rounded-2xl bg-black/60 border border-white/10 space-y-2">
+                      <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider block">
+                        Owner Server Radio Broadcast
+                      </span>
                       <div className="flex items-center justify-between text-[10px] font-mono">
                         <span className="text-zinc-400">Selected MP3 Track:</span>
                         <span className="text-amber-300 font-bold truncate max-w-[170px]">
@@ -7867,7 +8289,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           const file = e.target.files?.[0];
                           if (!file) return;
                           if (!file.name.toLowerCase().endsWith('.mp3') && !file.type.includes('mpeg') && !file.type.includes('mp3')) {
-                            onShowToast('❌ Only .mp3 audio files are accepted!');
+                            onShowToast('Only .mp3 audio files are accepted!');
                             triggerSound?.('alert');
                             return;
                           }
@@ -7875,7 +8297,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           setIsBroadcastingSyncing(true);
                           setBroadcastSyncProgress(10);
 
-                          // Unskippable 2.5s phone sync animation
                           const syncStartTime = Date.now();
                           const syncTimer = setInterval(() => {
                             const elapsed = Date.now() - syncStartTime;
@@ -7888,12 +8309,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               reader.onload = async (evt) => {
                                 const base64 = evt.target?.result as string;
                                 try {
+                                  const headers = await getAuthBearerHeaders();
                                   const res = await fetch('/api/broadcast/music', {
                                     method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
+                                    headers,
                                     body: JSON.stringify({
-                                      username: userProfile?.username || 'chiboy',
-                                      email: userProfile?.gmail || userProfile?.email || 'kchiboy50@gmail.com',
                                       title: file.name.replace(/\.mp3$/i, ''),
                                       audioData: base64,
                                     }),
@@ -7901,7 +8321,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   const data = await res.json();
                                   setIsBroadcastingSyncing(false);
                                   if (res.ok) {
-                                    onShowToast(`🎵 Broadcast Synced! "${file.name}" is now playing for all players across Naija Life servers!`);
+                                    onShowToast(`Broadcast Synced! "${file.name}" is now playing for all players!`);
                                     triggerSound?.('success');
                                   } else {
                                     onShowToast(`Failed: ${data.error || 'Could not broadcast'}`);
@@ -7930,18 +8350,17 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           type="button"
                           onClick={async () => {
                             try {
+                              const headers = await getAuthBearerHeaders();
                               const res = await fetch('/api/broadcast/music', {
                                 method: 'DELETE',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  username: userProfile?.username || 'chiboy',
-                                  email: userProfile?.gmail || userProfile?.email || 'kchiboy50@gmail.com',
-                                }),
+                                headers,
                               });
                               if (res.ok) {
                                 setOwnerBroadcastTrack('');
-                                onShowToast('🔇 Server broadcast removed. Background music stopped.');
+                                onShowToast('Server broadcast removed. Background music stopped.');
                                 triggerSound?.('coin');
+                              } else {
+                                onShowToast('Unauthorized to remove server broadcast.');
                               }
                             } catch {
                               onShowToast('Failed to remove server broadcast.');
@@ -7951,32 +8370,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         >
                           <VolumeX className="w-3.5 h-3.5" />
                           <span>Remove Music</span>
-                        </button>
-                      </div>
-
-                      {/* GLOBAL SERVER SYNC & CITIZEN REGISTRATION */}
-                      <div className="pt-2.5 border-t border-amber-500/30 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">
-                            Global Server Sync & Accounts Registry
-                          </span>
-                          <span className="text-[9px] font-mono text-zinc-400">Owner Excl.</span>
-                        </div>
-                        <p className="text-[10px] text-zinc-400 leading-relaxed">
-                          Inspect all real registered citizens across Naija Life servers, view credentials, and run deep server synchronizer.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            fetchPlayersRegistry();
-                            setIsPlayersRegistryModalOpen(true);
-                            setRegistryScanResult(null);
-                            triggerSound?.('coin');
-                          }}
-                          className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 active:scale-95 transition-all"
-                        >
-                          <Users className="w-3.5 h-3.5 text-black" />
-                          <span>👥 Open Global Server Players Registry ({playersRegistryList.length || 'Live'})</span>
                         </button>
                       </div>
                     </div>
@@ -9619,7 +10012,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
               const isGameOwner = checkIsOwner(userProfile);
               const myTickets = feedbackTickets.filter((t) => t.username.toLowerCase() === userProfile?.username?.toLowerCase());
 
-              const handleFeedbackSubmit = (e: React.FormEvent) => {
+              const handleFeedbackSubmit = async (e: React.FormEvent) => {
                 e.preventDefault();
                 if (!suggestionTitle.trim() || !suggestionDetails.trim()) {
                   onShowToast('Please provide both a title and details for your feedback.');
@@ -9641,17 +10034,32 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 try {
                   localStorage.setItem('naija_life_community_feedback_v1', JSON.stringify(updated));
                 } catch {}
+                try {
+                  await fetch('/api/suggestions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newTicket),
+                  });
+                } catch {}
                 setSuggestionTitle('');
                 setSuggestionDetails('');
                 triggerSound?.('success');
-                onShowToast('✅ Feedback submitted! It has been dispatched to Game Owner @chiboy_52.');
+                onShowToast('Feedback submitted! Dispatched to Apex Syndicate Owner.');
               };
 
-              const handleUpdateTicketStatus = (ticketId: string, status: 'Reviewed' | 'Resolved') => {
+              const handleUpdateTicketStatus = async (ticketId: string, status: 'Reviewed' | 'Resolved') => {
                 const updated = feedbackTickets.map((t) => (t.id === ticketId ? { ...t, status } : t));
                 setFeedbackTickets(updated);
                 try {
                   localStorage.setItem('naija_life_community_feedback_v1', JSON.stringify(updated));
+                } catch {}
+                try {
+                  const headers = await getAuthBearerHeaders();
+                  await fetch(`/api/suggestions/${encodeURIComponent(ticketId)}`, {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({ status }),
+                  });
                 } catch {}
                 triggerSound?.('coin');
                 onShowToast(`Ticket marked as ${status}!`);
@@ -9664,7 +10072,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   localStorage.setItem('naija_life_community_feedback_v1', JSON.stringify(updated));
                 } catch {}
                 triggerSound?.('alert');
-                onShowToast('Ticket deleted from database.');
+                onShowToast('Ticket removed.');
               };
 
               return (
@@ -9713,18 +10121,29 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     >
                       My Tickets ({myTickets.length})
                     </button>
-                    {/* SPECIAL TAB ONLY VISIBLE ON OWNER ACCOUNT (@chiboy_52) */}
                     {isGameOwner && (
                       <button
                         type="button"
-                        onClick={() => setSuggestionTab('owner_inbox')}
+                        onClick={async () => {
+                          setSuggestionTab('owner_inbox');
+                          try {
+                            const headers = await getAuthBearerHeaders();
+                            const res = await fetch('/api/suggestions', { headers });
+                            if (res.ok) {
+                              const data = await res.json();
+                              if (Array.isArray(data.tickets)) {
+                                setFeedbackTickets(data.tickets);
+                              }
+                            }
+                          } catch {}
+                        }}
                         className={`flex-1 py-1.5 px-2 rounded-lg text-[10px] font-black transition-all cursor-pointer flex items-center justify-center gap-1 ${
                           suggestionTab === 'owner_inbox'
                             ? 'bg-amber-400 text-zinc-950 shadow-md'
                             : 'text-amber-400 hover:text-amber-300'
                         }`}
                       >
-                        <span>👑 Owner Inbox</span>
+                        <span>Owner Inbox</span>
                         <span className="px-1.5 py-0.2 rounded-full bg-black/40 text-[9px]">
                           {feedbackTickets.length}
                         </span>
@@ -10305,37 +10724,18 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                     try {
                       localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedProfile));
-                      const rawStored = localStorage.getItem(STORAGE_USERS_KEY);
-                      if (rawStored) {
-                        const stored = JSON.parse(rawStored);
-                        const k = userProfile.username.toLowerCase().trim();
-                        if (stored[k]) {
-                          stored[k].profile = updatedProfile;
-                          localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(stored));
-                        }
-                      }
                     } catch {}
 
-                    try {
-                      await fetch('/api/auth/sync', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          username: userProfile.username,
-                          email: userProfile.email || userProfile.gmail,
-                          profileUpdates: {
-                            avatar: tempAvatar,
-                          },
-                        }),
-                      });
-                    } catch (err) {
-                      console.warn('Backend avatar sync fallback:', err);
+                    if (updatedProfile.uid) {
+                      try {
+                        await syncProfileToCloud(updatedProfile.uid, { avatar: tempAvatar });
+                      } catch {}
                     }
 
                     onUpdateProfile?.(updatedProfile);
                     setIsAvatarModalOpen(false);
                     triggerSound?.('coin');
-                    onShowToast('✅ Wardrobe & 3D Avatar saved & synchronized across Naija Life servers!');
+                    onShowToast('Wardrobe & 3D Avatar saved & synchronized to cloud!');
                   }}
                   className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-black font-black text-xs cursor-pointer shadow-lg flex items-center justify-center gap-2 transition-all active:scale-98"
                 >
@@ -10438,264 +10838,479 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
           )}
 
           {/* =============================================================
-              CENTRAL PLAYERS REGISTRY & CREDENTIAL VAULT (FOR chiboy_52)
+              CITIZEN ACCOUNT REGISTRY — APEX SYNDICATE OWNER SETTINGS (LIVE FIRESTORE)
               ============================================================= */}
-          {isPlayersRegistryModalOpen && (
-            <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col p-4 text-left animate-in fade-in duration-150">
-              {/* Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/50 flex items-center justify-center">
-                    <Crown className="w-4 h-4 text-amber-400 fill-amber-400" />
+          {isPlayersRegistryModalOpen && checkIsOwner(userProfile) && (() => {
+            const pageSize = 6;
+            const filtered = playersRegistryList
+              .filter((p) => {
+                if (registryVerifyFilter === 'verified' && !p.emailVerified) return false;
+                if (registryVerifyFilter === 'unverified' && p.emailVerified) return false;
+                if (registryStatusFilter === 'active' && p.accountStatus !== 'active') return false;
+                if (registryStatusFilter === 'suspended' && p.accountStatus !== 'suspended') return false;
+                const q = registrySearchTerm.toLowerCase().trim();
+                if (!q) return true;
+                return (
+                  (p.username && p.username.toLowerCase().includes(q)) ||
+                  (p.email && p.email.toLowerCase().includes(q)) ||
+                  (p.uid && p.uid.toLowerCase().includes(q)) ||
+                  (p.stateOfOrigin && p.stateOfOrigin.toLowerCase().includes(q))
+                );
+              })
+              .sort((a, b) => {
+                const ta = a.createdAtIso ? new Date(a.createdAtIso).getTime() : 0;
+                const tb = b.createdAtIso ? new Date(b.createdAtIso).getTime() : 0;
+                return registrySortOrder === 'newest' ? tb - ta : ta - tb;
+              });
+
+            const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+            const safePage = Math.min(registryPage, totalPages);
+            const pagedCitizens = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+            return (
+              <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col p-4 text-left animate-in fade-in duration-150">
+                {/* Header */}
+                <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/50 flex items-center justify-center">
+                      <Crown className="w-4 h-4 text-amber-400 fill-amber-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-black text-white uppercase tracking-wider">
+                        Citizen Account Registry
+                      </h3>
+                      <span className="text-[9px] font-mono text-amber-300">
+                        Apex Syndicate · Live Firestore Database
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-xs font-black text-white uppercase tracking-wider">
-                      Naija Life Players Registry
-                    </h3>
-                    <span className="text-[9px] font-mono text-amber-300">
-                      Central Server Vault &middot; @chiboy_52 Owner Privileges
-                    </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPlayersRegistryModalOpen(false);
+                      setInspectedCitizen(null);
+                    }}
+                    className="p-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Registry Dashboard Metrics */}
+                <div className="grid grid-cols-3 gap-1.5 my-2.5 shrink-0 font-mono">
+                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800">
+                    <span className="text-[8px] text-zinc-400 uppercase block">Total</span>
+                    <span className="text-sm font-black text-white">{registryMetrics.total}</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-emerald-950/40 border border-emerald-500/30">
+                    <span className="text-[8px] text-emerald-300 uppercase block">Verified</span>
+                    <span className="text-sm font-black text-emerald-400">{registryMetrics.verified}</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-amber-950/40 border border-amber-500/30">
+                    <span className="text-[8px] text-amber-300 uppercase block">Unverified</span>
+                    <span className="text-sm font-black text-amber-400">{registryMetrics.unverified}</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-sky-950/40 border border-sky-500/30">
+                    <span className="text-[8px] text-sky-300 uppercase block">Recent (7d)</span>
+                    <span className="text-sm font-black text-sky-400">{registryMetrics.recent}</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-zinc-900/80 border border-zinc-800">
+                    <span className="text-[8px] text-zinc-400 uppercase block">Active</span>
+                    <span className="text-sm font-black text-emerald-300">{registryMetrics.active}</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-rose-950/40 border border-rose-500/30">
+                    <span className="text-[8px] text-rose-300 uppercase block">Suspended</span>
+                    <span className="text-sm font-black text-rose-400">{registryMetrics.suspended}</span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsPlayersRegistryModalOpen(false)}
-                  className="p-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-700 cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
 
-              {/* Total Players Count Badge & Search Bar */}
-              <div className="my-3 space-y-2 shrink-0">
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-amber-950/60 via-zinc-950 to-neutral-950 border border-amber-500/40">
-                  <div>
-                    <span className="text-[9px] font-mono text-zinc-400 uppercase block">Total Real Registered Players</span>
-                    <span className="text-base font-black text-amber-300">
-                      {playersRegistryList.length} Real Citizen{playersRegistryList.length === 1 ? '' : 's'}
-                    </span>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-mono font-bold">
-                    ● ALL STORED ON SERVERS
-                  </span>
+                {/* Sub-tabs: Citizens vs Audit Logs */}
+                <div className="flex gap-1.5 mb-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setRegistryActiveTab('citizens')}
+                    className={`flex-1 py-1.5 rounded-xl text-[10px] font-black cursor-pointer border ${
+                      registryActiveTab === 'citizens'
+                        ? 'bg-amber-400 text-black border-amber-300'
+                        : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                    }`}
+                  >
+                    Citizens ({playersRegistryList.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegistryActiveTab('audit')}
+                    className={`flex-1 py-1.5 rounded-xl text-[10px] font-black cursor-pointer border ${
+                      registryActiveTab === 'audit'
+                        ? 'bg-amber-400 text-black border-amber-300'
+                        : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+                    }`}
+                  >
+                    Audit Logs ({registryAuditLogs.length})
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isRegistryScanning}
+                    onClick={async () => {
+                      setIsRegistryScanning(true);
+                      setRegistryScanPct(30);
+                      setRegistryScanMsg('Refreshing live Firestore citizen registry...');
+                      try {
+                        const headers = await getAuthBearerHeaders();
+                        await fetch('/api/owner/global-refresh', {
+                          method: 'POST',
+                          headers,
+                        }).catch(() => {});
+                        setRegistryScanPct(75);
+                        const fresh = await fetchPlayersRegistry();
+                        setRegistryScanPct(100);
+                        setRegistryScanResult(`Synced ${fresh.length} live citizen record(s) from Firestore.`);
+                      } finally {
+                        setIsRegistryScanning(false);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-amber-300 text-[10px] font-bold cursor-pointer flex items-center gap-1"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isRegistryScanning ? 'animate-spin' : ''}`} />
+                    <span>Sync</span>
+                  </button>
                 </div>
 
-                {/* SCAN NAIJA LIFE SERVERS BUTTON */}
-                <button
-                  type="button"
-                  disabled={isRegistryScanning}
-                  onClick={() => {
-                    setIsRegistryScanning(true);
-                    setRegistryScanPct(5);
-                    setRegistryScanResult(null);
-                    setRegistryScanMsg('Connecting to Naija Life Server Core...');
-
-                    const initialCount = playersRegistryList.length;
-                    const startTime = Date.now();
-                    const scanInterval = setInterval(() => {
-                      const elapsed = Date.now() - startTime;
-                      const pct = Math.min(100, Math.round((elapsed / 3200) * 100));
-                      setRegistryScanPct(pct);
-
-                      if (pct < 25) {
-                        setRegistryScanMsg('📡 Connecting to Naija Life Server Core...');
-                      } else if (pct < 60) {
-                        setRegistryScanMsg('🔍 Scanning citizen databases across all regions...');
-                      } else if (pct < 85) {
-                        setRegistryScanMsg('🔐 Decrypting passwords & verifying cryptographic handshakes...');
-                      } else {
-                        setRegistryScanMsg('⚡ Synchronizing registry with live game instances...');
-                      }
-
-                      if (elapsed >= 3200) {
-                        clearInterval(scanInterval);
-                        (async () => {
-                          try {
-                            await fetch('/api/owner/global-refresh', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                username: userProfile?.username || 'chiboy',
-                                email: userProfile?.gmail || userProfile?.email || 'kchiboy50@gmail.com',
-                              }),
-                            });
-                          } catch {}
-
-                          const freshList = await fetchPlayersRegistry();
-                          setIsRegistryScanning(false);
-                          const newCount = freshList.length;
-                          const diff = newCount - initialCount;
-
-                          if (diff > 0) {
-                            setRegistryScanResult(`🎉 Found ${diff} new registered player account${diff === 1 ? '' : 's'}! Added permanently to registry.`);
-                            onShowToast(`🎉 Found ${diff} new player account(s) registered on server!`);
-                            triggerSound?.('success');
-                          } else {
-                            setRegistryScanResult('No new players found. All accounts on Naija Life servers are already synchronized.');
-                            onShowToast('✅ Scan complete: No new players found.');
-                            triggerSound?.('coin');
-                          }
-                        })();
-                      }
-                    }, 80);
-                  }}
-                  className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 text-black font-black text-xs cursor-pointer shadow-md flex items-center justify-center gap-2 active:scale-95 transition-all"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-black ${isRegistryScanning ? 'animate-spin' : ''}`} />
-                  <span>⚡ SCAN NAIJA LIFE SERVERS FOR NEW PLAYERS</span>
-                </button>
-
-                {/* Scan Result Notification */}
                 {registryScanResult && (
-                  <div className="p-2.5 rounded-xl bg-zinc-900 border border-amber-500/40 text-[10px] text-amber-200 font-medium">
+                  <div className="mb-2 p-2 rounded-xl bg-zinc-900 border border-amber-500/40 text-[10px] text-amber-200 shrink-0">
                     {registryScanResult}
                   </div>
                 )}
 
-                {/* Filter Search Input */}
-                <input
-                  type="text"
-                  placeholder="Search players by name or @username..."
-                  value={registrySearchTerm}
-                  onChange={(e) => setRegistrySearchTerm(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-xl bg-zinc-900/90 border border-zinc-700 text-xs text-white placeholder-zinc-500 outline-none focus:border-amber-400 font-mono"
-                />
-              </div>
-
-              {/* Scrollable Player Accounts List */}
-              <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-none">
-                {(() => {
-                  const filtered = playersRegistryList.filter((p) => {
-                    const q = registrySearchTerm.toLowerCase().trim();
-                    if (!q) return true;
-                    return (
-                      (p.username && p.username.toLowerCase().includes(q)) ||
-                      (p.gmail && p.gmail.toLowerCase().includes(q)) ||
-                      (p.citizenName && p.citizenName.toLowerCase().includes(q)) ||
-                      (p.stateOfOrigin && p.stateOfOrigin.toLowerCase().includes(q))
-                    );
-                  });
-
-                  if (filtered.length === 0) {
-                    return (
-                      <div className="text-center py-8 text-zinc-500 text-xs font-mono space-y-2">
-                        <div>No players match your search.</div>
-                        <div className="text-[10px]">Click "SCAN NAIJA LIFE SERVERS" to scan live server database.</div>
-                      </div>
-                    );
-                  }
-
-                  return filtered.map((player, idx) => {
-                    const isOwner = checkIsOwner(player);
-                    return (
-                      <div
-                        key={player.username || idx}
-                        className={`p-3 rounded-2xl border text-left space-y-2 transition-all ${
-                          isOwner
-                            ? 'bg-gradient-to-r from-amber-950/70 via-zinc-950 to-neutral-950 border-amber-500/70 shadow-lg'
-                            : 'bg-zinc-950/90 border-zinc-800 hover:border-zinc-700'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-xl bg-zinc-800 border border-white/10 flex items-center justify-center text-sm">
-                              {player.gender === 'female' ? '👩' : '👨'}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <h4 className="text-xs font-black text-white">{player.citizenName}</h4>
-                                {isOwner && (
-                                  <span className="px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-300 border border-amber-500/60 text-[8px] font-mono font-bold">
-                                    👑 GAME OWNER
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[10px] font-mono text-emerald-400 font-bold block">
-                                @{player.username}
-                              </span>
-                            </div>
-                          </div>
-                          <span className="px-2 py-0.5 rounded-full bg-zinc-900 text-amber-300 font-mono text-[9px] font-black border border-zinc-700">
-                            {player.socialClass?.toUpperCase() || 'MAPO'}
-                          </span>
-                        </div>
-
-                        {/* Player Gmail, Username & Real Password Box (Owner Privileges) */}
-                        <div className="p-2.5 rounded-xl bg-black/80 border border-amber-500/30 space-y-1.5">
-                          <div className="flex items-center justify-between text-[10px] font-mono">
-                            <span className="text-zinc-400 flex items-center gap-1">
-                              <span>📧</span>
-                              <span>Gmail Address:</span>
-                            </span>
-                            <span className="text-emerald-300 font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/40 truncate max-w-[160px]">
-                              {player.gmail || 'citizen@naijalife.ng'}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-[10px] font-mono">
-                            <span className="text-zinc-400 flex items-center gap-1">
-                              <span>👤</span>
-                              <span>Citizen Username:</span>
-                            </span>
-                            <span className="text-white font-bold bg-zinc-900 px-2 py-0.5 rounded border border-zinc-700">
-                              @{player.username}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-[10px] font-mono">
-                            <span className="text-zinc-400 flex items-center gap-1">
-                              <span>🔑</span>
-                              <span>Real Password:</span>
-                            </span>
-                            <span className="text-amber-300 font-black tracking-wider bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/40">
-                              {player.password || '(not set)'}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Meta info grid */}
-                        <div className="grid grid-cols-2 gap-1.5 text-[9px] font-mono text-zinc-400 pt-1 border-t border-zinc-800/60">
-                          <div>Origin: <strong className="text-zinc-200 capitalize">{player.stateOfOrigin || 'Lagos'}</strong></div>
-                          <div>Device: <strong className="text-zinc-200 uppercase truncate">{player.phoneModel?.replace(/_/g, ' ') || 'SmartPhone'}</strong></div>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-
-              {/* Unskippable Registry Scanning Overlay */}
-              {isRegistryScanning && (
-                <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-200">
-                  <div className="w-16 h-16 rounded-full border-4 border-amber-500/30 border-t-amber-400 animate-spin flex items-center justify-center mb-4">
-                    <span className="text-xl">📡</span>
-                  </div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-wider">
-                    Scanning Naija Life Servers
-                  </h3>
-                  <p className="text-xs text-amber-300 mt-2 font-mono max-w-[280px]">
-                    {registryScanMsg}
-                  </p>
-
-                  <div className="w-full max-w-[260px] mt-5 space-y-1.5">
-                    <div className="w-full h-2.5 bg-zinc-800 rounded-full overflow-hidden border border-zinc-700">
-                      <div
-                        className="h-full bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 transition-all duration-100 ease-out rounded-full"
-                        style={{ width: `${registryScanPct}%` }}
+                {registryActiveTab === 'citizens' ? (
+                  <>
+                    {/* Search & Filters */}
+                    <div className="space-y-1.5 mb-2 shrink-0">
+                      <input
+                        type="text"
+                        placeholder="Search username, email, or account UID..."
+                        value={registrySearchTerm}
+                        onChange={(e) => {
+                          setRegistrySearchTerm(e.target.value);
+                          setRegistryPage(1);
+                        }}
+                        className="w-full px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white placeholder-zinc-500 outline-none focus:border-amber-400 font-mono"
                       />
+                      <div className="grid grid-cols-3 gap-1 text-[9px]">
+                        <select
+                          value={registryVerifyFilter}
+                          onChange={(e) => {
+                            setRegistryVerifyFilter(e.target.value as any);
+                            setRegistryPage(1);
+                          }}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-1.5 py-1 text-zinc-200"
+                        >
+                          <option value="all">All Emails</option>
+                          <option value="verified">Verified</option>
+                          <option value="unverified">Unverified</option>
+                        </select>
+                        <select
+                          value={registryStatusFilter}
+                          onChange={(e) => {
+                            setRegistryStatusFilter(e.target.value as any);
+                            setRegistryPage(1);
+                          }}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-1.5 py-1 text-zinc-200"
+                        >
+                          <option value="all">All Status</option>
+                          <option value="active">Active</option>
+                          <option value="suspended">Suspended</option>
+                        </select>
+                        <select
+                          value={registrySortOrder}
+                          onChange={(e) => setRegistrySortOrder(e.target.value as any)}
+                          className="bg-zinc-900 border border-zinc-800 rounded-lg px-1.5 py-1 text-zinc-200"
+                        >
+                          <option value="newest">Newest First</option>
+                          <option value="oldest">Oldest First</option>
+                        </select>
+                      </div>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] font-mono text-zinc-400">
-                      <span>Server Handshake</span>
-                      <span className="text-amber-400 font-bold">{registryScanPct}%</span>
-                    </div>
-                  </div>
 
-                  <p className="text-[9px] text-zinc-500 mt-6 font-mono">
-                    Deep scanning global citizen ledger · Please do not close phone
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-          {isNepaControlRoomOpen && (
+                    {/* Citizens List */}
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-none">
+                      {pagedCitizens.length === 0 ? (
+                        <div className="text-center py-8 text-zinc-500 text-xs font-mono">
+                          No registered citizen accounts match the current filters.
+                        </div>
+                      ) : (
+                        pagedCitizens.map((player) => {
+                          const isOwnerRow = player.role === 'owner' && checkIsOwner(player);
+                          return (
+                            <div
+                              key={player.uid}
+                              className={`p-3 rounded-2xl border text-left space-y-2 transition-all ${
+                                isOwnerRow
+                                  ? 'bg-gradient-to-r from-amber-950/70 via-zinc-950 to-neutral-950 border-amber-500/70'
+                                  : player.accountStatus === 'suspended'
+                                  ? 'bg-rose-950/20 border-rose-500/50'
+                                  : 'bg-zinc-950/90 border-zinc-800'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-xs font-black text-white font-mono">@{player.username}</span>
+                                    {isOwnerRow && (
+                                      <span className="px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-300 border border-amber-500/60 text-[8px] font-black">
+                                        OWNER
+                                      </span>
+                                    )}
+                                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
+                                      player.emailVerified
+                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                    }`}>
+                                      {player.emailVerified ? 'Verified' : 'Unverified'}
+                                    </span>
+                                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
+                                      player.accountStatus === 'suspended'
+                                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                        : 'bg-zinc-800 text-zinc-300'
+                                    }`}>
+                                      {player.accountStatus}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-emerald-300 font-mono truncate mt-0.5">
+                                    {player.email}
+                                  </div>
+                                  <div className="text-[9px] text-zinc-500 font-mono truncate">
+                                    UID: {player.uid}
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setInspectedCitizen(player);
+                                    setSuspendReasonInput(player.suspensionReason || '');
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-amber-300 text-[10px] font-bold flex items-center gap-1 cursor-pointer shrink-0"
+                                >
+                                  <span>Inspect</span>
+                                  <ChevronRight className="w-3 h-3" />
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-1 text-[9px] font-mono text-zinc-400 pt-1 border-t border-zinc-800/60">
+                                <div>
+                                  Joined: <strong className="text-zinc-200">{player.createdAtIso ? new Date(player.createdAtIso).toLocaleDateString() : '—'}</strong>
+                                </div>
+                                <div>
+                                  Last Login: <strong className="text-zinc-200">{player.lastLoginIso ? new Date(player.lastLoginIso).toLocaleDateString() : '—'}</strong>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Pagination */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between pt-2 border-t border-zinc-800 text-[10px] font-mono shrink-0">
+                        <button
+                          type="button"
+                          disabled={safePage <= 1}
+                          onClick={() => setRegistryPage((p) => Math.max(1, p - 1))}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 disabled:opacity-40 cursor-pointer"
+                        >
+                          Prev
+                        </button>
+                        <span className="text-zinc-400">
+                          Page {safePage} / {totalPages} ({filtered.length} matching)
+                        </span>
+                        <button
+                          type="button"
+                          disabled={safePage >= totalPages}
+                          onClick={() => setRegistryPage((p) => Math.min(totalPages, p + 1))}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-300 disabled:opacity-40 cursor-pointer"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* Audit Logs Tab */
+                  <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-none">
+                    {registryAuditLogs.length === 0 ? (
+                      <div className="text-center py-8 text-zinc-500 text-xs font-mono">
+                        No owner audit logs recorded yet.
+                      </div>
+                    ) : (
+                      registryAuditLogs.map((log) => (
+                        <div key={log.id} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1 text-[10px]">
+                          <div className="flex items-center justify-between">
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono font-bold text-[9px]">
+                              {log.action}
+                            </span>
+                            <span className="text-[9px] text-zinc-500 font-mono">
+                              {log.createdAtIso ? new Date(log.createdAtIso).toLocaleString() : ''}
+                            </span>
+                          </div>
+                          <p className="text-zinc-300 leading-snug">{log.details}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* INSPECTED CITIZEN DETAILS MODAL */}
+                {inspectedCitizen && (
+                  <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col p-4 space-y-3 overflow-y-auto">
+                    <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
+                      <div>
+                        <h4 className="text-xs font-black text-white font-mono">@{inspectedCitizen.username}</h4>
+                        <span className="text-[9px] text-zinc-400 font-mono">{inspectedCitizen.uid}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setInspectedCitizen(null)}
+                        className="p-1.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-white cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1.5 text-[10px] font-mono">
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Email (Owner Only):</span>
+                        <span className="text-emerald-300 font-bold">{inspectedCitizen.email}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Role:</span>
+                        <span className="text-amber-300 font-bold uppercase">{inspectedCitizen.role}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Email Verified:</span>
+                        <span className={inspectedCitizen.emailVerified ? 'text-emerald-400' : 'text-amber-400'}>
+                          {inspectedCitizen.emailVerified ? 'Yes' : 'No'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Account Status:</span>
+                        <span className={inspectedCitizen.accountStatus === 'suspended' ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>
+                          {inspectedCitizen.accountStatus.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Registered:</span>
+                        <span className="text-zinc-200">{inspectedCitizen.createdAtIso ? new Date(inspectedCitizen.createdAtIso).toLocaleString() : '—'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Last Login:</span>
+                        <span className="text-zinc-200">{inspectedCitizen.lastLoginIso ? new Date(inspectedCitizen.lastLoginIso).toLocaleString() : '—'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Origin State:</span>
+                        <span className="text-zinc-200 capitalize">{inspectedCitizen.stateOfOrigin || 'lagos'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Social Class:</span>
+                        <span className="text-zinc-200 uppercase">{inspectedCitizen.socialClass || 'mapo'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Bank NGN:</span>
+                        <span className="text-emerald-300">{formatFullNairaNumber(inspectedCitizen.bankNaira || 0)}</span>
+                      </div>
+                    </div>
+
+                    {inspectedCitizen.uid !== userProfile?.uid && inspectedCitizen.role !== 'owner' && (
+                      <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
+                        <span className="text-[10px] font-bold text-zinc-300 block uppercase">
+                          Account Moderation
+                        </span>
+                        {inspectedCitizen.accountStatus === 'active' ? (
+                          <>
+                            <input
+                              type="text"
+                              value={suspendReasonInput}
+                              onChange={(e) => setSuspendReasonInput(e.target.value)}
+                              placeholder="Reason for suspension (optional)..."
+                              className="w-full px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-white"
+                            />
+                            <button
+                              type="button"
+                              disabled={isSuspensionBusy}
+                              onClick={async () => {
+                                setIsSuspensionBusy(true);
+                                try {
+                                  await setCitizenSuspensionStatus({
+                                    targetUid: inspectedCitizen.uid,
+                                    targetUsername: inspectedCitizen.username,
+                                    suspend: true,
+                                    reason: suspendReasonInput.trim() || 'Suspended by Apex Syndicate Owner.',
+                                  });
+                                  await fetchPlayersRegistry();
+                                  setInspectedCitizen((prev) =>
+                                    prev ? { ...prev, accountStatus: 'suspended', suspensionReason: suspendReasonInput.trim() } : null
+                                  );
+                                  onShowToast(`Suspended @${inspectedCitizen.username}.`);
+                                  triggerSound?.('alert');
+                                } catch (err) {
+                                  onShowToast(err instanceof Error ? err.message : 'Suspension failed.');
+                                } finally {
+                                  setIsSuspensionBusy(false);
+                                }
+                              }}
+                              className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              <span>{isSuspensionBusy ? 'Suspending...' : 'Suspend Account'}</span>
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={isSuspensionBusy}
+                            onClick={async () => {
+                              setIsSuspensionBusy(true);
+                              try {
+                                await setCitizenSuspensionStatus({
+                                  targetUid: inspectedCitizen.uid,
+                                  targetUsername: inspectedCitizen.username,
+                                  suspend: false,
+                                });
+                                await fetchPlayersRegistry();
+                                setInspectedCitizen((prev) =>
+                                  prev ? { ...prev, accountStatus: 'active', suspensionReason: undefined } : null
+                                );
+                                onShowToast(`Restored @${inspectedCitizen.username} to active status.`);
+                                triggerSound?.('success');
+                              } catch (err) {
+                                onShowToast(err instanceof Error ? err.message : 'Restore failed.');
+                              } finally {
+                                setIsSuspensionBusy(false);
+                              }
+                            }}
+                            className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                            <span>{isSuspensionBusy ? 'Restoring...' : 'Restore Account'}</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isRegistryScanning && (
+                  <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center">
+                    <div className="w-12 h-12 rounded-full border-4 border-amber-500/30 border-t-amber-400 animate-spin mb-3" />
+                    <p className="text-xs text-amber-300 font-mono">{registryScanMsg} ({registryScanPct}%)</p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {isNepaControlRoomOpen && checkIsOwner(userProfile) && (
             <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col p-4 text-left animate-in fade-in duration-150">
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
@@ -10708,7 +11323,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       NEPA National Control Room
                     </h3>
                     <span className="text-[9px] font-mono text-zinc-400">
-                      National Control Center, Osogbo &middot; @chiboy_52
+                      National Control Center, Osogbo &middot; @{userProfile?.username}
                     </span>
                   </div>
                 </div>
@@ -10741,10 +11356,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       return next;
                     });
                     try {
+                      const headers = await getAuthBearerHeaders();
                       const res = await fetch('/api/nepa/toggle', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: 'chiboy_52', masterBlackout: true }),
+                        headers,
+                        body: JSON.stringify({ masterBlackout: true }),
                       });
                       const d = await res.json();
                       if (d.grid) {
@@ -10756,12 +11372,12 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         } catch {}
                       }
                     } catch {}
-                    onShowToast('🚨 NATIONAL BLACKOUT TRIGGERED! Nigeria plunged into darkness! Canada 24/7 power unaffected.');
+                    onShowToast('NATIONAL BLACKOUT TRIGGERED! Canada 24/7 power unaffected.');
                     triggerSound?.('alert');
                   }}
                   className="py-2.5 px-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-200 font-black text-[10px] text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 active:scale-95 transition-all"
                 >
-                  <span>🚨 Master Blackout (Nigeria Off)</span>
+                  <span>Master Blackout (Nigeria Off)</span>
                 </button>
 
                 <button
@@ -10783,10 +11399,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       return next;
                     });
                     try {
+                      const headers = await getAuthBearerHeaders();
                       const res = await fetch('/api/nepa/toggle', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: 'chiboy_52', masterPowerOn: true }),
+                        headers,
+                        body: JSON.stringify({ masterPowerOn: true }),
                       });
                       const d = await res.json();
                       if (d.grid) {
@@ -10798,19 +11415,19 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         } catch {}
                       }
                     } catch {}
-                    onShowToast('⚡ NATIONWIDE POWER RESTORED! "Up NEPA!" shouts echo across Nigeria!');
+                    onShowToast('NATIONWIDE POWER RESTORED! "Up NEPA!" shouts echo across Nigeria!');
                     triggerSound?.('success');
                   }}
                   className="py-2.5 px-2 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-200 font-black text-[10px] text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 active:scale-95 transition-all"
                 >
-                  <span>⚡ Restore Nationwide Grid</span>
+                  <span>Restore Nationwide Grid</span>
                 </button>
               </div>
 
               {/* Live States List */}
               <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 scrollbar-none">
                 <div className="text-[10px] font-mono text-zinc-400 uppercase font-bold px-1 pb-1">
-                  Substations & Feeder Lines (36 States + FCT + Canada):
+                  Substations &amp; Feeder Lines (36 States + FCT + Canada):
                 </div>
                 {Object.entries(nepaControlGrid).map(([stId, stData]) => {
                   const isCanada = stId === 'canada';
@@ -10831,7 +11448,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             <span>{stData.name}</span>
                             {isCanada && (
                               <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-950 text-red-300 border border-red-500/40 font-mono font-bold">
-                                🇨🇦 CAN
+                                CAN
                               </span>
                             )}
                           </div>
@@ -10870,11 +11487,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               return updated;
                             });
                             try {
+                              const headers = await getAuthBearerHeaders();
                               const res = await fetch('/api/nepa/toggle', {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers,
                                 body: JSON.stringify({
-                                  username: 'chiboy_52',
                                   stateId: stId,
                                   lightOn: nextStatus,
                                 }),
@@ -10889,7 +11506,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 } catch {}
                               }
                             } catch {}
-                            onShowToast(`⚡ ${stData.name} substation switched ${nextStatus ? 'ON (Up NEPA!)' : 'OFF (Light Out)'}`);
+                            onShowToast(`${stData.name} substation switched ${nextStatus ? 'ON (Up NEPA!)' : 'OFF (Light Out)'}`);
                             triggerSound?.(nextStatus ? 'success' : 'alert');
                           }}
                           className={`px-3 py-1 rounded-lg text-[9px] font-mono font-black uppercase cursor-pointer border transition-all ${

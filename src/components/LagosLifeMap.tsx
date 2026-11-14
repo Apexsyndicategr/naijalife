@@ -147,6 +147,8 @@ export interface LagosLifeMapProps {
   onShowToast?: (message: string) => void;
   triggerSound?: (type: 'coin' | 'stamp' | 'alert' | 'success') => void;
   onUpdateUserProfile?: (updatedProfile: UserProfile) => void;
+  cloudSyncStatus?: 'synced' | 'syncing' | 'conflict' | 'offline';
+  onTriggerCloudSync?: () => Promise<void> | void;
 }
 
 export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
@@ -184,6 +186,8 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
   onShowToast = () => {},
   triggerSound,
   onUpdateUserProfile,
+  cloudSyncStatus = 'synced',
+  onTriggerCloudSync,
 }) => {
   // Map pan drag state (Zero-Lag Direct Hardware GPU Composited Transform)
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: -750, y: -500 });
@@ -655,7 +659,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       return;
     }
 
-    const isOwner = userProfile?.username?.toLowerCase() === 'chiboy_52';
+    const isOwner = Boolean(userProfile?.isOwner === true && userProfile?.role === 'owner' && userProfile?.isVerified === true);
 
     // PRIVATE FLEET TRAVEL (Private Jet, Helicopter, Yacht)
     if (mode === 'private') {
@@ -824,7 +828,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
     );
     const flightFare = details.totalFareNGN;
 
-    const isOwner = userProfile?.username?.toLowerCase() === 'chiboy_52';
+    const isOwner = Boolean(userProfile?.isOwner === true && userProfile?.role === 'owner' && userProfile?.isVerified === true);
     if (moneyNGN < flightFare && !isOwner) {
       onShowToast(`Insufficient funds! Flight ticket costs ${formatNaira(flightFare)}`);
       triggerSound?.('alert');
@@ -3029,6 +3033,8 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
         onShowToast={onShowToast}
         onLogout={onLogout}
         onUpdateProfile={onUpdateUserProfile}
+        cloudSyncStatus={cloudSyncStatus}
+        onTriggerCloudSync={onTriggerCloudSync}
         triggerSound={triggerSound}
         currentStateId={currentState.id}
         initialApp={phoneInitialApp}

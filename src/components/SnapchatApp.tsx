@@ -33,6 +33,7 @@ import { UserProfile, CharacterAvatar } from '../types/game';
 import { CharacterRenderer } from './CharacterRenderer';
 import { getStoredUsers } from './AuthPortal';
 import { formatNaira } from '../utils/formatNaira';
+import { isStrictOwnerIdentity } from '../utils/authValidation';
 
 const DEFAULT_AVATAR: CharacterAvatar = {
   gender: 'unisex',
@@ -81,7 +82,15 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
   triggerSound,
   onShowToast,
 }) => {
-  const isOwner = userProfile?.username?.toLowerCase() === 'chiboy_52';
+  const isOwner = Boolean(
+    userProfile?.isOwner === true &&
+      userProfile?.role === 'owner' &&
+      isStrictOwnerIdentity({
+        email: userProfile.email || userProfile.gmail,
+        emailVerified: userProfile.isVerified,
+        username: userProfile.username,
+      })
+  );
   const defaultSnapHandle = userProfile?.snapUsername || userProfile?.username || 'citizen';
 
   // --- Snapchat Authentication State (in-app dedicated account) ---
@@ -178,7 +187,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
         }
       } catch {}
 
-      // Fallback to local stored citizens
+      // Fallback to local stored citizens (without leaking credentials or granting unverified owner flags)
       const localUsers = getStoredUsers();
       const list: RealSnapUser[] = Object.values(localUsers).map((u) => ({
         username: u.profile.username,
@@ -186,7 +195,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
         lastName: u.profile.lastName,
         location: u.profile.lastLocationStateId === 'canada' ? 'Toronto, Canada' : `${u.profile.spawnStateId || 'Lagos'}, Nigeria`,
         avatar: u.profile.avatar || DEFAULT_AVATAR,
-        isSnapPlus: u.profile.username.toLowerCase() === 'chiboy_52',
+        isSnapPlus: Boolean(u.profile.isSnapPlus),
       }));
       setRealCitizens(list);
     };
@@ -600,7 +609,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                             <span className="text-xs font-black text-white truncate">
                               {player.firstName} {player.lastName}
                             </span>
-                            {player.username.toLowerCase() === 'chiboy_52' && (
+                            {player.username.toLowerCase() === 'chiboy_52' && player.isSnapPlus && (
                               <span className="text-[9px] px-1 py-0.2 rounded bg-amber-400 text-black font-black">
                                 OWNER
                               </span>

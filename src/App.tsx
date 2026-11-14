@@ -74,14 +74,24 @@ import {
   getStoredSession,
   clearSession,
   saveSession,
-  getStoredUsers,
-  STORAGE_USERS_KEY,
+  getStateById,
 } from './components/AuthPortal';
 import {
   DeviceOptimizationLoader,
   DeviceOptimizationProfile,
 } from './components/DeviceOptimizationLoader';
 import { ServerSyncLoader } from './components/ServerSyncLoader';
+import { auth, db } from './firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { isStrictOwnerIdentity } from './utils/authValidation';
+import {
+  CloudGameSaveDoc,
+  loadAuthenticatedCitizenSession,
+  logoutFirebaseUser,
+  subscribeToAuthState,
+  syncGameSaveToCloud,
+  syncProfileToCloud,
+} from './services/firebaseAccountService';
 
 /* =========================================================================
    1. RANDOM NIGERIAN SPAWN ENGINE: ALL 36 STATES + FCT
@@ -1226,13 +1236,21 @@ export default function App() {
   // Immigration Sub-Tab: Official vs Unofficial
   const [immigrationSubTab, setImmigrationSubTab] = useState<'official' | 'unofficial'>('official');
 
-  // User Authentication Session State (Always requires clicking Continue Life or logging in via AuthPortal)
+  // User Authentication Session State (Restored via Firebase Auth persistence when Remember Me is enabled)
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isRestoringAuth, setIsRestoringAuth] = useState<boolean>(true);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
+  const [suspendedNoticeReason, setSuspendedNoticeReason] = useState<string | null>(null);
 
   // Device hardware profile & optimization state (unskippable authentic scan before login)
   const [deviceOptimizationProfile, setDeviceOptimizationProfile] = useState<DeviceOptimizationProfile | null>(null);
-  // Special animated server sync state (synchronizes all accounts across Naija Life central servers)
+  // Special animated server sync state
   const [isServerSyncCompleted, setIsServerSyncCompleted] = useState<boolean>(false);
+
+  // Cloud Save Sync & Conflict Handling State
+  const cloudSaveVersionRef = useRef<number>(0);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'conflict' | 'offline'>('synced');
+  const [saveConflictData, setSaveConflictData] = useState<CloudGameSaveDoc | null>(null);
 
   // Storage, Save & Load State
   const [showStorageModal, setShowStorageModal] = useState(false);
@@ -1359,23 +1377,21 @@ export default function App() {
           const statusData = await statusRes.json();
           if (statusData.globalRefreshCounter && statusData.globalRefreshCounter !== lastGlobalCounterRef.current) {
             lastGlobalCounterRef.current = statusData.globalRefreshCounter;
-            // Refetch active user session data if logged in
-            const curSession = getStoredSession();
-            if (curSession?.username) {
-              const accRes = await fetch('/api/auth/all-accounts');
-              if (accRes.ok) {
-                const accData = await accRes.json();
-                const cleanU = curSession.username.toLowerCase().trim();
-                const allCitizens = accData.citizens || accData.accounts || {};
-                if (allCitizens[cleanU]?.profile) {
-                  const updatedProfile = allCitizens[cleanU].profile;
-                  saveSession(updatedProfile);
-                  setCurrentUser(updatedProfile);
-                  setWallet((w) => ({
-                    ...w,
-                    NGN: updatedProfile.bankNaira || w.NGN,
-                  }));
-                }
+            if (auth.currentUser && currentUser) {
+              const refreshed = await loadAuthenticatedCitizenSession(auth.currentUser);
+              if (refreshed.status === 'SUSPENDED') {
+                await logoutFirebaseUser().catch(() => {});
+                clearSession();
+                setCurrentUser(null);
+                setSuspendedNoticeReason(refreshed.reason);
+                showToast('Your account has been suspended by administration.');
+              } else if (refreshed.status === 'AUTHENTICATED') {
+                saveSession(refreshed.profile);
+                setCurrentUser(refreshed.profile);
+                setWallet((w) => ({
+                  ...w,
+                  NGN: (refreshed.profile.cashNaira || 0) + (refreshed.profile.bankNaira || 0) || w.NGN,
+                }));
               }
             }
           }
@@ -1837,15 +1853,16 @@ export default function App() {
           const stateId = currentState?.id?.toLowerCase() || 'lagos';
           const blackoutChance = (stateId === 'fct' || stateId === 'fct_abuja' || stateId === 'abuja') ? 0.015 : stateId === 'lagos' ? 0.06 : 0.12;
           if (Math.random() < blackoutChance) {
-            const isOwnerUser =
-              currentUser?.isOwner === true ||
-              currentUser?.isOwnerAccount === true ||
-              currentUser?.username?.toLowerCase() === 'chiboy' ||
-              currentUser?.username?.toLowerCase() === 'chiboy_52' ||
-              currentUser?.gmail?.toLowerCase() === 'kchiboy50@gmail.com' ||
-              currentUser?.email?.toLowerCase() === 'kchiboy50@gmail.com' ||
-              currentUser?.citizenName?.toLowerCase() === 'chiboy' ||
-              currentUser?.firstName?.toLowerCase() === 'chiboy';
+            const isOwnerUser = Boolean(
+              currentUser?.isOwner === true &&
+                currentUser?.role === 'owner' &&
+                currentUser?.isVerified === true &&
+                isStrictOwnerIdentity({
+                  email: currentUser.email || currentUser.gmail,
+                  emailVerified: currentUser.isVerified,
+                  username: currentUser.username,
+                })
+            );
             const hasSolarOrInverter =
               isOwnerUser ||
               currentUser?.furnitureBought?.includes('comf_solar_array') ||
@@ -2793,54 +2810,20 @@ export default function App() {
     terminalLogs,
   ]);
 
-  const handleManualSave = () => {
-    const saveObj = buildCurrentSaveState();
-    const ok = saveGameState(saveObj);
-    if (ok) {
-      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      setLastAutoSaveTime(timeStr);
-      showToast('Game saved successfully to browser storage!');
-      addLog('save', `Manual Save: Character "${playerName}" saved at Day ${gameDay} (${String(gameHour).padStart(2, '0')}:00).`);
-      triggerSound('stamp');
-    } else {
-      showToast('Failed to save to local storage.');
-    }
-  };
-
-  const handleAutoSave = useCallback(() => {
-    if (isPaused) return;
-    const saveObj = buildCurrentSaveState();
-    const ok = saveGameState(saveObj);
-    if (ok) {
-      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      setLastAutoSaveTime(timeStr);
-    }
-  }, [isPaused, buildCurrentSaveState]);
-
-  // 30-Second Auto-Save Interval Engine
-  useEffect(() => {
-    if (!currentUser) return;
-    const timer = setInterval(() => {
-      handleAutoSave();
-    }, 30000);
-    return () => clearInterval(timer);
-  }, [currentUser, handleAutoSave]);
-
-  const handleExportSave = () => {
-    const saveObj = buildCurrentSaveState();
-    exportSaveFile(saveObj);
-    showToast(`Save exported as JSON for ${playerName}!`);
-    addLog('save', `Exported save file backup (${playerName}_day${gameDay}.json).`);
-  };
-
-  const restoreSavedState = (saved: SavedGameState) => {
+  const restoreSavedState = useCallback((saved: SavedGameState & {
+    ownedProperties?: PropertyAsset[];
+    activeHome?: PropertyAsset | null;
+    ownedVehicles?: VehicleAsset[];
+    activeVehicle?: VehicleAsset | null;
+    investments?: InvestmentAsset[];
+  }) => {
     const bState = ALL_36_NIGERIAN_STATES.find((s) => s.id === saved.birthStateId) || ALL_36_NIGERIAN_STATES[0];
     const cState = ALL_36_NIGERIAN_STATES.find((s) => s.id === saved.currentStateId) || bState;
     const intlCountry = saved.internationalCountryId
       ? DESTINATION_COUNTRIES.find((c) => c.id === saved.internationalCountryId) || null
       : null;
 
-    setPlayerName(saved.playerName || 'Emeka Adeleke');
+    setPlayerName(saved.playerName || 'Citizen');
     setBirthState(bState);
     setCurrentState(cState);
     setLocationMode(saved.locationMode || 'NIGERIA');
@@ -2872,9 +2855,106 @@ export default function App() {
     });
     setSkills(saved.skills || []);
     setTravelHistory(saved.travelHistory || []);
+    if (Array.isArray(saved.ownedProperties)) setOwnedProperties(saved.ownedProperties);
+    if (saved.activeHome !== undefined) setActiveHome(saved.activeHome);
+    if (Array.isArray(saved.ownedVehicles)) setOwnedVehicles(saved.ownedVehicles);
+    if (saved.activeVehicle !== undefined) setActiveVehicle(saved.activeVehicle);
+    if (Array.isArray(saved.investments)) setInvestments(saved.investments);
     if (saved.terminalLogs && saved.terminalLogs.length > 0) {
       setTerminalLogs(saved.terminalLogs);
     }
+  }, []);
+
+  const buildCloudSaveSnapshot = useCallback((): CloudGameSaveDoc['saveData'] => {
+    return {
+      ...buildCurrentSaveState(),
+      ownedProperties,
+      activeHome,
+      ownedVehicles,
+      activeVehicle,
+      investments,
+    };
+  }, [buildCurrentSaveState, ownedProperties, activeHome, ownedVehicles, activeVehicle, investments]);
+
+  const performCloudSaveSync = useCallback(async (profileToSync?: UserProfile | null, forceOverwrite = false) => {
+    const uid = auth.currentUser?.uid || profileToSync?.uid || currentUser?.uid;
+    if (!uid || !auth.currentUser || !auth.currentUser.emailVerified) return;
+
+    setCloudSyncStatus('syncing');
+    try {
+      const targetProfile = profileToSync || currentUser;
+      if (targetProfile) {
+        await syncProfileToCloud(uid, targetProfile);
+      }
+
+      const knownVersion = forceOverwrite
+        ? Math.max(cloudSaveVersionRef.current, saveConflictData?.version || 0)
+        : cloudSaveVersionRef.current;
+
+      const result = await syncGameSaveToCloud({
+        uid,
+        saveState: buildCloudSaveSnapshot(),
+        knownVersion,
+        clientUpdatedAtMs: Date.now(),
+      });
+
+      if (result.status === 'SYNCED') {
+        cloudSaveVersionRef.current = result.version;
+        setSaveConflictData(null);
+        setCloudSyncStatus('synced');
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setLastAutoSaveTime(timeStr);
+      } else if (result.status === 'CONFLICT_CLOUD_NEWER' && result.newerCloudSave) {
+        setCloudSyncStatus('conflict');
+        setSaveConflictData(result.newerCloudSave);
+        showToast('Newer cloud save detected from another device! Please resolve conflict.');
+      } else {
+        setCloudSyncStatus('offline');
+      }
+    } catch {
+      setCloudSyncStatus('offline');
+    }
+  }, [currentUser, buildCloudSaveSnapshot, saveConflictData, showToast]);
+
+  const handleManualSave = () => {
+    const saveObj = buildCurrentSaveState();
+    const ok = saveGameState(saveObj);
+    if (ok) {
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setLastAutoSaveTime(timeStr);
+      showToast('Game saved locally & syncing to cloud...');
+      addLog('save', `Manual Save: Character "${playerName}" saved at Day ${gameDay} (${String(gameHour).padStart(2, '0')}:00).`);
+      triggerSound('stamp');
+      performCloudSaveSync();
+    } else {
+      showToast('Failed to save to local storage.');
+    }
+  };
+
+  const handleAutoSave = useCallback(() => {
+    if (isPaused) return;
+    const saveObj = buildCurrentSaveState();
+    const ok = saveGameState(saveObj);
+    if (ok) {
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setLastAutoSaveTime(timeStr);
+    }
+  }, [isPaused, buildCurrentSaveState]);
+
+  // 30-Second Auto-Save Interval Engine
+  useEffect(() => {
+    if (!currentUser) return;
+    const timer = setInterval(() => {
+      handleAutoSave();
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [currentUser, handleAutoSave]);
+
+  const handleExportSave = () => {
+    const saveObj = buildCurrentSaveState();
+    exportSaveFile(saveObj);
+    showToast(`Save exported as JSON for ${playerName}!`);
+    addLog('save', `Exported save file backup (${playerName}_day${gameDay}.json).`);
   };
 
   const handleImportSave = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2976,21 +3056,232 @@ export default function App() {
     triggerSound('stamp');
   };
 
-  const persistLatestUserState = useCallback(() => {
+  const applyAuthenticatedSession = useCallback(
+    (profile: UserProfile, spawnState: any, cloudSave?: CloudGameSaveDoc | null) => {
+      const isOwner = Boolean(
+        profile.isOwner === true &&
+          profile.role === 'owner' &&
+          profile.isVerified === true &&
+          isStrictOwnerIdentity({
+            email: profile.email || profile.gmail,
+            emailVerified: profile.isVerified,
+            username: profile.username,
+          })
+      );
+
+      const SEXTILLION_999 = 9.99e23;
+      const hydratedProfile: UserProfile = isOwner
+        ? {
+            ...profile,
+            bankNaira: SEXTILLION_999,
+            cashNaira: SEXTILLION_999,
+            bankCAD: SEXTILLION_999,
+            savingsCAD: SEXTILLION_999,
+            cashUSD: 1000000000,
+            cashGBP: 1000000000,
+            cashEUR: 1000000000,
+          }
+        : profile;
+
+      setPendingVerificationEmail(null);
+      setSuspendedNoticeReason(null);
+      setCurrentUser(hydratedProfile);
+      setPlayerName(`${hydratedProfile.firstName || hydratedProfile.username} ${hydratedProfile.lastName || ''}`.trim());
+      saveSession(hydratedProfile);
+
+      if (cloudSave && cloudSave.saveData) {
+        cloudSaveVersionRef.current = cloudSave.version || 1;
+        restoreSavedState(cloudSave.saveData);
+        saveGameState(cloudSave.saveData);
+        setCloudSyncStatus('synced');
+      } else {
+        cloudSaveVersionRef.current = 0;
+        const targetLocId = (hydratedProfile?.lastLocationStateId || spawnState?.id || hydratedProfile?.spawnStateId || 'lagos').toLowerCase().trim();
+        const isCanada = targetLocId === 'canada';
+        if (isCanada) {
+          setLocationMode('INTERNATIONAL');
+          setCurrentState(CANADA_STATE_DATA as any);
+          setBirthState(CANADA_STATE_DATA as any);
+        } else {
+          setLocationMode('NIGERIA');
+          const fullState =
+            NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === targetLocId) ||
+            NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === 'lagos') ||
+            NIGERIA_36_STATES_ALPHABETICAL[0];
+          const legacyMatch =
+            ALL_36_NIGERIAN_STATES.find((s) => s.id === targetLocId) || ALL_36_NIGERIAN_STATES[0];
+          const match = {
+            ...legacyMatch,
+            ...fullState,
+            id: targetLocId,
+            locations: fullState.locations || [],
+          };
+          setBirthState(match as any);
+          setCurrentState(match as any);
+        }
+
+        setWallet({
+          NGN: isOwner ? SEXTILLION_999 : (hydratedProfile.cashNaira || 0) + (hydratedProfile.bankNaira || 0),
+          USD: isOwner ? 1000000000 : (hydratedProfile.cashUSD || 0),
+          GBP: isOwner ? 1000000000 : (hydratedProfile.cashGBP || 0),
+          EUR: isOwner ? 1000000000 : (hydratedProfile.cashEUR || 0),
+          CAD: isOwner ? SEXTILLION_999 : (hydratedProfile.bankCAD || 0),
+        });
+        setEnergy(hydratedProfile.energy ?? 100);
+        setHunger(hydratedProfile.hunger ?? 90);
+        setHappiness(hydratedProfile.happiness ?? 85);
+
+        if (isOwner) {
+          const ownerVilla: PropertyAsset = {
+            id: 'owner_banana_island_villa',
+            title: 'Banana Island 7-Bedroom Waterfront Mansion',
+            type: 'villa',
+            stateId: 'lagos',
+            neighborhood: 'Banana Island, Ikoyi, Lagos',
+            annualRent: 120000000,
+            buyPrice: 1500000000,
+            icon: '🏰',
+            desc: 'Grand palatial waterfront estate with private yacht jetty, infinity pool, smart elevator, and helipad.',
+            roomsCount: 7,
+            floorsCount: 3,
+            isOwned: true,
+            x: 82,
+            y: 28,
+          };
+          const ownerRide: VehicleAsset = {
+            id: 'owner_rolls_royce',
+            name: 'Rolls-Royce Phantom VIII Mansory Edition',
+            type: 'hyper_luxury',
+            price: 850000000,
+            speed: '280 km/h',
+            prestige: 100,
+            icon: '👑',
+            desc: 'Bespoke Starlight ceiling, bulletproof executive luxury cruiser.',
+            isOwned: true,
+          };
+          setOwnedProperties([ownerVilla]);
+          setActiveHome(ownerVilla);
+          setOwnedVehicles([ownerRide]);
+          setActiveVehicle(ownerRide);
+        } else {
+          const userStateId = hydratedProfile.spawnStateId || 'lagos';
+          let starterHouse: PropertyAsset;
+          if (hydratedProfile.socialClass === 'nepo') {
+            starterHouse = {
+              id: `starter_nepo_home_${hydratedProfile.username}`,
+              title: `${hydratedProfile.firstName}'s Luxury Villa & Compound`,
+              type: 'villa',
+              stateId: userStateId,
+              neighborhood: userStateId === 'lagos' ? 'Lekki Phase 1' : 'Maitama District',
+              annualRent: 12000000,
+              buyPrice: 180000000,
+              icon: '🏰',
+              desc: 'Two-story private luxury duplex villa with swimming pool, generator house and gated perimeter.',
+              roomsCount: 5,
+              floorsCount: 2,
+              isOwned: true,
+              x: 72,
+              y: 32,
+            };
+          } else if (hydratedProfile.socialClass === 'mapo') {
+            starterHouse = {
+              id: `starter_mapo_home_${hydratedProfile.username}`,
+              title: `${hydratedProfile.firstName}'s 4-Bedroom Flat Residence`,
+              type: 'flat',
+              stateId: userStateId,
+              neighborhood: userStateId === 'lagos' ? 'Surulere High Street' : 'Garki Area 2',
+              annualRent: 2500000,
+              buyPrice: 45000000,
+              icon: '🏢',
+              desc: 'Spacious serviced 4-bedroom flat with dedicated prepaid meter and balcony.',
+              roomsCount: 4,
+              floorsCount: 1,
+              isRented: true,
+              x: 48,
+              y: 46,
+            };
+          } else {
+            starterHouse = {
+              id: `starter_lapo_home_${hydratedProfile.username}`,
+              title: `${hydratedProfile.firstName}'s Self-Contain Apartment`,
+              type: 'self_contain',
+              stateId: userStateId,
+              neighborhood: userStateId === 'lagos' ? 'Yaba Tech Corridor' : 'Kubwa Suburb',
+              annualRent: 400000,
+              buyPrice: 9000000,
+              icon: '🏠',
+              desc: 'Neat self-contain apartment with ensuite bathroom, water tank and front veranda.',
+              roomsCount: 1,
+              floorsCount: 1,
+              isRented: true,
+              x: 32,
+              y: 68,
+            };
+          }
+          setOwnedProperties([starterHouse]);
+          setActiveHome(starterHouse);
+        }
+      }
+
+      const activeStateId = (hydratedProfile?.lastLocationStateId || spawnState?.id || hydratedProfile?.spawnStateId || 'lagos').toLowerCase();
+      addLog(
+        'immigration',
+        `Cloud Session Authenticated: Welcome @${hydratedProfile.username} to Naija Life! Active Region: ${activeStateId === 'canada' ? 'Canada' : activeStateId.toUpperCase()}.`
+      );
+      showToast(`Welcome, ${hydratedProfile.firstName}! Cloud profile synchronized.`);
+    },
+    [restoreSavedState, addLog, showToast]
+  );
+
+  // Firebase Auth Remember-Me Session Restoration Listener
+  useEffect(() => {
+    const unsubscribe = subscribeToAuthState(async (fbUser) => {
+      if (!fbUser) {
+        setIsRestoringAuth(false);
+        return;
+      }
+      if (currentUser && currentUser.uid === fbUser.uid) {
+        setIsRestoringAuth(false);
+        return;
+      }
+      try {
+        const result = await loadAuthenticatedCitizenSession(fbUser);
+        if (result.status === 'NEEDS_VERIFICATION') {
+          setPendingVerificationEmail(result.email);
+          setSuspendedNoticeReason(null);
+          setCurrentUser(null);
+        } else if (result.status === 'SUSPENDED') {
+          await logoutFirebaseUser().catch(() => {});
+          clearSession();
+          setSuspendedNoticeReason(result.reason);
+          setPendingVerificationEmail(null);
+          setCurrentUser(null);
+        } else if (result.status === 'AUTHENTICATED') {
+          const spawnState = getStateById(result.profile.spawnStateId);
+          applyAuthenticatedSession(result.profile, spawnState, result.cloudSave);
+        }
+      } catch {
+        // Fallback to manual login if offline or record missing
+      } finally {
+        setIsRestoringAuth(false);
+      }
+    });
+    return () => unsubscribe();
+  }, [applyAuthenticatedSession, currentUser]);
+
+  const persistLatestUserState = useCallback(async () => {
     if (!currentUser) return;
     try {
-      const users = getStoredUsers();
-      const cleanUsername = currentUser.username.toLowerCase().trim();
-      const existingRec = users[cleanUsername];
-      const isOwner =
-        currentUser.isOwner === true ||
-        currentUser.isOwnerAccount === true ||
-        cleanUsername === 'chiboy' ||
-        cleanUsername === 'chiboy_52' ||
-        currentUser.gmail?.toLowerCase() === 'kchiboy50@gmail.com' ||
-        currentUser.email?.toLowerCase() === 'kchiboy50@gmail.com' ||
-        currentUser.citizenName?.toLowerCase() === 'chiboy' ||
-        currentUser.firstName?.toLowerCase() === 'chiboy';
+      const isOwner = Boolean(
+        currentUser.isOwner === true &&
+          currentUser.role === 'owner' &&
+          currentUser.isVerified === true &&
+          isStrictOwnerIdentity({
+            email: currentUser.email || currentUser.gmail,
+            emailVerified: currentUser.isVerified,
+            username: currentUser.username,
+          })
+      );
       const SEXTILLION_999 = 9.99e23;
       const updatedProfile: UserProfile = {
         ...currentUser,
@@ -3012,45 +3303,46 @@ export default function App() {
         completedCourses: currentUser.completedCourses || [],
         ownedBusinesses: currentUser.ownedBusinesses || [],
       };
-      if (existingRec) {
-        users[cleanUsername] = {
-          ...existingRec,
-          profile: updatedProfile,
-        };
-        localStorage.setItem('naija_life_citizens_v12_release', JSON.stringify(users));
-      }
+
       saveSession(updatedProfile);
-
-      // Multi-device server sync: persist citizen progress across Naija Life servers
-      fetch('/api/auth/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: cleanUsername,
-          profile: updatedProfile,
-        }),
-      }).catch(() => {
-        // Offline / disconnected fallback
-      });
-
+      await performCloudSaveSync(updatedProfile);
       return updatedProfile;
     } catch {}
-  }, [currentUser, wallet, energy, hunger, health, happiness, currentState]);
+  }, [currentUser, wallet, energy, hunger, health, happiness, currentState, performCloudSaveSync]);
 
-  // Periodic automatic server progress sync every 20 seconds
+  // Periodic automatic cloud sync + real-time suspension enforcement every 25 seconds
   useEffect(() => {
     if (!currentUser) return;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
+      try {
+        if (auth.currentUser) {
+          const accSnap = await getDoc(doc(db, 'users', auth.currentUser.uid));
+          if (accSnap.exists() && accSnap.data()?.accountStatus === 'suspended') {
+            const reason = String(accSnap.data()?.suspensionReason || 'Your account was suspended by administration.');
+            await logoutFirebaseUser().catch(() => {});
+            clearSession();
+            setCurrentUser(null);
+            setSuspendedNoticeReason(reason);
+            showToast('Session ended: Account suspended by administration.');
+            return;
+          }
+        }
+      } catch {}
       persistLatestUserState();
-    }, 20000);
+    }, 25000);
     return () => clearInterval(interval);
-  }, [currentUser, persistLatestUserState]);
+  }, [currentUser, persistLatestUserState, showToast]);
 
-  const handleLogout = () => {
-    persistLatestUserState();
+  const handleLogout = async () => {
+    await persistLatestUserState();
+    await logoutFirebaseUser().catch(() => {});
     clearSession();
+    cloudSaveVersionRef.current = 0;
+    setSaveConflictData(null);
+    setPendingVerificationEmail(null);
+    setSuspendedNoticeReason(null);
     setCurrentUser(null);
-    showToast('Logged out. Enter credentials to log in or create a new life.');
+    showToast('Logged out cleanly. Your progress has been saved to the cloud.');
   };
 
   /* =========================================================================
@@ -3067,9 +3359,6 @@ export default function App() {
 
   /* =========================================================================
      0b. SPECIAL ANIMATED NAIJA LIFE CENTRAL SERVERS SYNCHRONIZATION SCREEN
-     Runs immediately after hardware optimization:
-     Performs real cryptographic handshake with Lagos, Abuja, Port Harcourt & Canada nodes,
-     pulling all registered accounts so cross-device login works seamlessly on any device!
      ========================================================================= */
   if (!isServerSyncCompleted) {
     return (
@@ -3080,162 +3369,31 @@ export default function App() {
   }
 
   /* =========================================================================
+     0c. CLOUD AUTH SESSION RESTORE SPINNER (WHEN REMEMBER ME IS ACTIVE)
+     ========================================================================= */
+  if (isRestoringAuth) {
+    return (
+      <div className="fixed inset-0 w-screen h-screen bg-black flex flex-col items-center justify-center text-white gap-3">
+        <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin" />
+        <p className="text-xs font-mono text-zinc-400">Restoring encrypted Naija Life cloud session...</p>
+      </div>
+    );
+  }
+
+  /* =========================================================================
      AUTH GATEKEEPER: IF NOT LOGGED IN, RENDER AUTH PORTAL!
      ========================================================================= */
   if (!currentUser) {
     return (
       <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] bg-black overflow-hidden flex items-center justify-center select-none">
         <AuthPortal
-          onAuthSuccess={(profile, spawnState) => {
-          setCurrentUser(profile);
-          const targetLocId = (profile?.lastLocationStateId || spawnState?.id || profile?.spawnStateId || 'lagos').toLowerCase().trim();
-          const isCanada = targetLocId === 'canada';
-          if (isCanada) {
-            setLocationMode('INTERNATIONAL');
-            setCurrentState(CANADA_STATE_DATA as any);
-            setBirthState(CANADA_STATE_DATA as any);
-          } else {
-            setLocationMode('NIGERIA');
-            const fullState = NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === targetLocId) ||
-                              NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === 'lagos') ||
-                              NIGERIA_36_STATES_ALPHABETICAL[0];
-            const legacyMatch = ALL_36_NIGERIAN_STATES.find((s) => s.id === targetLocId) ||
-                                ALL_36_NIGERIAN_STATES[0];
-            const match = {
-              ...legacyMatch,
-              ...fullState,
-              id: targetLocId,
-              locations: fullState.locations || [],
-            };
-            setBirthState(match as any);
-            setCurrentState(match as any);
-          }
-          const isOwner =
-            profile.isOwner === true ||
-            profile.isOwnerAccount === true ||
-            profile.username?.toLowerCase() === 'chiboy' ||
-            profile.username?.toLowerCase() === 'chiboy_52' ||
-            profile.gmail?.toLowerCase() === 'kchiboy50@gmail.com' ||
-            profile.email?.toLowerCase() === 'kchiboy50@gmail.com' ||
-            profile.citizenName?.toLowerCase() === 'chiboy' ||
-            profile.firstName?.toLowerCase() === 'chiboy';
-          const SEXTILLION_999 = 9.99e23;
-          if (isOwner) {
-            profile.bankNaira = SEXTILLION_999;
-            profile.cashNaira = SEXTILLION_999;
-            profile.bankCAD = SEXTILLION_999;
-            profile.savingsCAD = SEXTILLION_999;
-          }
-          setWallet({
-            NGN: isOwner ? SEXTILLION_999 : (profile.cashNaira || 0) + (profile.bankNaira || 0),
-            USD: isOwner ? 1000000000 : (profile.cashUSD || 0),
-            GBP: isOwner ? 1000000000 : (profile.cashGBP || 0),
-            EUR: isOwner ? 1000000000 : (profile.cashEUR || 0),
-            CAD: isOwner ? SEXTILLION_999 : (profile.bankCAD || 0),
-          });
-          setEnergy(profile.energy ?? 100);
-          setHunger(profile.hunger ?? 90);
-          setHappiness(profile.happiness ?? 85);
-
-          if (isOwner) {
-            const ownerVilla: PropertyAsset = {
-              id: 'owner_banana_island_villa',
-              title: 'Banana Island 7-Bedroom Waterfront Mansion',
-              type: 'villa',
-              stateId: 'lagos',
-              neighborhood: 'Banana Island, Ikoyi, Lagos',
-              annualRent: 120000000,
-              buyPrice: 1500000000,
-              icon: '🏰',
-              desc: 'Grand palatial waterfront estate with private yacht jetty, infinity pool, smart elevator, and helipad.',
-              roomsCount: 7,
-              floorsCount: 3,
-              isOwned: true,
-              x: 82,
-              y: 28,
-            };
-            const ownerRide: VehicleAsset = {
-              id: 'owner_rolls_royce',
-              name: 'Rolls-Royce Phantom VIII Mansory Edition',
-              type: 'hyper_luxury',
-              price: 850000000,
-              speed: '280 km/h',
-              prestige: 100,
-              icon: '👑',
-              desc: 'Bespoke Starlight ceiling, bulletproof executive luxury cruiser.',
-              isOwned: true,
-            };
-            setOwnedProperties([ownerVilla]);
-            setActiveHome(ownerVilla);
-            setOwnedVehicles([ownerRide]);
-            setActiveVehicle(ownerRide);
-          } else {
-            const userStateId = profile.spawnStateId || 'lagos';
-            let starterHouse: PropertyAsset;
-            if (profile.socialClass === 'nepo') {
-              starterHouse = {
-                id: `starter_nepo_home_${profile.username}`,
-                title: `${profile.firstName}'s Luxury Villa & Compound`,
-                type: 'villa',
-                stateId: userStateId,
-                neighborhood: userStateId === 'lagos' ? 'Lekki Phase 1' : 'Maitama District',
-                annualRent: 12000000,
-                buyPrice: 180000000,
-                icon: '🏰',
-                desc: 'Two-story private luxury duplex villa with swimming pool, generator house and gated perimeter.',
-                roomsCount: 5,
-                floorsCount: 2,
-                isOwned: true,
-                x: 72,
-                y: 32,
-              };
-            } else if (profile.socialClass === 'mapo') {
-              starterHouse = {
-                id: `starter_mapo_home_${profile.username}`,
-                title: `${profile.firstName}'s 4-Bedroom Flat Residence`,
-                type: 'flat',
-                stateId: userStateId,
-                neighborhood: userStateId === 'lagos' ? 'Surulere High Street' : 'Garki Area 2',
-                annualRent: 2500000,
-                buyPrice: 45000000,
-                icon: '🏢',
-                desc: 'Spacious serviced 4-bedroom flat with dedicated prepaid meter and balcony.',
-                roomsCount: 4,
-                floorsCount: 1,
-                isRented: true,
-                x: 48,
-                y: 46,
-              };
-            } else {
-              starterHouse = {
-                id: `starter_lapo_home_${profile.username}`,
-                title: `${profile.firstName}'s Self-Contain Apartment`,
-                type: 'self_contain',
-                stateId: userStateId,
-                neighborhood: userStateId === 'lagos' ? 'Yaba Tech Corridor' : 'Kubwa Suburb',
-                annualRent: 400000,
-                buyPrice: 9000000,
-                icon: '🏠',
-                desc: 'Neat self-contain apartment with ensuite bathroom, water tank and front veranda.',
-                roomsCount: 1,
-                floorsCount: 1,
-                isRented: true,
-                x: 32,
-                y: 68,
-              };
-            }
-            setOwnedProperties([starterHouse]);
-            setActiveHome(starterHouse);
-          }
-
-          addLog(
-            'immigration',
-            `Session Authenticated: Welcome @${profile.username} to Naija Life! Active Region: ${isCanada ? 'Canada' : targetLocId.toUpperCase()}.`
-          );
-          showToast(`Welcome, ${profile.firstName}! Entering Naija Life...`);
-        }}
-        triggerSound={(t: any) => triggerSound(t === 'success' ? 'coin' : t)}
-      />
+          initialVerificationEmail={pendingVerificationEmail}
+          initialSuspendedReason={suspendedNoticeReason}
+          onAuthSuccess={(profile, spawnState, cloudSave) => {
+            applyAuthenticatedSession(profile, spawnState, cloudSave);
+          }}
+          triggerSound={(t: any) => triggerSound(t === 'success' ? 'coin' : t)}
+        />
       </div>
     );
   }
@@ -3244,7 +3402,15 @@ export default function App() {
     <div className="fixed inset-0 w-screen h-screen overflow-hidden bg-black text-white select-none">
       <LagosLifeMap
         userProfile={currentUser}
-        onUpdateUserProfile={(newProf) => setCurrentUser(newProf)}
+        onUpdateUserProfile={(newProf) => {
+          setCurrentUser(newProf);
+          saveSession(newProf);
+          if (newProf.uid) {
+            syncProfileToCloud(newProf.uid, newProf).catch(() => {});
+          }
+        }}
+        cloudSyncStatus={cloudSyncStatus}
+        onTriggerCloudSync={() => performCloudSaveSync(currentUser)}
         currentState={currentState as any}
         spawnState={birthState as any}
         deviceOptimizationProfile={deviceOptimizationProfile || undefined}
@@ -3305,21 +3471,12 @@ export default function App() {
           else setLocationMode('NIGERIA');
 
           if (currentUser) {
-            currentUser.lastLocationStateId = targetState.id;
-            saveSession(currentUser);
-            const allUsers = getStoredUsers();
-            if (allUsers[currentUser.username.toLowerCase()]) {
-              allUsers[currentUser.username.toLowerCase()].profile.lastLocationStateId = targetState.id;
-              localStorage.setItem('naija_life_citizens_v1', JSON.stringify(allUsers));
+            const nextProfile = { ...currentUser, lastLocationStateId: targetState.id };
+            setCurrentUser(nextProfile);
+            saveSession(nextProfile);
+            if (nextProfile.uid) {
+              syncProfileToCloud(nextProfile.uid, { lastLocationStateId: targetState.id }).catch(() => {});
             }
-            fetch('/api/auth/sync', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                username: currentUser.username,
-                profileUpdates: { lastLocationStateId: targetState.id },
-              }),
-            }).catch(() => {});
           }
 
           setEnergy((e) => Math.max(10, e - 15));
@@ -3335,7 +3492,6 @@ export default function App() {
             const nextNGN = Math.max(0, w.NGN + deltaNGN);
             const nextUSD = Math.max(0, w.USD + (deltaUSD || 0));
 
-            // Sync with active user profile and server database so money deduction sticks permanently
             if (currentUser) {
               const updatedProfile = {
                 ...currentUser,
@@ -3344,24 +3500,9 @@ export default function App() {
               };
               saveSession(updatedProfile);
               setCurrentUser(updatedProfile);
-
-              try {
-                const allUsers = getStoredUsers();
-                const cleanU = currentUser.username.toLowerCase().trim();
-                if (allUsers[cleanU]) {
-                  allUsers[cleanU].profile = updatedProfile;
-                  localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(allUsers));
-                }
-              } catch {}
-
-              fetch('/api/auth/sync', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  username: currentUser.username,
-                  profileUpdates: { bankNaira: nextNGN, cashNaira: nextNGN },
-                }),
-              }).catch(() => {});
+              if (updatedProfile.uid) {
+                syncProfileToCloud(updatedProfile.uid, { bankNaira: nextNGN, cashNaira: nextNGN }).catch(() => {});
+              }
             }
 
             return {
@@ -3383,6 +3524,54 @@ export default function App() {
 
       {/* Synchronized Server Background Broadcast Audio */}
       <audio ref={broadcastAudioRef} loop className="hidden" />
+
+      {/* CLOUD SAVE CONFLICT RESOLUTION MODAL */}
+      {saveConflictData && (
+        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-zinc-950 border border-amber-500/50 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">Newer Cloud Save Detected</h3>
+                <p className="text-xs text-zinc-400">
+                  Progress was saved on another device (v{saveConflictData.version} · {saveConflictData.saveData.savedAtFormatted || 'recent'}).
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              To protect your progress, Naija Life never silently overwrites newer cloud saves. Choose which save state to keep:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  cloudSaveVersionRef.current = saveConflictData.version;
+                  restoreSavedState(saveConflictData.saveData);
+                  saveGameState(saveConflictData.saveData);
+                  setSaveConflictData(null);
+                  setCloudSyncStatus('synced');
+                  showToast('Loaded newer cloud save successfully!');
+                  triggerSound('coin');
+                }}
+                className="py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs cursor-pointer"
+              >
+                Load Newer Cloud Save
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  performCloudSaveSync(currentUser, true);
+                }}
+                className="py-2.5 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs border border-zinc-700 cursor-pointer"
+              >
+                Keep Local &amp; Sync
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* NEPA POWER OUTAGE SMALL BOX POPUP (Lasts 5.5s) */}
       {nepaPopup && (

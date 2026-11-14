@@ -60,8 +60,11 @@ export interface BankAlert {
 }
 
 export interface UserProfile {
+  uid?: string;
   username: string;
   citizenName?: string;
+  role?: 'citizen' | 'owner';
+  accountStatus?: 'active' | 'suspended';
   isOwner?: boolean;
   isOwnerAccount?: boolean;
   isVerified?: boolean;

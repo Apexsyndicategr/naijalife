@@ -178,7 +178,17 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
                 width="12"
                 height="54"
                 rx="5"
-                fill={isDapper ? '#f8fafc' : safeAvatar.outfit === 'agbada' ? '#065f46' : skinColor}
+                fill={
+                  isDapper || safeAvatar.outfit === 'casual'
+                    ? '#f8fafc'
+                    : safeAvatar.outfit === 'agbada' || safeAvatar.outfit === 'streetwear'
+                    ? '#047857'
+                    : safeAvatar.outfit === 'trad_senator'
+                    ? '#475569'
+                    : safeAvatar.outfit === 'ankara'
+                    ? '#ea580c'
+                    : skinColor
+                }
               />
               <circle cx="28" cy="138" r="6" fill={skinColor} />
             </g>
@@ -195,7 +205,17 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
                 width="12"
                 height="54"
                 rx="5"
-                fill={isDapper ? '#f8fafc' : safeAvatar.outfit === 'agbada' ? '#065f46' : skinColor}
+                fill={
+                  isDapper || safeAvatar.outfit === 'casual'
+                    ? '#f8fafc'
+                    : safeAvatar.outfit === 'agbada' || safeAvatar.outfit === 'streetwear'
+                    ? '#047857'
+                    : safeAvatar.outfit === 'trad_senator'
+                    ? '#475569'
+                    : safeAvatar.outfit === 'ankara'
+                    ? '#ea580c'
+                    : skinColor
+                }
               />
               <circle cx="92" cy="138" r="6" fill={skinColor} />
             </g>
@@ -215,13 +235,24 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
                   <circle cx="60" cy="112" r="1.5" fill="#18181b" />
                   <circle cx="60" cy="124" r="1.5" fill="#18181b" />
                 </>
-              ) : safeAvatar.outfit === 'agbada' || safeAvatar.outfit === 'trad_senator' ? (
+              ) : safeAvatar.outfit === 'trad_senator' ? (
                 <>
-                  <path d="M34 76 L60 72 L86 76 L82 142 L38 142 Z" fill="#7c2d12" />
+                  <path d="M36 78 L60 74 L84 78 L80 138 L40 138 Z" fill="#475569" />
+                  <rect x="57" y="75" width="6" height="22" fill="#1e293b" />
+                </>
+              ) : safeAvatar.outfit === 'ankara' ? (
+                <>
+                  <path d="M36 78 L60 74 L84 78 L80 138 L40 138 Z" fill="#ea580c" />
+                  <path d="M40 94 Q60 102 80 94" stroke="#facc15" strokeWidth="2.5" fill="none" />
+                  <path d="M40 112 Q60 120 80 112" stroke="#0284c7" strokeWidth="2.5" fill="none" />
+                </>
+              ) : safeAvatar.outfit === 'agbada' ? (
+                <>
+                  <path d="M34 76 L60 72 L86 76 L82 142 L38 142 Z" fill="#065f46" />
                   <rect x="56" y="74" width="8" height="42" fill="#f59e0b" />
                 </>
-              ) : safeAvatar.outfit === 'casual' ? (
-                <path d="M36 78 L60 74 L84 78 L80 138 L40 138 Z" fill="#059669" />
+              ) : safeAvatar.outfit === 'streetwear' ? (
+                <path d="M36 78 L60 74 L84 78 L80 138 L40 138 Z" fill="#047857" />
               ) : (
                 <path d="M36 78 L60 74 L84 78 L80 138 L40 138 Z" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="1" />
               )}
@@ -261,10 +292,27 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
               <path d="M40 28 Q60 14 80 28 Z" fill={hairColor} />
             )}
 
+            {safeAvatar.hairstyle === 'cornrows' && (
+              <g>
+                <line x1="50" y1="18" x2="50" y2="28" stroke={hairColor} strokeWidth="3" strokeLinecap="round" />
+                <line x1="56" y1="16" x2="56" y2="28" stroke={hairColor} strokeWidth="3" strokeLinecap="round" />
+                <line x1="64" y1="16" x2="64" y2="28" stroke={hairColor} strokeWidth="3" strokeLinecap="round" />
+                <line x1="70" y1="18" x2="70" y2="28" stroke={hairColor} strokeWidth="3" strokeLinecap="round" />
+              </g>
+            )}
+
             {safeAvatar.hairstyle === 'waves' && (
               <g>
                 <path d="M40 28 Q60 14 80 28 Z" fill={hairColor} />
                 <path d="M44 22 Q60 18 76 22" stroke="#ffffff" strokeWidth="0.8" opacity="0.5" fill="none" />
+              </g>
+            )}
+
+            {(safeAvatar.hairstyle === 'braids' || safeAvatar.hairstyle === 'dreads' || safeAvatar.hairstyle === 'locs') && (
+              <g>
+                <path d="M40 28 Q60 14 80 28 Z" fill={hairColor} />
+                <line x1="39" y1="26" x2="35" y2="54" stroke={hairColor} strokeWidth="3" strokeLinecap="round" />
+                <line x1="81" y1="26" x2="85" y2="54" stroke={hairColor} strokeWidth="3" strokeLinecap="round" />
               </g>
             )}
 
@@ -316,13 +364,24 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
               <circle cx="60" cy="94" r="1.8" fill="#18181b" />
               <circle cx="60" cy="108" r="1.8" fill="#18181b" />
             </g>
-          ) : safeAvatar.outfit === 'agbada' || safeAvatar.outfit === 'trad_senator' ? (
+          ) : safeAvatar.outfit === 'trad_senator' ? (
             <g>
-              <path d="M22 86 L38 72 L60 76 L82 72 L98 86 L92 120 L28 120 Z" fill="#7c2d12" />
+              <path d="M22 86 L38 72 L60 76 L82 72 L98 86 L92 120 L28 120 Z" fill="#475569" />
+              <rect x="57" y="74" width="6" height="22" fill="#1e293b" />
+            </g>
+          ) : safeAvatar.outfit === 'ankara' ? (
+            <g>
+              <path d="M22 86 L38 72 L60 76 L82 72 L98 86 L92 120 L28 120 Z" fill="#ea580c" />
+              <path d="M30 96 Q60 104 90 96" stroke="#facc15" strokeWidth="2.5" fill="none" />
+              <path d="M30 110 Q60 118 90 110" stroke="#0284c7" strokeWidth="2.5" fill="none" />
+            </g>
+          ) : safeAvatar.outfit === 'agbada' ? (
+            <g>
+              <path d="M22 86 L38 72 L60 76 L82 72 L98 86 L92 120 L28 120 Z" fill="#065f46" />
               <rect x="56" y="74" width="8" height="42" fill="#f59e0b" />
             </g>
-          ) : safeAvatar.outfit === 'casual' ? (
-            <path d="M24 88 L38 72 L60 76 L82 72 L96 88 L90 120 L30 120 Z" fill="#059669" />
+          ) : safeAvatar.outfit === 'streetwear' ? (
+            <path d="M24 88 L38 72 L60 76 L82 72 L96 88 L90 120 L30 120 Z" fill="#047857" />
           ) : (
             <path d="M24 88 L38 72 L60 76 L82 72 L96 88 L90 120 L30 120 Z" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="1" />
           )}
@@ -379,6 +438,15 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
             </g>
           )}
 
+          {safeAvatar.hairstyle === 'cornrows' && (
+            <g>
+              <line x1="48" y1="18" x2="48" y2="30" stroke={hairColor} strokeWidth="3.2" strokeLinecap="round" />
+              <line x1="56" y1="16" x2="56" y2="30" stroke={hairColor} strokeWidth="3.2" strokeLinecap="round" />
+              <line x1="64" y1="16" x2="64" y2="30" stroke={hairColor} strokeWidth="3.2" strokeLinecap="round" />
+              <line x1="72" y1="18" x2="72" y2="30" stroke={hairColor} strokeWidth="3.2" strokeLinecap="round" />
+            </g>
+          )}
+
           {safeAvatar.hairstyle === 'waves' && (
             <g>
               <path d="M38 30 Q60 14 82 30 Z" fill={hairColor} />
@@ -421,8 +489,17 @@ export const CharacterRenderer: React.FC<CharacterRendererProps> = ({
             </g>
           )}
 
-          {safeAvatar.accessory === 'gold_chain' && (
-            <path d="M48 76 Q60 88 72 76" stroke="#f59e0b" strokeWidth="2.5" fill="none" />
+          {(safeAvatar.accessory === 'gold_chain' || safeAvatar.accessory === 'diamond_chain') && (
+            <path
+              d="M48 76 Q60 88 72 76"
+              stroke={safeAvatar.accessory === 'diamond_chain' ? '#e2e8f0' : '#f59e0b'}
+              strokeWidth="2.5"
+              fill="none"
+            />
+          )}
+
+          {safeAvatar.accessory === 'coral_beads' && (
+            <path d="M46 76 Q60 90 74 76" stroke="#dc2626" strokeWidth="3.5" fill="none" />
           )}
         </svg>
       )}

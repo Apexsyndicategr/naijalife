@@ -1,0 +1,352 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net — default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Helpers
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUsernameId(id) {
+      return id is string && id.size() >= 3 && id.size() <= 24 && id.matches('^[a-z0-9_.-]+$');
+    }
+
+    function isValidUsernameStr(val) {
+      return val is string && val.size() >= 3 && val.size() <= 24 && val.matches('^[a-zA-Z0-9_.-]+$');
+    }
+
+    // Exact Apex Syndicate Owner Gate:
+    // MUST match BOTH verified email kchiboy50@gmail.com AND registered username chiboy_52
+    function isOwnerIdentity() {
+      return isEmailVerified()
+        && request.auth.token.email == 'kchiboy50@gmail.com'
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.usernameLower == 'chiboy_52';
+    }
+
+    function isOwner() {
+      return isEmailVerified()
+        && request.auth.token.email == 'kchiboy50@gmail.com'
+        && exists(/databases/$(database)/documents/owner_roles/$(request.auth.uid));
+    }
+
+    function isSuspendedUser(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid))
+        && get(/databases/$(database)/documents/users/$(uid)).data.accountStatus == 'suspended';
+    }
+
+    // 3. Entity Validation Helpers (Anti-Update-Gap Blueprints)
+    function isValidUserAccount(data, uid) {
+      return data.keys().hasAll(['uid', 'username', 'usernameLower', 'role', 'accountStatus', 'emailVerified', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'role', 'accountStatus', 'emailVerified', 'suspensionReason', 'suspendedBy', 'suspendedAt', 'createdAt', 'updatedAt', 'lastLoginAt'])
+        && isValidId(data.uid) && data.uid == uid
+        && isValidUsernameStr(data.username)
+        && isValidUsernameId(data.usernameLower)
+        && data.usernameLower == data.username.lower()
+        && (data.role == 'citizen' || data.role == 'owner')
+        && (data.accountStatus == 'active' || data.accountStatus == 'suspended')
+        && data.emailVerified is bool
+        && (!('suspensionReason' in data) || (data.suspensionReason is string && data.suspensionReason.size() <= 300))
+        && (!('suspendedBy' in data) || (data.suspendedBy is string && data.suspendedBy.size() <= 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'emailLower', 'dateOfBirth', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'emailLower', 'dateOfBirth', 'lastDevice', 'createdAt', 'updatedAt', 'lastLoginAt'])
+        && isValidId(data.uid) && data.uid == uid
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 120
+        && data.emailLower is string && data.emailLower.size() >= 5 && data.emailLower.size() <= 120
+        && data.emailLower == data.email.lower()
+        && data.dateOfBirth is string && data.dateOfBirth.size() == 10 && data.dateOfBirth.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && (!('lastDevice' in data) || (data.lastDevice is string && data.lastDevice.size() <= 160))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUsernameDoc(data, usernameLower) {
+      return data.keys().hasAll(['uid', 'username', 'usernameLower', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'createdAt'])
+        && isValidId(data.uid)
+        && isValidUsernameStr(data.username)
+        && isValidUsernameId(data.usernameLower)
+        && data.usernameLower == usernameLower
+        && data.usernameLower == data.username.lower()
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCitizenProfile(data, uid) {
+      return data.keys().hasAll(['uid', 'username', 'usernameLower', 'socialClass', 'spawnStateId', 'avatar', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'username', 'usernameLower', 'citizenName', 'firstName', 'lastName',
+          'spawnStateId', 'lastLocationStateId', 'currentCountry', 'socialClass', 'phoneModel',
+          'cashNaira', 'bankNaira', 'loanBalanceNGN', 'savingsBalanceNGN',
+          'cashUSD', 'cashGBP', 'cashEUR', 'bankCAD', 'savingsCAD',
+          'energy', 'hunger', 'health', 'happiness', 'fatherRentSubsidyPct',
+          'avatar', 'inventory', 'completedCourses', 'furnitureBought',
+          'receipts', 'alerts', 'ownedBusinesses', 'ownedDocuments',
+          'phoneWallpaper', 'savedNotes', 'academyProgress',
+          'activeJobId', 'jobTitle', 'jobLevel', 'jobRank', 'jobShiftsWorked', 'jobWeeklySalaryNGN', 'jobAutoAttend',
+          'snapUsername', 'isSnapPlus', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid) && data.uid == uid
+        && isValidUsernameStr(data.username)
+        && isValidUsernameId(data.usernameLower)
+        && (!('firstName' in data) || (data.firstName is string && data.firstName.size() <= 64))
+        && (!('lastName' in data) || (data.lastName is string && data.lastName.size() <= 64))
+        && (!('citizenName' in data) || (data.citizenName is string && data.citizenName.size() <= 80))
+        && (data.socialClass == 'lapo' || data.socialClass == 'mapo' || data.socialClass == 'nepo')
+        && data.spawnStateId is string && data.spawnStateId.size() >= 2 && data.spawnStateId.size() <= 32
+        && (!('lastLocationStateId' in data) || (data.lastLocationStateId is string && data.lastLocationStateId.size() <= 32))
+        && data.avatar is map
+        && (!('inventory' in data) || (data.inventory is list && data.inventory.size() <= 200))
+        && (!('completedCourses' in data) || (data.completedCourses is list && data.completedCourses.size() <= 200))
+        && (!('furnitureBought' in data) || (data.furnitureBought is list && data.furnitureBought.size() <= 200))
+        && (!('receipts' in data) || (data.receipts is list && data.receipts.size() <= 500))
+        && (!('alerts' in data) || (data.alerts is list && data.alerts.size() <= 200))
+        && (!('ownedBusinesses' in data) || (data.ownedBusinesses is list && data.ownedBusinesses.size() <= 100))
+        && (!('ownedDocuments' in data) || (data.ownedDocuments is list && data.ownedDocuments.size() <= 100))
+        && (!('phoneWallpaper' in data) || (data.phoneWallpaper is string && data.phoneWallpaper.size() <= 80))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCloudGameSave(data, uid) {
+      return data.keys().hasAll(['uid', 'version', 'clientUpdatedAtMs', 'deviceId', 'saveData', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'version', 'clientUpdatedAtMs', 'deviceId', 'saveData', 'updatedAt'])
+        && isValidId(data.uid) && data.uid == uid
+        && data.version is number && data.version >= 1
+        && data.clientUpdatedAtMs is number && data.clientUpdatedAtMs >= 0
+        && data.deviceId is string && data.deviceId.size() >= 1 && data.deviceId.size() <= 128
+        && data.saveData is map
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOwnerRoleGrant(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'usernameLower', 'role', 'grantedBy', 'grantedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'usernameLower', 'role', 'grantedBy', 'grantedAt'])
+        && isValidId(data.uid) && data.uid == uid
+        && data.email is string && data.email == 'kchiboy50@gmail.com'
+        && data.usernameLower is string && data.usernameLower == 'chiboy_52'
+        && data.role == 'owner'
+        && data.grantedBy is string && data.grantedBy.size() >= 1 && data.grantedBy.size() <= 64
+        && data.grantedAt is timestamp;
+    }
+
+    function isValidOwnerAuditLog(data, logId) {
+      return data.keys().hasAll(['id', 'actorUid', 'actorEmail', 'action', 'details', 'createdAt'])
+        && data.keys().hasOnly(['id', 'actorUid', 'actorEmail', 'action', 'targetUid', 'targetUsername', 'details', 'createdAt'])
+        && isValidId(data.id) && data.id == logId
+        && isValidId(data.actorUid) && data.actorUid == request.auth.uid
+        && data.actorEmail is string && data.actorEmail == 'kchiboy50@gmail.com'
+        && data.action in ['PROVISION_OWNER', 'VIEW_REGISTRY', 'VIEW_ACCOUNT', 'SUSPEND_ACCOUNT', 'RESTORE_ACCOUNT', 'GLOBAL_SYNC', 'NEPA_OVERRIDE', 'BROADCAST_AUDIO']
+        && (!('targetUid' in data) || (data.targetUid is string && data.targetUid.size() <= 128))
+        && (!('targetUsername' in data) || (data.targetUsername is string && data.targetUsername.size() <= 48))
+        && data.details is string && data.details.size() <= 500
+        && data.createdAt is timestamp;
+    }
+
+    // 4. Connection Validation Document (Boot-time health check)
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // 5. /users/{uid} — Core Non-PII Account Status & Role
+    match /users/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isOwner());
+      allow list: if isOwner();
+
+      allow create: if isSignedIn()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidUserAccount(incoming(), uid)
+        && incoming().role == 'citizen'
+        && incoming().accountStatus == 'active'
+        && incoming().emailVerified == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower));
+
+      allow update: if isSignedIn()
+        && isValidId(uid)
+        && isValidUserAccount(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Verified Owner suspending or restoring a citizen account
+          (
+            isOwner()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['accountStatus', 'suspensionReason', 'suspendedBy', 'suspendedAt', 'updatedAt'])
+          ) ||
+          // Action 2: Verified Apex Syndicate Owner provisioning own role after email verification
+          (
+            isOwnerIdentity()
+            && request.auth.uid == uid
+            && incoming().role == 'owner'
+            && incoming().emailVerified == true
+            && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'emailVerified', 'lastLoginAt', 'updatedAt'])
+            && existsAfter(/databases/$(database)/documents/owner_roles/$(uid))
+          ) ||
+          // Action 3: Citizen verifying email & updating login/username (cannot alter role or accountStatus!)
+          (
+            request.auth.uid == uid
+            && existing().accountStatus == 'active'
+            && incoming().role == existing().role
+            && incoming().accountStatus == existing().accountStatus
+            && (
+              (isEmailVerified() && incoming().diff(existing()).affectedKeys().hasOnly(['emailVerified', 'lastLoginAt', 'updatedAt'])) ||
+              (isEmailVerified() && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'usernameLower', 'updatedAt']) && existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower)))
+            )
+          )
+        );
+    }
+
+    // 6. /users_private/{uid} — Strict PII Isolation
+    match /users_private/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isOwner());
+      allow list: if isOwner();
+
+      allow create: if isSignedIn()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidUserPrivateInfo(incoming(), uid)
+        && incoming().emailLower == request.auth.token.email.lower()
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isEmailVerified()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && !isSuspendedUser(uid)
+        && isValidUserPrivateInfo(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'emailLower', 'lastDevice', 'lastLoginAt', 'updatedAt']);
+    }
+
+    // 7. /usernames/{usernameLower} — Atomic Uniqueness Registry (Zero PII)
+    match /usernames/{usernameLower} {
+      allow get: if isValidUsernameId(usernameLower);
+      allow list: if isOwner();
+
+      allow create: if isSignedIn()
+        && isValidUsernameId(usernameLower)
+        && isValidUsernameDoc(incoming(), usernameLower)
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time;
+
+      allow delete: if isEmailVerified()
+        && isValidUsernameId(usernameLower)
+        && (existing().uid == request.auth.uid || isOwner());
+    }
+
+    // 8. /profiles/{uid} — Synchronized Naija Life RPG Profile
+    match /profiles/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isOwner());
+      allow list: if isOwner();
+
+      allow create: if isSignedIn()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidCitizenProfile(incoming(), uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isEmailVerified()
+        && isValidId(uid)
+        && isValidCitizenProfile(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isOwner() ||
+          (
+            request.auth.uid == uid
+            && !isSuspendedUser(uid)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'username', 'usernameLower', 'citizenName', 'firstName', 'lastName',
+              'spawnStateId', 'lastLocationStateId', 'currentCountry', 'phoneModel',
+              'cashNaira', 'bankNaira', 'loanBalanceNGN', 'savingsBalanceNGN',
+              'cashUSD', 'cashGBP', 'cashEUR', 'bankCAD', 'savingsCAD',
+              'energy', 'hunger', 'health', 'happiness',
+              'avatar', 'inventory', 'completedCourses', 'furnitureBought',
+              'receipts', 'alerts', 'ownedBusinesses', 'ownedDocuments',
+              'phoneWallpaper', 'savedNotes', 'academyProgress',
+              'activeJobId', 'jobTitle', 'jobLevel', 'jobRank', 'jobShiftsWorked', 'jobWeeklySalaryNGN', 'jobAutoAttend',
+              'snapUsername', 'isSnapPlus', 'updatedAt'
+            ])
+          )
+        );
+    }
+
+    // 9. /game_saves/{uid} — Versioned Cross-Device Cloud Saves
+    match /game_saves/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isOwner());
+      allow list: if isOwner();
+
+      allow create: if isEmailVerified()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && !isSuspendedUser(uid)
+        && isValidCloudGameSave(incoming(), uid)
+        && incoming().updatedAt == request.time;
+
+      allow update: if isEmailVerified()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && !isSuspendedUser(uid)
+        && isValidCloudGameSave(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().version >= existing().version
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['version', 'clientUpdatedAtMs', 'deviceId', 'saveData', 'updatedAt']);
+    }
+
+    // 10. /owner_roles/{uid} — Verified Apex Syndicate Owner Gate
+    match /owner_roles/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isOwner());
+      allow list: if isOwner();
+
+      allow create: if isOwnerIdentity()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidOwnerRoleGrant(incoming(), uid)
+        && incoming().grantedAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // 11. /owner_audit_logs/{logId} — Immutable Owner Action Audit Logs
+    match /owner_audit_logs/{logId} {
+      allow get, list: if isOwner();
+      allow create: if isOwner()
+        && isValidId(logId)
+        && isValidOwnerAuditLog(incoming(), logId)
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

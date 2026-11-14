@@ -4,6 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
@@ -20,7 +21,7 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 // Enable CORS for cross-origin and multi-device preview access
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
@@ -28,9 +29,247 @@ app.use((req, res, next) => {
   next();
 });
 
+// =========================================================================
+// FIREBASE CRYPTOGRAPHIC ID TOKEN & APEX SYNDICATE OWNER VERIFICATION
+// =========================================================================
+const OWNER_EMAIL = 'kchiboy50@gmail.com';
+const OWNER_USERNAME = 'chiboy_52';
+
+interface FirebaseAppletConfig {
+  projectId: string;
+  apiKey: string;
+  firestoreDatabaseId: string;
+}
+
+function loadFirebaseAppletConfig(): FirebaseAppletConfig {
+  try {
+    const cfgPath = path.resolve(__dirname, 'firebase-applet-config.json');
+    if (fs.existsSync(cfgPath)) {
+      const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+      return {
+        projectId: String(parsed.projectId || ''),
+        apiKey: String(parsed.apiKey || ''),
+        firestoreDatabaseId: String(parsed.firestoreDatabaseId || '(default)'),
+      };
+    }
+  } catch (err) {
+    console.error('Failed to load firebase-applet-config.json:', err);
+  }
+  return { projectId: '', apiKey: '', firestoreDatabaseId: '(default)' };
+}
+
+const FIREBASE_CONFIG = loadFirebaseAppletConfig();
+
+let cachedGoogleCerts: { certs: Record<string, string>; expiresAtMs: number } = {
+  certs: {},
+  expiresAtMs: 0,
+};
+
+async function getFirebasePublicCerts(): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (now < cachedGoogleCerts.expiresAtMs && Object.keys(cachedGoogleCerts.certs).length > 0) {
+    return cachedGoogleCerts.certs;
+  }
+
+  const resp = await fetch(
+    'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com'
+  );
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch Google x509 certs: ${resp.status}`);
+  }
+  const cacheControl = resp.headers.get('cache-control') || '';
+  const maxAgeMatch = cacheControl.match(/max-age=(\d+)/);
+  const maxAgeSec = maxAgeMatch ? Number(maxAgeMatch[1]) : 3600;
+  const certs = (await resp.json()) as Record<string, string>;
+  cachedGoogleCerts = {
+    certs,
+    expiresAtMs: now + Math.max(60, maxAgeSec - 30) * 1000,
+  };
+  return certs;
+}
+
+function base64UrlDecodeToBuffer(str: string): Buffer {
+  const normalized = str.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+  return Buffer.from(normalized + pad, 'base64');
+}
+
+interface VerifiedFirebaseUser {
+  uid: string;
+  email: string;
+  emailVerified: boolean;
+  idToken: string;
+}
+
+async function verifyFirebaseIdToken(req: express.Request): Promise<{
+  ok: boolean;
+  user?: VerifiedFirebaseUser;
+  status?: number;
+  error?: string;
+}> {
+  const authHeader = String(req.headers.authorization || '');
+  if (!authHeader.startsWith('Bearer ')) {
+    return { ok: false, status: 401, error: 'Missing Bearer authentication token.' };
+  }
+  const idToken = authHeader.slice(7).trim();
+  if (!idToken || idToken.split('.').length !== 3) {
+    return { ok: false, status: 401, error: 'Malformed authentication token.' };
+  }
+
+  if (!FIREBASE_CONFIG.projectId) {
+    return { ok: false, status: 500, error: 'Firebase project configuration is unavailable.' };
+  }
+
+  try {
+    const [headerB64, payloadB64, sigB64] = idToken.split('.');
+    const header = JSON.parse(base64UrlDecodeToBuffer(headerB64).toString('utf-8'));
+    const payload = JSON.parse(base64UrlDecodeToBuffer(payloadB64).toString('utf-8'));
+
+    if (header.alg !== 'RS256' || !header.kid) {
+      return { ok: false, status: 401, error: 'Invalid JWT signature algorithm or key ID.' };
+    }
+
+    const certs = await getFirebasePublicCerts();
+    const pemCert = certs[header.kid];
+    if (!pemCert) {
+      return { ok: false, status: 401, error: 'Unknown Firebase signing certificate.' };
+    }
+
+    const verifier = crypto.createVerify('RSA-SHA256');
+    verifier.update(`${headerB64}.${payloadB64}`);
+    verifier.end();
+    const signatureBuf = base64UrlDecodeToBuffer(sigB64);
+    const sigValid = verifier.verify(pemCert, signatureBuf);
+    if (!sigValid) {
+      return { ok: false, status: 401, error: 'Invalid Firebase ID token signature.' };
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expectedIssuer = `https://securetoken.google.com/${FIREBASE_CONFIG.projectId}`;
+    if (
+      payload.aud !== FIREBASE_CONFIG.projectId ||
+      payload.iss !== expectedIssuer ||
+      typeof payload.sub !== 'string' ||
+      payload.sub.length === 0 ||
+      typeof payload.exp !== 'number' ||
+      payload.exp <= nowSec ||
+      typeof payload.iat !== 'number' ||
+      payload.iat > nowSec + 60
+    ) {
+      return { ok: false, status: 401, error: 'Firebase ID token claims failed validation or token expired.' };
+    }
+
+    // Confirm live account state (disabled / live emailVerified) via Firebase Identity Toolkit
+    let liveEmail = String(payload.email || '').toLowerCase().trim();
+    let liveVerified = payload.email_verified === true;
+    if (FIREBASE_CONFIG.apiKey) {
+      const lookupResp = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${FIREBASE_CONFIG.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken }),
+        }
+      );
+      if (!lookupResp.ok) {
+        return { ok: false, status: 401, error: 'Firebase session could not be verified.' };
+      }
+      const lookupData = (await lookupResp.json()) as {
+        users?: Array<{ localId?: string; email?: string; emailVerified?: boolean; disabled?: boolean }>;
+      };
+      const account = lookupData.users?.[0];
+      if (!account || account.localId !== payload.sub) {
+        return { ok: false, status: 401, error: 'Firebase user record not found.' };
+      }
+      if (account.disabled) {
+        return { ok: false, status: 403, error: 'This account has been disabled.' };
+      }
+      liveEmail = String(account.email || liveEmail).toLowerCase().trim();
+      liveVerified = account.emailVerified === true;
+    }
+
+    return {
+      ok: true,
+      user: {
+        uid: payload.sub,
+        email: liveEmail,
+        emailVerified: liveVerified,
+        idToken,
+      },
+    };
+  } catch (err) {
+    console.error('Firebase token verification error:', err);
+    return { ok: false, status: 401, error: 'Failed to verify Firebase authentication token.' };
+  }
+}
+
+async function fetchFirestoreUserFields(
+  uid: string,
+  idToken: string
+): Promise<{ usernameLower?: string; role?: string; accountStatus?: string } | null> {
+  if (!FIREBASE_CONFIG.projectId) return null;
+  const dbId = encodeURIComponent(FIREBASE_CONFIG.firestoreDatabaseId || '(default)');
+  const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/${dbId}/documents/users/${encodeURIComponent(uid)}`;
+  try {
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!resp.ok) return null;
+    const docData = (await resp.json()) as {
+      fields?: Record<string, { stringValue?: string }>;
+    };
+    return {
+      usernameLower: docData.fields?.usernameLower?.stringValue?.toLowerCase().trim(),
+      role: docData.fields?.role?.stringValue?.toLowerCase().trim(),
+      accountStatus: docData.fields?.accountStatus?.stringValue?.toLowerCase().trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function verifyStrictOwnerToken(req: express.Request): Promise<{
+  ok: boolean;
+  uid?: string;
+  email?: string;
+  usernameLower?: string;
+  status?: number;
+  error?: string;
+}> {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) {
+    return { ok: false, status: tokenRes.status || 401, error: tokenRes.error || 'Authentication required.' };
+  }
+
+  const { uid, email, emailVerified, idToken } = tokenRes.user;
+  if (!emailVerified) {
+    return { ok: false, status: 403, error: 'Verified email address required for Owner privileges.' };
+  }
+  if (email !== OWNER_EMAIL) {
+    return { ok: false, status: 403, error: 'Unauthorized: Account email does not match Apex Syndicate Owner.' };
+  }
+
+  const userFields = await fetchFirestoreUserFields(uid, idToken);
+  if (!userFields) {
+    return { ok: false, status: 403, error: 'Citizen account record could not be verified on database.' };
+  }
+  if (userFields.accountStatus === 'suspended') {
+    return { ok: false, status: 403, error: 'Account is suspended.' };
+  }
+  if (userFields.usernameLower !== OWNER_USERNAME) {
+    return {
+      ok: false,
+      status: 403,
+      error: `Unauthorized: Owner role requires both ${OWNER_EMAIL} AND username ${OWNER_USERNAME}.`,
+    };
+  }
+
+  return { ok: true, uid, email, usernameLower: userFields.usernameLower };
+}
+
 // Real AI Chat Route for "My AI"
 app.post('/api/ai-chat', async (req, res) => {
-  const { message, chatHistory } = req.body;
+  const { message } = req.body;
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'Message is required' });
   }
@@ -55,7 +294,6 @@ app.post('/api/ai-chat', async (req, res) => {
     console.error('Server Gemini API error:', err);
   }
 
-  // Fallback intelligent responses if API key is not configured
   const msgLower = message.toLowerCase();
   let fallback = "How far! I dey active 24/7. Ask me anything whether na casual greetings, life advice, business questions, or general knowledge!";
   if (msgLower.includes('hello') || msgLower.includes('hi') || msgLower.includes('how far') || msgLower.includes('hey')) {
@@ -84,32 +322,16 @@ interface CommunitySubmission {
   createdAt: string;
 }
 
-let communitySubmissions: CommunitySubmission[] = [];
+const communitySubmissions: CommunitySubmission[] = [];
 
-// Universal Owner Account Validator (Recognizes kchiboy50@gmail.com, chiboy, and chiboy_52)
-function isOwnerAccount(username?: string, email?: string, citizenName?: string): boolean {
-  const u = String(username || '').toLowerCase().trim();
-  const em = String(email || '').toLowerCase().trim();
-  const c = String(citizenName || '').toLowerCase().trim();
-  return (
-    em === 'kchiboy50@gmail.com' ||
-    u === 'chiboy' ||
-    u === 'chiboy_52' ||
-    c === 'chiboy' ||
-    c.includes('chiboy')
-  );
-}
-
-// GET all submissions (for owner inbox and user's own tickets)
-app.get('/api/suggestions', (req, res) => {
-  const username = req.query.username ? String(req.query.username).toLowerCase() : '';
-  const email = req.query.email ? String(req.query.email).toLowerCase() : '';
-  if (isOwnerAccount(username, email)) {
-    // Owner sees all real citizen submissions
+// GET all submissions (Owner verified via Firebase Bearer token sees all; citizens see own tickets)
+app.get('/api/suggestions', async (req, res) => {
+  const ownerCheck = req.headers.authorization ? await verifyStrictOwnerToken(req) : { ok: false };
+  if (ownerCheck.ok) {
     return res.json({ submissions: communitySubmissions });
   }
+  const username = req.query.username ? String(req.query.username).toLowerCase().trim() : '';
   if (username) {
-    // Regular citizens see their own submitted tickets
     const userTickets = communitySubmissions.filter((s) => s.username.toLowerCase() === username);
     return res.json({ submissions: userTickets });
   }
@@ -137,14 +359,15 @@ app.post('/api/suggestions', (req, res) => {
   return res.json({ success: true, submission: newTicket });
 });
 
-// PATCH update status (Owner only)
-app.patch('/api/suggestions/:id', (req, res) => {
-  const { id } = req.params;
-  const { status, ownerUsername, ownerEmail } = req.body;
-  if (!isOwnerAccount(String(ownerUsername), String(ownerEmail))) {
-    return res.status(403).json({ error: 'Only game owner can review tickets' });
+// PATCH update status (Strictly Verified Owner only)
+app.patch('/api/suggestions/:id', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({ error: ownerCheck.error || 'Only verified Apex Syndicate Owner can review tickets.' });
   }
 
+  const { id } = req.params;
+  const { status } = req.body;
   const ticket = communitySubmissions.find((t) => t.id === id);
   if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
 
@@ -165,8 +388,6 @@ const SNAP_USERS_FILE = path.resolve(DB_DIR, 'snapchat_users.json');
 const SNAP_MESSAGES_FILE = path.resolve(DB_DIR, 'snapchat_messages.json');
 
 interface CitizenRecord {
-  password: string;
-  gmail?: string;
   profile: any;
   updatedAt: string;
 }
@@ -347,310 +568,206 @@ function saveCitizensDB(db: Record<string, CitizenRecord>) {
 
 let citizensDB: Record<string, CitizenRecord> = loadCitizensDB();
 
-const SEXTILLION_999 = 9.99e23;
+// =========================================================================
+// SECURE BACKEND REGISTRATION VALIDATION, OWNER PROVISIONING & ACCESS GATES
+// =========================================================================
 
-// 1. REGISTER NEW CITIZEN ACROSS SERVERS
-// Enforces: Email (any valid email domain), username (letters only), birthday, and password.
-// Enforces: Strict uniqueness for Username, Email, AND Citizen Name across all accounts.
-// Recognizes: Any account created with kchiboy50@gmail.com and chiboy as owner account with full privileges!
-app.post('/api/auth/register', (req, res) => {
-  const { username, password, email, gmail, profile } = req.body;
-  const rawEmail = String(email || gmail || '').trim();
-  const cleanEmail = rawEmail.toLowerCase();
+// 1. Server-side registration validation (mirrors frontend validation + checks Firestore username collision)
+app.post('/api/auth/validate-registration', async (req, res) => {
+  const { email, username, dateOfBirth, password } = req.body || {};
+
+  const cleanEmail = String(email || '').trim().toLowerCase();
   const rawUser = String(username || '').trim();
   const cleanUser = rawUser.toLowerCase();
-  const rawCitizenName = String(profile?.citizenName || profile?.firstName || rawUser).trim();
-  const cleanCitizenName = rawCitizenName.toLowerCase();
+  const dob = String(dateOfBirth || '').trim();
+  const pwd = String(password || '');
 
-  if (!username || !password || !rawEmail || !profile) {
-    return res.status(400).json({ error: 'Email, username, password, and character profile are required' });
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  if (!cleanEmail || cleanEmail.length > 120 || !emailRegex.test(cleanEmail)) {
+    return res.status(400).json({ error: 'Please provide a valid email address.' });
   }
 
-  // Validate Email format (Accepts ANY valid email domain: Gmail, Yahoo, Outlook, Hotmail, iCloud, custom domains, etc.)
-  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-  if (!emailRegex.test(cleanEmail)) {
+  const usernameRegex = /^[a-zA-Z0-9_.-]{3,24}$/;
+  if (!usernameRegex.test(rawUser)) {
     return res.status(400).json({
-      error: 'Please enter a valid existing email address (e.g. kchiboy50@gmail.com or citizen@domain.com).'
+      error: 'Username must be 3–24 characters using letters (A-Z, a-z), numbers (0-9), underscores (_), periods (.), or hyphens (-).',
     });
   }
 
-  // Validate citizen username: ONLY letters allowed, no numbers or symbols (except chiboy_52 legacy)
-  if (cleanUser !== 'chiboy_52') {
-    const isLettersOnly = /^[a-zA-Z]+$/.test(rawUser);
-    if (!isLettersOnly) {
-      return res.status(400).json({
-        error: 'Citizen username must contain LETTERS ONLY! No numbers, no spaces, and no special characters allowed.'
-      });
-    }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+    return res.status(400).json({ error: 'Please provide a valid Date of Birth (YYYY-MM-DD).' });
+  }
+  const [yStr, mStr, dStr] = dob.split('-');
+  const year = Number(yStr);
+  const month = Number(mStr);
+  const day = Number(dStr);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return res.status(400).json({ error: 'Date of Birth is not a valid calendar date.' });
+  }
+  const now = new Date();
+  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (parsed.getTime() > todayUTC.getTime()) {
+    return res.status(400).json({ error: 'Date of Birth cannot be in the future.' });
+  }
+  if (year < 1900) {
+    return res.status(400).json({ error: 'Please enter a valid Date of Birth (year 1900 or later).' });
+  }
+  const minAgeDate = new Date(Date.UTC(now.getUTCFullYear() - 13, now.getUTCMonth(), now.getUTCDate()));
+  if (parsed.getTime() > minAgeDate.getTime()) {
+    return res.status(400).json({ error: 'Players must be at least 13 years old to create an online account.' });
   }
 
-  citizensDB = loadCitizensDB();
-
-  // Check username uniqueness
-  if (citizensDB[cleanUser]) {
+  if (pwd.length < 8 || pwd.length > 128 || !/[A-Z]/.test(pwd) || !/[a-z]/.test(pwd) || !/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]/.test(pwd)) {
     return res.status(400).json({
-      error: `Username "${rawUser}" is already taken! Every citizen must have a distinct unique username.`
+      error: 'Password must be at least 8 characters and include uppercase, lowercase, and a number or symbol.',
     });
   }
 
-  // Check Email & Citizen Name uniqueness across all existing registered accounts
-  for (const existingRec of Object.values(citizensDB)) {
-    const exEm = (existingRec.gmail || existingRec.profile?.email || '').toLowerCase().trim();
-    if (exEm && exEm === cleanEmail) {
-      return res.status(400).json({
-        error: `Email "${rawEmail}" is already registered to another citizen account!`
-      });
-    }
-
-    const exFirstName = (existingRec.profile?.firstName || '').toLowerCase().trim();
-    const exCitizenName = (existingRec.profile?.citizenName || '').toLowerCase().trim();
-    if ((exCitizenName && exCitizenName === cleanCitizenName) || (exFirstName && exFirstName === cleanCitizenName)) {
-      return res.status(400).json({
-        error: `Citizen name "${rawCitizenName}" is already taken! Two accounts cannot bear the same citizen name.`
-      });
-    }
-  }
-
-  // Recognize Game Owner:
-  // "any acct created with kchiboy50@gmail.com and chiboy as citizen name IS THE OWNER ACCOUNT WHICH WILL GET THE OWNERS PRIVILEDGES"
-  const isOwner = isOwnerAccount(cleanUser, cleanEmail, cleanCitizenName);
-
-  citizensDB[cleanUser] = {
-    password: String(password).trim(),
-    gmail: cleanEmail,
-    profile: {
-      ...profile,
-      username: isOwner ? (cleanUser === 'chiboy_52' ? 'chiboy_52' : rawUser) : rawUser,
-      gmail: cleanEmail,
-      email: cleanEmail,
-      citizenName: rawCitizenName,
-      firstName: profile.firstName || rawCitizenName,
-      isOwner,
-      isOwnerAccount: isOwner,
-      isVerified: isOwner,
-      socialClass: isOwner ? 'nepo' : (profile.socialClass || 'mapo'),
-      phoneModel: isOwner ? 'iphone_18_pm' : (profile.phoneModel || 'samsung_s24_base'),
-      bankNaira: isOwner ? SEXTILLION_999 : Number(profile.bankNaira || 10000),
-      cashNaira: isOwner ? SEXTILLION_999 : Number(profile.cashNaira || 5000),
-      bankCAD: isOwner ? SEXTILLION_999 : Number(profile.bankCAD || 0),
-      savingsCAD: isOwner ? SEXTILLION_999 : Number(profile.savingsCAD || 0),
-      cashUSD: isOwner ? 1000000000 : Number(profile.cashUSD || 0),
-      fatherRentSubsidyPct: isOwner ? 100 : Number(profile.fatherRentSubsidyPct || 35),
-      energy: 100,
-      hunger: 95,
-      health: 100,
-      happiness: 100,
-      receipts: profile.receipts || [],
-      alerts: profile.alerts || [],
-    },
-    updatedAt: new Date().toISOString(),
-  };
-
-  saveCitizensDB(citizensDB);
-  return res.json({ success: true, profile: citizensDB[cleanUser].profile });
-});
-
-// 2. LOG IN CITIZEN FROM ANY DEVICE
-// Allows login by Username OR Email with strict password verification!
-app.post('/api/auth/login', (req, res) => {
-  const { username, password, email, gmail, identifier } = req.body;
-  const loginKey = String(identifier || username || email || gmail || '').toLowerCase().trim();
-  if (!loginKey || !password) {
-    return res.status(400).json({ error: 'Username or Email, and password are required to log in.' });
-  }
-
-  citizensDB = loadCitizensDB();
-
-  // Search by username key directly or by matching stored email/gmail, citizenName, or profile username
-  let foundKey = citizensDB[loginKey] ? loginKey : '';
-  if (!foundKey) {
-    for (const [key, rec] of Object.entries(citizensDB)) {
-      const recEm = (rec.gmail || rec.profile?.email || '').toLowerCase().trim();
-      const recUser = (rec.profile?.username || key).toLowerCase().trim();
-      const recCit = (rec.profile?.citizenName || rec.profile?.firstName || '').toLowerCase().trim();
-      if (
-        (recEm && recEm === loginKey) ||
-        (recUser && recUser === loginKey) ||
-        (recCit && recCit === loginKey) ||
-        key.toLowerCase().trim() === loginKey
-      ) {
-        foundKey = key;
-        break;
+  // Check Firestore usernames/{usernameLower} availability directly
+  if (FIREBASE_CONFIG.projectId) {
+    try {
+      const dbId = encodeURIComponent(FIREBASE_CONFIG.firestoreDatabaseId || '(default)');
+      const uResp = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/${dbId}/documents/usernames/${encodeURIComponent(cleanUser)}`
+      );
+      if (uResp.ok) {
+        return res.status(409).json({
+          error: `Username "${rawUser}" is already taken! Please choose another.`,
+        });
       }
-    }
+    } catch {}
   }
 
-  if (!foundKey) {
-    return res.status(404).json({ error: 'Citizen account not found. Please click "CREATE NEW LIFE" to register.' });
-  }
-
-  const record = citizensDB[foundKey];
-  // Strict password check for ALL users including owner
-  if (!record.password || record.password !== String(password).trim()) {
-    return res.status(401).json({ error: 'Incorrect password! You can only log in with the password you signed up with.' });
-  }
-
-  // Ensure owner accounts maintain owner perks and status
-  const isOwner = isOwnerAccount(foundKey, record.gmail || record.profile?.email, record.profile?.citizenName || record.profile?.firstName);
-  if (isOwner) {
-    record.profile.isOwner = true;
-    record.profile.isOwnerAccount = true;
-    record.profile.isVerified = true;
-    record.profile.bankNaira = SEXTILLION_999;
-    record.profile.cashNaira = SEXTILLION_999;
-    record.profile.bankCAD = SEXTILLION_999;
-    record.profile.savingsCAD = SEXTILLION_999;
-    record.profile.socialClass = 'nepo';
-    record.profile.phoneModel = 'iphone_18_pm';
-    record.profile.fatherRentSubsidyPct = 100;
-    saveCitizensDB(citizensDB);
-  }
-
-  return res.json({ success: true, profile: record.profile });
+  return res.json({ valid: true, normalizedEmail: cleanEmail, normalizedUsername: cleanUser });
 });
 
-// 2b. FETCH ALL ACCOUNTS FOR MULTI-DEVICE SYNCHRONIZATION
-app.get('/api/auth/all-accounts', (req, res) => {
-  citizensDB = loadCitizensDB();
+// 2. Strict Server-Side Owner Provisioning Endpoint
+// Only grants owner if cryptographic Firebase ID Token proves verified email kchiboy50@gmail.com AND Firestore users/{uid}.usernameLower === chiboy_52
+app.post('/api/auth/verify-owner', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({
+      isOwner: false,
+      role: 'citizen',
+      error: ownerCheck.error || 'Owner verification denied.',
+    });
+  }
+
   return res.json({
-    success: true,
-    count: Object.keys(citizensDB).length,
-    accounts: citizensDB,
-    citizens: citizensDB,
+    isOwner: true,
+    role: 'owner',
+    uid: ownerCheck.uid,
+    email: ownerCheck.email,
+    usernameLower: ownerCheck.usernameLower,
   });
 });
 
-app.post('/api/auth/reset-all-accounts', (req, res) => {
+// 3. Owner Access Verification Gate (Registry Inspection)
+app.post('/api/owner/verify-access', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({
+      authorized: false,
+      error: ownerCheck.error || 'Unauthorized: Apex Syndicate Owner verification failed.',
+    });
+  }
+  return res.json({ authorized: true, uid: ownerCheck.uid, role: 'owner' });
+});
+
+// 4. Owner Suspend / Restore Authorization Gate
+app.post('/api/owner/suspend-check', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({
+      authorized: false,
+      error: ownerCheck.error || 'Unauthorized owner suspension attempt.',
+    });
+  }
+  const targetUid = String(req.body?.targetUid || '').trim();
+  if (!targetUid || targetUid === ownerCheck.uid) {
+    return res.status(400).json({ error: 'Cannot suspend the active Owner master account.' });
+  }
+  return res.json({ authorized: true, actorUid: ownerCheck.uid, targetUid });
+});
+
+app.post('/api/owner/restore-check', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({
+      authorized: false,
+      error: ownerCheck.error || 'Unauthorized owner restore attempt.',
+    });
+  }
+  const targetUid = String(req.body?.targetUid || '').trim();
+  if (!targetUid) {
+    return res.status(400).json({ error: 'Target account UID is required.' });
+  }
+  return res.json({ authorized: true, actorUid: ownerCheck.uid, targetUid });
+});
+
+// 5. Legacy plaintext-password endpoints retired for security
+app.post('/api/auth/register', (_req, res) => {
+  return res.status(410).json({ error: 'Use Firebase Authentication + Firestore registration.' });
+});
+app.post('/api/auth/login', (_req, res) => {
+  return res.status(410).json({ error: 'Use Firebase Authentication login.' });
+});
+app.get('/api/auth/all-accounts', (_req, res) => {
+  return res.json({ success: true, mode: 'firebase-cloud', clusterOnline: true });
+});
+app.get('/api/auth/sync-all', (_req, res) => {
+  return res.json({ success: true, mode: 'firebase-cloud', clusterOnline: true });
+});
+app.post('/api/auth/reset-all-accounts', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({ error: 'Unauthorized.' });
+  }
   citizensDB = {};
   saveCitizensDB({});
-  return res.json({
-    success: true,
-    count: 0,
-    message: 'All accounts completely deleted from Naija Life Central Servers.',
-  });
+  return res.json({ success: true, count: 0 });
+});
+app.post('/api/auth/sync', async (req, res) => {
+  const authRes = await verifyFirebaseIdToken(req);
+  if (!authRes.ok || !authRes.user) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  return res.json({ success: true, uid: authRes.user.uid });
+});
+app.get('/api/owner/players-registry', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({ error: 'Unauthorized: Only verified game owner can inspect the Citizen Account Registry.' });
+  }
+  return res.json({ success: true, source: 'firestore', message: 'Use Firestore Citizen Account Registry.' });
 });
 
-app.get('/api/auth/sync-all', (req, res) => {
-  citizensDB = loadCitizensDB();
-  return res.json({
-    success: true,
-    count: Object.keys(citizensDB).length,
-    accounts: citizensDB,
-    citizens: citizensDB,
-  });
-});
-
-// 2c. REAL-TIME ACCOUNT PROFILE SYNC (Saves bank balance, cash, CAD, stats across devices)
-app.post('/api/auth/sync', (req, res) => {
-  const { username, email, profileUpdates } = req.body;
-  if (!username || !profileUpdates) {
-    return res.status(400).json({ error: 'Username and profile updates are required.' });
+// 6. OWNER GLOBAL REFRESH (Strictly Verified Owner via Bearer ID Token)
+app.post('/api/owner/global-refresh', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({
+      error: ownerCheck.error || 'Unauthorized: Only verified game owner can perform global server sync.',
+    });
   }
 
-  const cleanUser = String(username).toLowerCase().trim();
-  citizensDB = loadCitizensDB();
-
-  if (!citizensDB[cleanUser]) {
-    return res.status(404).json({ error: 'Citizen account not found on Naija Life servers.' });
-  }
-
-  const userEm = String(email || citizensDB[cleanUser]?.gmail || citizensDB[cleanUser]?.profile?.email || '').toLowerCase().trim();
-  const isOwner = isOwnerAccount(cleanUser, userEm, citizensDB[cleanUser]?.profile?.citizenName);
-
-  citizensDB[cleanUser].profile = {
-    ...citizensDB[cleanUser].profile,
-    ...profileUpdates,
-    bankNaira: isOwner ? SEXTILLION_999 : (profileUpdates.bankNaira !== undefined ? Number(profileUpdates.bankNaira) : citizensDB[cleanUser].profile.bankNaira),
-    cashNaira: isOwner ? SEXTILLION_999 : (profileUpdates.cashNaira !== undefined ? Number(profileUpdates.cashNaira) : citizensDB[cleanUser].profile.cashNaira),
-    bankCAD: isOwner ? SEXTILLION_999 : (profileUpdates.bankCAD !== undefined ? Number(profileUpdates.bankCAD) : citizensDB[cleanUser].profile.bankCAD),
-    socialClass: isOwner ? 'nepo' : (citizensDB[cleanUser].profile.socialClass || 'mapo'),
-    phoneModel: isOwner ? 'iphone_18_pm' : (citizensDB[cleanUser].profile.phoneModel || 'samsung_s24_base'),
-  };
-  citizensDB[cleanUser].updatedAt = new Date().toISOString();
-
-  saveCitizensDB(citizensDB);
-  return res.json({ success: true, profile: citizensDB[cleanUser].profile });
-});
-
-// 2d. OWNER PLAYERS REGISTRY (Returns all registered real citizens with passwords for owner)
-app.get('/api/owner/players-registry', (req, res) => {
-  const username = String(req.query.username || '').toLowerCase().trim();
-  const email = String(req.query.email || '').toLowerCase().trim();
-  if (!isOwnerAccount(username, email)) {
-    return res.status(403).json({ error: 'Unauthorized: Only game owner can inspect the players registry.' });
-  }
-
-  citizensDB = loadCitizensDB();
-  const players = Object.entries(citizensDB).map(([key, record]) => {
-    const prof = record.profile || {};
-    return {
-      username: prof.username || key,
-      gmail: record.gmail || prof.gmail || prof.email || '(none)',
-      email: record.gmail || prof.gmail || prof.email || '(none)',
-      citizenName: prof.citizenName || `${prof.firstName || ''} ${prof.lastName || ''}`.trim() || prof.username || key,
-      gender: prof.gender || prof.avatar?.gender || 'male',
-      stateOfOrigin: prof.spawnStateId || prof.originState || 'Lagos',
-      socialClass: prof.socialClass || 'mapo',
-      phoneModel: prof.phoneModel || 'samsung_s24_base',
-      bankNaira: prof.bankNaira || 0,
-      bankCAD: prof.bankCAD || 0,
-      password: record.password || '(not set)',
-      registeredAt: record.updatedAt || new Date().toISOString(),
-      avatar: prof.avatar || null,
-    };
-  });
-
-  return res.json({
-    success: true,
-    totalPlayers: players.length,
-    players,
-  });
-});
-
-// 3. OWNER GLOBAL REFRESH & REGISTER ALL CITIZEN ACCOUNTS INTO SNAPCHAT
-app.post('/api/owner/global-refresh', (req, res) => {
-  const { username, email } = req.body;
-  const cleanUser = String(username || '').toLowerCase().trim();
-  const cleanEmail = String(email || '').toLowerCase().trim();
-  if (!isOwnerAccount(cleanUser, cleanEmail)) {
-    return res.status(403).json({ error: 'Unauthorized: Only game owner can perform global server sync & account registration.' });
-  }
-
-  citizensDB = loadCitizensDB();
-  snapchatUsersDB = loadSnapUsers();
-
-  let registeredCount = 0;
-  // Automatically register all real citizens into Snapchat if not already present
-  for (const [key, c] of Object.entries(citizensDB)) {
-    const snapKey = key.toLowerCase();
-    const isOwnerCitizen = isOwnerAccount(snapKey, c.gmail || c.profile?.email, c.profile?.citizenName);
-    if (!snapchatUsersDB[snapKey]) {
-      snapchatUsersDB[snapKey] = {
-        snapUsername: snapKey,
-        displayName: c.profile.firstName ? `${c.profile.firstName} ${c.profile.lastName || ''}`.trim() : snapKey,
-        citizenUsername: snapKey,
-        password: c.password || 'snap123',
-        isSnapPlus: isOwnerCitizen,
-        snapScore: isOwnerCitizen ? 999999999 : 250,
-        streaks: {},
-      };
-      registeredCount++;
-    }
-  }
-
-  saveSnapUsers(snapchatUsersDB);
   globalRefreshCounter++;
 
   return res.json({
     success: true,
-    message: `Global sync complete! Refreshed game servers worldwide. ${registeredCount} citizen accounts registered into Snapchat & Banking Network.`,
+    message: 'Global sync complete! Refreshed Naija Life Central Servers & NEPA telemetry.',
     globalRefreshCounter,
-    totalCitizens: Object.keys(citizensDB).length,
     totalSnapUsers: Object.keys(snapchatUsersDB).length,
   });
 });
 
-// 4. GLOBAL SERVER STATUS (Pollable by all clients)
+// 7. GLOBAL SERVER STATUS (Pollable by all clients)
 app.get('/api/global/status', (req, res) => {
   return res.json({
     globalRefreshCounter,
@@ -660,18 +777,20 @@ app.get('/api/global/status', (req, res) => {
   });
 });
 
-// 5. NEPA GRID STATUS & OWNER CONTROL ROOM
+// 8. NEPA GRID STATUS & OWNER CONTROL ROOM
 app.get('/api/nepa/grid', (req, res) => {
   return res.json({ success: true, grid: nepaGrid });
 });
 
-app.post('/api/nepa/toggle', (req, res) => {
-  const { username, email, stateId, lightOn, masterBlackout, masterPowerOn } = req.body;
-  const cleanUser = String(username || '').toLowerCase().trim();
-  const cleanEmail = String(email || '').toLowerCase().trim();
-  if (!isOwnerAccount(cleanUser, cleanEmail)) {
-    return res.status(403).json({ error: 'Unauthorized: Only game owner can control the NEPA National Power Grid.' });
+app.post('/api/nepa/toggle', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({
+      error: ownerCheck.error || 'Unauthorized: Only verified game owner can control the NEPA National Power Grid.',
+    });
   }
+
+  const { stateId, lightOn, masterBlackout, masterPowerOn } = req.body;
 
   if (masterBlackout) {
     for (const s of ALL_STATES_LIST) {
@@ -730,7 +849,6 @@ app.post('/api/bank/transfer', (req, res) => {
   citizensDB = loadCitizensDB();
   if (!citizensDB[cleanSender] && req.body.senderProfile) {
     citizensDB[cleanSender] = {
-      password: req.body.senderPassword || 'pass123',
       profile: req.body.senderProfile,
       updatedAt: new Date().toISOString(),
     };
@@ -921,13 +1039,12 @@ app.get('/api/broadcast/music', (req, res) => {
   });
 });
 
-app.post('/api/broadcast/music', (req, res) => {
-  const { username, email, title, audioData } = req.body;
-  const cleanUser = String(username || '').toLowerCase().trim();
-  const cleanEmail = String(email || '').toLowerCase().trim();
-  if (!isOwnerAccount(cleanUser, cleanEmail)) {
-    return res.status(403).json({ error: 'Unauthorized: Only the game owner can broadcast music.' });
+app.post('/api/broadcast/music', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({ error: ownerCheck.error || 'Unauthorized: Only the verified game owner can broadcast music.' });
   }
+  const { title, audioData } = req.body;
   if (!audioData || typeof audioData !== 'string') {
     return res.status(400).json({ error: 'Audio data is required' });
   }
@@ -948,7 +1065,7 @@ app.post('/api/broadcast/music', (req, res) => {
   currentBroadcastTrack = {
     title: String(title || 'Owner Custom Soundtrack').trim(),
     audioData: `/api/broadcast/audio.mp3?t=${uploadTs}`,
-    uploadedBy: cleanUser || 'chiboy',
+    uploadedBy: ownerCheck.usernameLower || 'chiboy_52',
     uploadedAt: uploadTs,
   };
   saveBroadcastTrack(currentBroadcastTrack);
@@ -962,12 +1079,10 @@ app.post('/api/broadcast/music', (req, res) => {
   });
 });
 
-app.delete('/api/broadcast/music', (req, res) => {
-  const { username, email } = req.body;
-  const cleanUser = String(username || '').toLowerCase().trim();
-  const cleanEmail = String(email || '').toLowerCase().trim();
-  if (!isOwnerAccount(cleanUser, cleanEmail)) {
-    return res.status(403).json({ error: 'Unauthorized: Only the game owner can modify broadcast.' });
+app.delete('/api/broadcast/music', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({ error: ownerCheck.error || 'Unauthorized: Only the verified game owner can modify broadcast.' });
   }
   currentBroadcastTrack = null;
   saveBroadcastTrack(null);

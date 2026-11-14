@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   User,
   Lock,
@@ -15,19 +15,19 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  Coins,
   MapPin,
   Play,
-  RotateCcw,
-  LogOut,
   Compass,
   Crown,
-  Smartphone,
-  Building,
-  UserCheck,
+  Mail,
+  RefreshCw,
+  LogOut,
+  KeyRound,
   Check,
-  Mail
+  Loader2,
+  ShieldCheck,
 } from 'lucide-react';
+import { auth } from '../firebase';
 import { UserProfile, CharacterAvatar, StateData, SocialClass } from '../types/game';
 export type { UserProfile };
 import { CharacterRenderer } from './CharacterRenderer';
@@ -36,13 +36,34 @@ import { SpawnStateSelector } from './SpawnStateSelector';
 import { NIGERIA_36_STATES_ALPHABETICAL } from '../data/stateLocationsData';
 import { CANADA_STATE_DATA } from '../data/canadaLocations150';
 import { formatNaira } from '../utils/formatNaira';
+import {
+  OWNER_EMAIL,
+  OWNER_USERNAME,
+  validateBirthdayInput,
+  validateEmailInput,
+  validatePasswordStrength,
+  validateUsernameInput,
+} from '../utils/authValidation';
+import {
+  checkEmailVerificationStatus,
+  checkUsernameAvailable,
+  CloudGameSaveDoc,
+  loadAuthenticatedCitizenSession,
+  loginCitizenAccount,
+  logoutFirebaseUser,
+  registerCitizenAccount,
+  resendCurrentUserVerification,
+  sendPasswordReset,
+  syncProfileToCloud,
+} from '../services/firebaseAccountService';
 
 interface AuthPortalProps {
-  onAuthSuccess: (user: UserProfile, spawnState: StateData) => void;
+  onAuthSuccess: (user: UserProfile, spawnState: StateData, cloudSave?: CloudGameSaveDoc | null) => void;
   triggerSound?: (type: 'coin' | 'alert' | 'stamp' | 'success') => void;
+  initialVerificationEmail?: string | null;
+  initialSuspendedReason?: string | null;
 }
 
-// Clean storage namespace for accounts (Complete fresh reset with authoritative server sync)
 export const STORAGE_USERS_KEY = 'naija_life_citizens_v20_clean';
 export const STORAGE_SESSION_KEY = 'naija_life_active_citizen_v20_clean';
 
@@ -64,9 +85,7 @@ export function purgeAllLegacyAccounts(): void {
         localStorage.removeItem(k);
       }
     }
-  } catch (err) {
-    console.error('Error in account cleanup:', err);
-  }
+  } catch {}
 }
 
 export function getStoredSession(): UserProfile | null {
@@ -83,20 +102,16 @@ export function getStoredSession(): UserProfile | null {
 export function saveSession(user: UserProfile): void {
   try {
     localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(user));
-  } catch (err) {
-    console.error('Failed to save session:', err);
-  }
+  } catch {}
 }
 
 export function clearSession(): void {
   try {
     localStorage.removeItem(STORAGE_SESSION_KEY);
-  } catch (err) {
-    console.error('Failed to clear session:', err);
-  }
+  } catch {}
 }
 
-export function getStoredUsers(): Record<string, { password: string; profile: UserProfile }> {
+export function getStoredUsers(): Record<string, { password?: string; profile: UserProfile }> {
   try {
     purgeAllLegacyAccounts();
     const raw = localStorage.getItem(STORAGE_USERS_KEY);
@@ -107,114 +122,192 @@ export function getStoredUsers(): Record<string, { password: string; profile: Us
   }
 }
 
-function saveUserRecord(username: string, record: { password: string; profile: UserProfile }) {
-  try {
-    const all = getStoredUsers();
-    all[username.toLowerCase().trim()] = record;
-    localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(all));
-  } catch (err) {
-    console.error('Failed to save user record:', err);
-  }
+export function getStateById(stateId?: string): StateData {
+  if (!stateId) return NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === 'lagos') || NIGERIA_36_STATES_ALPHABETICAL[0];
+  const norm = stateId.toLowerCase().trim();
+  if (norm === 'canada') return CANADA_STATE_DATA;
+  return (
+    NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === norm) ||
+    NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === 'lagos') ||
+    NIGERIA_36_STATES_ALPHABETICAL[0]
+  );
 }
 
-export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSound }) => {
-  // Purge legacy storage immediately
+function buildStarterProfile(params: {
+  email: string;
+  username: string;
+  dateOfBirth: string;
+  avatar: CharacterAvatar;
+  spawnStateId: string;
+}): UserProfile {
+  const { email, username, dateOfBirth, avatar, spawnStateId } = params;
+  const formattedFirstName = username.charAt(0).toUpperCase() + username.slice(1);
+
+  const rand = Math.random();
+  let socialClass: SocialClass = 'mapo';
+  let startingCash = 0;
+  let startingBank = 0;
+  let loanBalance = 0;
+  let phoneModel = 'samsung_s24_base';
+  let fatherSubsidy = 35;
+  let startingHouseDesc = '4-Bedroom Flat';
+
+  if (rand < 0.45) {
+    socialClass = 'lapo';
+    const lapoTotal = Math.floor(Math.random() * (100000 - 50000 + 1)) + 50000;
+    startingCash = lapoTotal;
+    startingBank = 0;
+    loanBalance = lapoTotal;
+    fatherSubsidy = 0;
+    phoneModel = 'iphone_x';
+    startingHouseDesc = 'Self-Contain Apartment';
+  } else if (rand < 0.85) {
+    socialClass = 'mapo';
+    const mapoTotal = Math.floor(Math.random() * (1000000 - 800000 + 1)) + 800000;
+    startingCash = Math.round(mapoTotal * 0.15);
+    startingBank = mapoTotal - startingCash;
+    loanBalance = 0;
+    fatherSubsidy = 35;
+    phoneModel = 'samsung_s24_base';
+    startingHouseDesc = '4-Bedroom Flat';
+  } else {
+    socialClass = 'nepo';
+    const nepoTotal = Math.floor(Math.random() * (3000000 - 1500000 + 1)) + 1500000;
+    startingCash = Math.round(nepoTotal * 0.15);
+    startingBank = nepoTotal - startingCash;
+    loanBalance = 0;
+    fatherSubsidy = 100;
+    phoneModel = 'iphone_17_pm';
+    startingHouseDesc = 'Two-Story Luxury Villa';
+  }
+
+  return {
+    username,
+    citizenName: formattedFirstName,
+    gmail: email,
+    email,
+    firstName: formattedFirstName,
+    lastName: 'Citizen',
+    dateOfBirth,
+    createdAt: new Date().toISOString(),
+    role: 'citizen',
+    accountStatus: 'active',
+    isOwner: false,
+    isOwnerAccount: false,
+    isVerified: false,
+    avatar,
+    spawnStateId,
+    lastLocationStateId: spawnStateId,
+    socialClass,
+    phoneModel,
+    cashNaira: startingCash,
+    bankNaira: startingBank,
+    loanBalanceNGN: loanBalance,
+    savingsBalanceNGN: 0,
+    bankCAD: 0,
+    savingsCAD: 0,
+    cashUSD: socialClass === 'nepo' ? 5000 : socialClass === 'mapo' ? 200 : 0,
+    energy: 100,
+    hunger: 95,
+    health: 100,
+    happiness: socialClass === 'nepo' ? 95 : 85,
+    inventory: [
+      'Federal NIN Slip',
+      phoneModel === 'iphone_17_pm'
+        ? 'iPhone 17 Pro Max'
+        : phoneModel === 'samsung_s24_base'
+        ? 'Samsung Galaxy S24'
+        : 'iPhone X',
+      'Naija Pay Debit Card',
+      `${startingHouseDesc} Key`,
+    ],
+    fatherRentSubsidyPct: fatherSubsidy,
+    completedCourses: [],
+    furnitureBought: [],
+    receipts: [
+      {
+        id: 'rcpt_welcome',
+        title: `Welcome Grant (${socialClass.toUpperCase()})`,
+        category: 'general',
+        amount: startingBank + startingCash,
+        date: new Date().toLocaleDateString(),
+        type: 'credit',
+      },
+    ],
+    alerts: [
+      {
+        id: 'alrt_start',
+        text: `Welcome to Naija Life! Assigned Status: ${socialClass.toUpperCase()}.${
+          loanBalance > 0 ? ' Repay your startup loan in Naija Pay.' : ''
+        }`,
+        amount: startingBank + startingCash,
+        date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        type: 'credit',
+        senderOrRecipient: 'Central Bank of Nigeria',
+      },
+    ],
+    ownedDocuments: [],
+  };
+}
+
+export const AuthPortal: React.FC<AuthPortalProps> = ({
+  onAuthSuccess,
+  triggerSound,
+  initialVerificationEmail,
+  initialSuspendedReason,
+}) => {
   useEffect(() => {
     purgeAllLegacyAccounts();
   }, []);
 
-  // Detect saved account or session on device
-  const initialSession = getStoredSession();
-  const allStoredUsers = getStoredUsers();
-  const [syncedUsers, setSyncedUsers] = useState<Record<string, { password: string; profile: UserProfile }>>(allStoredUsers);
+  type PortalStep =
+    | 'AUTH_GATE'
+    | 'VERIFY_EMAIL'
+    | 'FORGOT_PASSWORD'
+    | 'SUSPENDED'
+    | 'CUSTOMIZE'
+    | 'PICK_SPAWN'
+    | 'STATUS_REVEAL';
 
-  // Synchronize with Naija Life server on load (Server is authoritative; does not restore deleted accounts)
-  useEffect(() => {
-    let isMounted = true;
-    const fetchServerAccounts = async () => {
-      try {
-        const res = await fetch('/api/auth/all-accounts');
-        if (res.ok) {
-          const data = await res.json();
-          const serverUsers = data?.citizens || data?.accounts;
-          if (serverUsers && typeof serverUsers === 'object') {
-            const cleanFromCentralServer: Record<string, any> = {};
-            for (const [uKey, rec] of Object.entries(serverUsers)) {
-              const r = rec as { password?: string; profile?: UserProfile };
-              if (r?.profile) {
-                cleanFromCentralServer[uKey.toLowerCase().trim()] = {
-                  password: r.password || '',
-                  profile: r.profile,
-                };
-              }
-            }
-            if (isMounted) {
-              localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(cleanFromCentralServer));
-              setSyncedUsers(cleanFromCentralServer);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('Server account sync fallback:', err);
-      }
-    };
-    fetchServerAccounts();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  // ONLY show accounts that actually exist on THIS specific device (no fake test accounts)
-  const deviceUserKeys = useMemo(() => {
-    return Object.keys(syncedUsers).filter((k) => {
-      const lower = k.toLowerCase().trim();
-      return lower !== 'testcitizen' && lower !== 'citizen_emeka' && lower !== 'test_citizen' && lower !== 'emeka';
-    });
-  }, [syncedUsers]);
-
-  const defaultUserKey = initialSession?.username || deviceUserKeys[0] || '';
-
-  // Step flow: 'AUTH_GATE' -> 'STATUS_REVEAL' -> 'CUSTOMIZE' -> 'PICK_SPAWN'
-  const [currentStep, setCurrentStep] = useState<'AUTH_GATE' | 'STATUS_REVEAL' | 'CUSTOMIZE' | 'PICK_SPAWN'>('AUTH_GATE');
-
-  // Auth Mode: start on 'LOGIN' if an account exists on this device, otherwise 'SIGNUP'
-  const [authMode, setAuthMode] = useState<'LOGIN' | 'SIGNUP'>(
-    defaultUserKey ? 'LOGIN' : 'SIGNUP'
+  const [currentStep, setCurrentStep] = useState<PortalStep>(
+    initialSuspendedReason
+      ? 'SUSPENDED'
+      : initialVerificationEmail
+      ? 'VERIFY_EMAIL'
+      : 'AUTH_GATE'
   );
+  const [authMode, setAuthMode] = useState<'LOGIN' | 'SIGNUP'>('LOGIN');
+  const [isNewSignupFlow, setIsNewSignupFlow] = useState(false);
 
-  // Login form state (supports Citizen Username or Gmail)
-  const [loginUsername, setLoginUsername] = useState(defaultUserKey);
+  // Registration form fields (all 6 required fields)
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupUsername, setSignupUsername] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('2002-06-15');
+  const [signupPassword, setSignupPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // Live username availability state
+  const [usernameStatus, setUsernameStatus] = useState<{
+    checking: boolean;
+    available?: boolean;
+    message?: string;
+  }>({ checking: false });
+
+  // Login form fields
+  const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
 
-  // Purge any fake or test accounts from this device's storage so ONLY REAL ACCOUNTS exist
-  useEffect(() => {
-    try {
-      const users = getStoredUsers();
-      let changed = false;
-      const fakeKeys = ['testcitizen', 'citizen_emeka', 'test_citizen', 'emeka'];
-      for (const k of fakeKeys) {
-        if (users[k]) {
-          delete users[k];
-          changed = true;
-        }
-      }
-      if (changed) {
-        localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(users));
-        setSyncedUsers(users);
-      }
-    } catch {}
-  }, []);
+  // Forgot password & verification & suspension state
+  const [resetEmail, setResetEmail] = useState('');
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState(initialVerificationEmail || '');
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [suspendedReason, setSuspendedReason] = useState(initialSuspendedReason || '');
 
-  // Signup form state: Strictly 4 fields (Gmail, Username, Birthday, Password)
-  const [signupGmail, setSignupGmail] = useState('');
-  const [signupUsername, setSignupUsername] = useState('');
-  const [signupPassword, setSignupPassword] = useState('');
-  const [showSignupPassword, setShowSignupPassword] = useState(false);
-  const [dateOfBirth, setDateOfBirth] = useState('2002-06-15');
-  const [signupStateId, setSignupStateId] = useState('lagos');
-
-  // Character customization state
+  // Onboarding state
   const [avatar, setAvatar] = useState<CharacterAvatar>({
     gender: 'male',
     skinTone: '#8d5524',
@@ -225,457 +318,503 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     shoes: 'sneakers',
     accessory: 'designer_shades',
   });
-
-  // Staged profile during multi-step registration
+  const [signupStateId, setSignupStateId] = useState('lagos');
   const [pendingProfile, setPendingProfile] = useState<UserProfile | null>(null);
+  const [pendingCloudSave, setPendingCloudSave] = useState<CloudGameSaveDoc | null>(null);
 
-  // Feedback notifications
+  // Loading & Feedback
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Helper to find state object by ID (supports Canada and falls back to Lagos)
-  const getStateById = (stateId?: string): StateData => {
-    if (!stateId) return NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === 'lagos') || NIGERIA_36_STATES_ALPHABETICAL[0];
-    const norm = stateId.toLowerCase().trim();
-    if (norm === 'canada') return CANADA_STATE_DATA;
-    return (
-      NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === norm) ||
-      NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === 'lagos') ||
-      NIGERIA_36_STATES_ALPHABETICAL[0]
-    );
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown((c) => Math.max(0, c - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
+
+  // Debounced live username uniqueness check during signup
+  useEffect(() => {
+    if (authMode !== 'SIGNUP' || currentStep !== 'AUTH_GATE') return;
+    const raw = signupUsername.trim();
+    if (!raw) {
+      setUsernameStatus({ checking: false });
+      return;
+    }
+    const validation = validateUsernameInput(raw);
+    if (!validation.valid) {
+      setUsernameStatus({ checking: false, available: false, message: validation.error });
+      return;
+    }
+
+    let cancelled = false;
+    setUsernameStatus({ checking: true, message: 'Checking availability...' });
+    const timer = setTimeout(async () => {
+      try {
+        const res = await checkUsernameAvailable(raw);
+        if (!cancelled) {
+          setUsernameStatus({
+            checking: false,
+            available: res.available,
+            message: res.available ? `@${res.normalized} is available` : res.error || 'Username already taken',
+          });
+        }
+      } catch {
+        if (!cancelled) setUsernameStatus({ checking: false });
+      }
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [signupUsername, authMode, currentStep]);
+
+  const pwdStrength = validatePasswordStrength(signupPassword);
+  const todayMaxDate = new Date().toISOString().split('T')[0];
+
+  // =========================================================================
+  // REGISTRATION HANDLER (Firebase Auth + Firestore Transaction + Verification)
+  // =========================================================================
+  const handleSignupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const emailCheck = validateEmailInput(signupEmail);
+    if (!emailCheck.valid) {
+      setErrorMessage(emailCheck.error || 'Invalid email address.');
+      triggerSound?.('alert');
+      return;
+    }
+
+    const unameCheck = validateUsernameInput(signupUsername);
+    if (!unameCheck.valid) {
+      setErrorMessage(unameCheck.error || 'Invalid username.');
+      triggerSound?.('alert');
+      return;
+    }
+
+    const dobCheck = validateBirthdayInput(dateOfBirth);
+    if (!dobCheck.valid) {
+      setErrorMessage(dobCheck.error || 'Invalid date of birth.');
+      triggerSound?.('alert');
+      return;
+    }
+
+    if (!pwdStrength.valid) {
+      setErrorMessage(pwdStrength.error || 'Please choose a stronger password.');
+      triggerSound?.('alert');
+      return;
+    }
+
+    if (signupPassword !== confirmPassword) {
+      setErrorMessage('Passwords do not match. Please re-enter Confirm Password.');
+      triggerSound?.('alert');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const starterProfile = buildStarterProfile({
+        email: emailCheck.normalized,
+        username: unameCheck.trimmed,
+        dateOfBirth,
+        avatar,
+        spawnStateId: signupStateId,
+      });
+
+      await registerCitizenAccount({
+        email: emailCheck.normalized,
+        username: unameCheck.trimmed,
+        dateOfBirth,
+        password: signupPassword,
+        confirmPassword,
+        starterProfile,
+      });
+
+      setPendingVerifyEmail(emailCheck.normalized);
+      setIsNewSignupFlow(true);
+      setResendCooldown(60);
+      setSuccessMessage(
+        `Account created! A verification email has been sent to ${emailCheck.normalized}. Please verify your email before entering Naija Life.`
+      );
+      triggerSound?.('stamp');
+      setCurrentStep('VERIFY_EMAIL');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Registration failed.');
+      triggerSound?.('alert');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Universal Owner Account Validator
-  const isOwnerAccount = (username?: string, email?: string, citizenName?: string): boolean => {
-    const u = String(username || '').toLowerCase().trim();
-    const em = String(email || '').toLowerCase().trim();
-    const c = String(citizenName || '').toLowerCase().trim();
-    return (
-      em === 'kchiboy50@gmail.com' ||
-      u === 'chiboy' ||
-      u === 'chiboy_52' ||
-      c === 'chiboy' ||
-      c.includes('chiboy')
-    );
-  };
-
-  // Login Handler (checks real server database first so cross-device accounts work everywhere via Username OR Email!)
+  // =========================================================================
+  // LOGIN HANDLER (Firebase Email + Password + Remember Me + Cloud Profile)
+  // =========================================================================
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setSuccessMessage(null);
 
-    const cleanIdentifier = loginUsername.trim().toLowerCase();
-    if (!cleanIdentifier) {
-      setErrorMessage('Please enter your citizen username or Email address');
+    const emailCheck = validateEmailInput(loginEmail);
+    if (!emailCheck.valid) {
+      setErrorMessage(emailCheck.error || 'Please enter a valid email address.');
+      triggerSound?.('alert');
       return;
     }
-    if (!loginPassword.trim()) {
-      setErrorMessage('Password is required! You must enter the correct password.');
+    if (!loginPassword) {
+      setErrorMessage('Password is required.');
+      triggerSound?.('alert');
       return;
     }
-    const effectivePassword = loginPassword.trim();
 
+    setIsSubmitting(true);
     try {
-      // 1. Try real server-side authentication across Naija Life servers
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: cleanIdentifier, username: cleanIdentifier, email: cleanIdentifier, password: effectivePassword }),
+      const result = await loginCitizenAccount({
+        email: emailCheck.normalized,
+        password: loginPassword,
+        rememberMe,
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.profile) {
-          if (!data.profile.ownedDocuments) data.profile.ownedDocuments = [];
-          const isOwner = isOwnerAccount(data.profile.username, data.profile.gmail || data.profile.email, data.profile.citizenName || data.profile.firstName);
-          if (isOwner) {
-            const SEXTILLION_999 = 9.99e23;
-            data.profile.isOwner = true;
-            data.profile.isOwnerAccount = true;
-            data.profile.isVerified = true;
-            data.profile.socialClass = 'nepo';
-            data.profile.phoneModel = 'iphone_18_pm';
-            data.profile.bankNaira = SEXTILLION_999;
-            data.profile.cashNaira = SEXTILLION_999;
-            data.profile.bankCAD = SEXTILLION_999;
-            data.profile.savingsCAD = SEXTILLION_999;
-            data.profile.cashUSD = 1000000000;
-            data.profile.fatherRentSubsidyPct = 100;
-          }
-          saveUserRecord(data.profile.username.toLowerCase(), {
-            password: effectivePassword,
-            profile: data.profile,
-          });
-          setSyncedUsers(getStoredUsers());
-          saveSession(data.profile);
-          triggerSound?.('stamp');
-          const targetLocId = data.profile.lastLocationStateId || data.profile.spawnStateId || 'lagos';
-          const resumeState = getStateById(targetLocId);
-          onAuthSuccess(data.profile, resumeState);
-          return;
-        }
-      } else if (res.status === 401) {
-        setErrorMessage('Incorrect password! You can only log in with the password you signed up with.');
+      if (result.status === 'NEEDS_VERIFICATION') {
+        setPendingVerifyEmail(result.email || emailCheck.normalized);
+        setIsNewSignupFlow(false);
+        setCurrentStep('VERIFY_EMAIL');
         triggerSound?.('alert');
         return;
-      } else if (res.status === 404) {
-        setErrorMessage('Citizen account not found on Naija Life servers. Please click "CREATE NEW LIFE" to sign up.');
-        triggerSound?.('alert');
-        return;
-      } else {
-        try {
-          const errData = await res.json();
-          if (errData?.error) {
-            setErrorMessage(errData.error);
-            triggerSound?.('alert');
-            return;
-          }
-        } catch {}
       }
-    } catch {
-      // Network/offline fallback
-    }
 
-    // 2. Fallback to local storage if server was unreachable or offline
-    const users = getStoredUsers();
-    // Search by username or email
-    const matchedEntry = Object.entries(users).find(([uKey, uRec]) => {
-      const u = uKey.toLowerCase().trim();
-      const g = (uRec.profile?.gmail || uRec.profile?.email || '').toLowerCase().trim();
-      return u === cleanIdentifier || g === cleanIdentifier;
-    });
+      if (result.status === 'SUSPENDED') {
+        setSuspendedReason(result.reason);
+        setCurrentStep('SUSPENDED');
+        triggerSound?.('alert');
+        return;
+      }
 
-    if (!matchedEntry) {
-      setErrorMessage('Account not found with this username or Email. Please click "CREATE NEW LIFE" to sign up.');
+      // Authenticated and verified -> load existing cross-device account directly into game!
+      saveSession(result.profile);
+      triggerSound?.('stamp');
+      const targetLocId = result.profile.lastLocationStateId || result.profile.spawnStateId || 'lagos';
+      onAuthSuccess(result.profile, getStateById(targetLocId), result.cloudSave);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Login failed.');
       triggerSound?.('alert');
-      return;
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const [matchedKey, userRecord] = matchedEntry;
-
-    if (userRecord.password && userRecord.password !== loginPassword) {
-      setErrorMessage('Incorrect password. Please verify your credentials.');
-      triggerSound?.('alert');
-      return;
-    }
-
-    const isOwner = isOwnerAccount(matchedKey, userRecord.profile?.gmail || userRecord.profile?.email, userRecord.profile?.citizenName || userRecord.profile?.firstName);
-    if (isOwner) {
-      const SEXTILLION_999 = 9.99e23;
-      userRecord.profile.isOwner = true;
-      userRecord.profile.isOwnerAccount = true;
-      userRecord.profile.isVerified = true;
-      userRecord.profile.socialClass = 'nepo';
-      userRecord.profile.phoneModel = 'iphone_18_pm';
-      userRecord.profile.bankNaira = SEXTILLION_999;
-      userRecord.profile.cashNaira = SEXTILLION_999;
-      userRecord.profile.bankCAD = SEXTILLION_999;
-      userRecord.profile.savingsCAD = SEXTILLION_999;
-      userRecord.profile.cashUSD = 1000000000;
-      userRecord.profile.fatherRentSubsidyPct = 100;
-    }
-    if (!userRecord.profile.ownedDocuments) userRecord.profile.ownedDocuments = [];
-
-    saveSession(userRecord.profile);
-    triggerSound?.('stamp');
-    const targetLocId = userRecord.profile.lastLocationStateId || userRecord.profile.spawnStateId || 'lagos';
-    const resumeState = getStateById(targetLocId);
-    onAuthSuccess(userRecord.profile, resumeState);
   };
 
-  // Step 1 Signup submission (Email, Username, Birthday, Password) -> move to Avatar Customization!
-  const handleSignupSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  // =========================================================================
+  // VERIFICATION CHECK & RESEND HANDLERS
+  // =========================================================================
+  const handleCheckVerification = async () => {
     setErrorMessage(null);
-
-    const cleanEmail = signupGmail.trim().toLowerCase();
-    const cleanUsername = signupUsername.trim().toLowerCase();
-    const rawUsername = signupUsername.trim();
-
-    // 1. Email validation (accepts ANY valid email provider: Gmail, Yahoo, Outlook, etc.)
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!cleanEmail || !emailRegex.test(cleanEmail)) {
-      setErrorMessage('Please provide a valid email address (e.g. kchiboy50@gmail.com or citizen@domain.com)');
-      triggerSound?.('alert');
-      return;
-    }
-
-    // 2. Citizen Username validation: LETTERS ONLY!
-    if (!cleanUsername) {
-      setErrorMessage('Please choose a citizen username');
-      return;
-    }
-    if (cleanUsername !== 'chiboy_52') {
-      const isLettersOnly = /^[a-zA-Z]+$/.test(rawUsername);
-      if (!isLettersOnly) {
-        setErrorMessage('Citizen username must contain LETTERS ONLY! No numbers, spaces, or special characters.');
-        triggerSound?.('alert');
-        return;
-      }
-    }
-    if (cleanUsername.length < 3) {
-      setErrorMessage('Username must be at least 3 characters long');
-      return;
-    }
-
-    // 3. Birthday validation
-    if (!dateOfBirth) {
-      setErrorMessage('Please select your Date of Birth');
-      return;
-    }
-
-    // 4. Password validation
-    if (!signupPassword || signupPassword.length < 4) {
-      setErrorMessage('Password is required and must be at least 4 characters long');
-      return;
-    }
-
-    // Derive display citizen name from username
-    const formattedFirstName = rawUsername.charAt(0).toUpperCase() + rawUsername.slice(1);
-    const formattedLastName = 'Citizen';
-    const cleanCitizenName = formattedFirstName.toLowerCase();
-
-    // Check if username, email, or citizen name is already taken across all known accounts
-    // "ONLY ONE ACCT PER NAME TWO ACCTS CANNOT BEAR THE SAME CITIZEN NAME"
-    const existingUsers = getStoredUsers();
-    const allKnownUsers = { ...existingUsers, ...syncedUsers };
-
-    for (const [uKey, uRec] of Object.entries(allKnownUsers)) {
-      const exUser = uKey.toLowerCase().trim();
-      const exEmail = (uRec.profile?.gmail || uRec.profile?.email || '').toLowerCase().trim();
-      const exFirstName = (uRec.profile?.firstName || '').toLowerCase().trim();
-      const exCitizenName = (uRec.profile?.citizenName || '').toLowerCase().trim();
-
-      if (exUser === cleanUsername) {
-        setErrorMessage(`Username "${signupUsername}" is already taken! Every citizen must have a distinct unique username.`);
-        triggerSound?.('alert');
-        return;
-      }
-      if (exEmail === cleanEmail) {
-        setErrorMessage(`Email "${signupGmail}" is already registered to an existing citizen account!`);
-        triggerSound?.('alert');
-        return;
-      }
-      if ((exCitizenName && exCitizenName === cleanCitizenName) || (exFirstName && exFirstName === cleanCitizenName)) {
-        setErrorMessage(`Citizen name "${formattedFirstName}" is already taken! Two accounts cannot bear the same citizen name.`);
-        triggerSound?.('alert');
-        return;
-      }
-    }
-
-    // Owner Recognition:
-    // "any acct created with kchiboy50@gmail.com and chiboy as citizen name IS THE OWNER ACCOUNT WHICH WILL GET THE OWNERS PRIVILEDGES"
-    const isOwner = isOwnerAccount(cleanUsername, cleanEmail, cleanCitizenName);
-
-    let socialClass: SocialClass = 'mapo';
-    let startingCash = 0;
-    let startingBank = 0;
-    let loanBalance = 0;
-    let phoneModel = 'samsung_s24_base';
-    let fatherSubsidy = 35;
-    let startingHouseDesc = '4-Bedroom Flat';
-
-    if (isOwner) {
-      socialClass = 'nepo';
-      const SEXTILLION_999 = 9.99e23;
-      startingBank = SEXTILLION_999;
-      startingCash = SEXTILLION_999;
-      loanBalance = 0;
-      fatherSubsidy = 100;
-      phoneModel = 'iphone_18_pm';
-      startingHouseDesc = 'Two-Story Luxury Villa';
-    } else {
-      // Randomize between Lapo, Mapo, and Nepo
-      const rand = Math.random();
-      if (rand < 0.45) {
-        socialClass = 'lapo';
-        const lapoTotal = Math.floor(Math.random() * (100000 - 50000 + 1)) + 50000;
-        startingCash = lapoTotal;
-        startingBank = 0;
-        loanBalance = lapoTotal;
-        fatherSubsidy = 0;
-        phoneModel = 'iphone_x';
-        startingHouseDesc = 'Self-Contain Apartment';
-      } else if (rand < 0.85) {
-        socialClass = 'mapo';
-        const mapoTotal = Math.floor(Math.random() * (1000000 - 800000 + 1)) + 800000;
-        startingCash = Math.round(mapoTotal * 0.15);
-        startingBank = mapoTotal - startingCash;
-        loanBalance = 0;
-        fatherSubsidy = 35;
-        phoneModel = 'samsung_s24_base';
-        startingHouseDesc = '4-Bedroom Flat';
-      } else {
-        socialClass = 'nepo';
-        const nepoTotal = Math.floor(Math.random() * (3000000 - 1500000 + 1)) + 1500000;
-        startingCash = Math.round(nepoTotal * 0.15);
-        startingBank = nepoTotal - startingCash;
-        loanBalance = 0;
-        fatherSubsidy = 100;
-        phoneModel = 'iphone_17_pm';
-        startingHouseDesc = 'Two-Story Luxury Villa';
-      }
-    }
-
-    const initialProfile: UserProfile = {
-      username: signupUsername.trim(),
-      citizenName: formattedFirstName,
-      gmail: cleanEmail,
-      email: cleanEmail,
-      firstName: formattedFirstName,
-      lastName: formattedLastName,
-      dateOfBirth,
-      createdAt: new Date().toISOString(),
-      avatar,
-      spawnStateId: signupStateId,
-      lastLocationStateId: signupStateId,
-      socialClass,
-      phoneModel,
-      isOwner,
-      isOwnerAccount: isOwner,
-      isVerified: isOwner,
-      cashNaira: startingCash,
-      bankNaira: startingBank,
-      loanBalanceNGN: loanBalance,
-      savingsBalanceNGN: 0,
-      bankCAD: isOwner ? 9.99e23 : 0,
-      savingsCAD: isOwner ? 9.99e23 : 0,
-      cashUSD: isOwner ? 1000000000 : socialClass === 'nepo' ? 5000 : socialClass === 'mapo' ? 200 : 0,
-      energy: 100,
-      hunger: 95,
-      health: 100,
-      happiness: isOwner ? 100 : socialClass === 'nepo' ? 95 : 85,
-      inventory: [
-        isOwner ? 'VIP Game Owner Pass' : 'Federal NIN Slip',
-        phoneModel === 'iphone_18_pm'
-          ? 'iPhone 18 Pro Max'
-          : phoneModel === 'iphone_17_pm'
-          ? 'iPhone 17 Pro Max'
-          : phoneModel === 'samsung_s24_base'
-          ? 'Samsung Galaxy S24'
-          : 'iPhone X',
-        'Naija Pay Debit Card',
-        startingHouseDesc + ' Key',
-      ],
-      fatherRentSubsidyPct: fatherSubsidy,
-      completedCourses: [],
-      furnitureBought: [],
-      receipts: [
-        {
-          id: 'rcpt_welcome',
-          title: isOwner ? 'Game Owner Founder Grant' : `Welcome Grant (${socialClass.toUpperCase()})`,
-          category: 'general',
-          amount: startingBank + startingCash,
-          date: new Date().toLocaleDateString(),
-          type: 'credit',
-        },
-      ],
-      alerts: [
-        {
-          id: 'alrt_start',
-          text: isOwner
-            ? `Welcome Game Owner @${signupUsername}! ₦999 Sextillion balance and owner privileges granted.`
-            : `Welcome to Naija Life! Assigned Status: ${socialClass.toUpperCase()}.${loanBalance > 0 ? ' Repay your ₦100,000 startup loan in Naija Pay.' : ''}`,
-          amount: startingBank + startingCash,
-          date: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          type: 'credit',
-          senderOrRecipient: 'Central Bank of Nigeria',
-        },
-      ],
-    };
-
-    setPendingProfile(initialProfile);
-    triggerSound?.('stamp');
-    // Step 2: Proceed immediately to Avatar Customization!
-    setCurrentStep('CUSTOMIZE');
-  };
-
-  // Direct Continue from Status Reveal straight into the map!
-  const handleProceedDirectlyToMap = async () => {
-    if (!pendingProfile) return;
-
-    const spawnState = getStateById(pendingProfile.spawnStateId || signupStateId || 'lagos');
-    const finalUser: UserProfile = {
-      ...pendingProfile,
-      avatar,
-      spawnStateId: spawnState.id,
-      lastLocationStateId: spawnState.id,
-    };
-
-    // Save on Naija Life servers so this account is accessible from any other device!
-    let userToLaunch = finalUser;
+    setSuccessMessage(null);
+    setIsSubmitting(true);
     try {
-      const resp = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: finalUser.username,
-          email: finalUser.email || finalUser.gmail,
-          gmail: finalUser.gmail || finalUser.email,
-          password: signupPassword,
-          profile: finalUser,
-        }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data?.profile) {
-          userToLaunch = { ...userToLaunch, ...data.profile };
-        }
+      const { verified } = await checkEmailVerificationStatus();
+      if (!verified || !auth.currentUser) {
+        setErrorMessage('Your email is not verified yet. Please open the link in your inbox (or spam folder) and try again.');
+        triggerSound?.('alert');
+        return;
+      }
+
+      const session = await loadAuthenticatedCitizenSession(auth.currentUser);
+      if (session.status === 'SUSPENDED') {
+        setSuspendedReason(session.reason);
+        setCurrentStep('SUSPENDED');
+        return;
+      }
+      if (session.status !== 'AUTHENTICATED') {
+        setErrorMessage('Email verification is still pending propagation. Please retry in a second.');
+        return;
+      }
+
+      triggerSound?.('stamp');
+      if (isNewSignupFlow) {
+        setPendingProfile(session.profile);
+        setPendingCloudSave(session.cloudSave);
+        setAvatar(session.profile.avatar || avatar);
+        setCurrentStep('CUSTOMIZE');
+      } else {
+        saveSession(session.profile);
+        const targetLocId = session.profile.lastLocationStateId || session.profile.spawnStateId || 'lagos';
+        onAuthSuccess(session.profile, getStateById(targetLocId), session.cloudSave);
       }
     } catch (err) {
-      console.warn('Server registration offline fallback:', err);
+      setErrorMessage(err instanceof Error ? err.message : 'Unable to verify email status.');
+      triggerSound?.('alert');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // Save into all registered users
-    saveUserRecord(userToLaunch.username, {
-      password: signupPassword,
-      profile: userToLaunch,
-    });
-    setSyncedUsers(getStoredUsers());
-
-    // Save as current active session
-    saveSession(userToLaunch);
-
-    triggerSound?.('stamp');
-    // Launch directly to the map!
-    onAuthSuccess(userToLaunch, spawnState);
   };
 
-  // Optional: Customization complete -> go to Spawn State Picker
+  const handleResendVerification = async () => {
+    if (resendCooldown > 0) return;
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsSubmitting(true);
+    try {
+      await resendCurrentUserVerification();
+      setResendCooldown(60);
+      setSuccessMessage(`A fresh verification link was sent to ${pendingVerifyEmail || 'your email'}.`);
+      triggerSound?.('coin');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to resend verification email.');
+      triggerSound?.('alert');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsSubmitting(true);
+    try {
+      await sendPasswordReset(resetEmail);
+      setSuccessMessage(`Password reset instructions sent to ${resetEmail.trim().toLowerCase()}. Check your inbox and spam folder.`);
+      triggerSound?.('stamp');
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Could not send reset email.');
+      triggerSound?.('alert');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLogoutAndReturn = async () => {
+    try {
+      await logoutFirebaseUser();
+    } catch {}
+    clearSession();
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setCurrentStep('AUTH_GATE');
+  };
+
+  // =========================================================================
+  // ONBOARDING: CUSTOMIZE -> PICK SPAWN -> STATUS REVEAL -> CLOUD LAUNCH
+  // =========================================================================
   const handleCustomizationComplete = () => {
     if (!pendingProfile) return;
-    setPendingProfile({
-      ...pendingProfile,
-      avatar,
-    });
+    setPendingProfile({ ...pendingProfile, avatar });
     triggerSound?.('coin');
     setCurrentStep('PICK_SPAWN');
   };
 
-  // Step: Spawn state selected from the 36 Nigerian states!
-  const handleSpawnSelected = async (selectedState: StateData) => {
+  const handleSpawnSelected = (selectedState: StateData) => {
     if (!pendingProfile) return;
-
-    const updatedProfile: UserProfile = {
+    setPendingProfile({
       ...pendingProfile,
       avatar,
       spawnStateId: selectedState.id,
       lastLocationStateId: selectedState.id,
-    };
-
-    setPendingProfile(updatedProfile);
+    });
     setSignupStateId(selectedState.id);
     triggerSound?.('stamp');
-
-    // Proceed to Status Reveal to see your rolled class, starting funds, and residence in your chosen state!
     setCurrentStep('STATUS_REVEAL');
   };
 
+  const handleProceedDirectlyToMap = async () => {
+    if (!pendingProfile) return;
+    setIsSubmitting(true);
+    try {
+      const spawnState = getStateById(pendingProfile.spawnStateId || signupStateId || 'lagos');
+      const finalUser: UserProfile = {
+        ...pendingProfile,
+        avatar,
+        spawnStateId: spawnState.id,
+        lastLocationStateId: spawnState.id,
+      };
+      if (finalUser.uid) {
+        await syncProfileToCloud(finalUser.uid, finalUser).catch(() => {});
+      }
+      saveSession(finalUser);
+      triggerSound?.('stamp');
+      onAuthSuccess(finalUser, spawnState, pendingCloudSave);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   // =========================================================================
-  // STATUS REVEAL SCREEN: SHOWS NEPO / MAPO / LAPO + "CONTINUE TO THE MAP"
+  // STEP VIEWS: SUSPENDED / VERIFY EMAIL / FORGOT PASSWORD / ONBOARDING
   // =========================================================================
+  if (currentStep === 'SUSPENDED') {
+    return (
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-black text-white p-4">
+        <div className="w-full max-w-md bg-zinc-950 border-2 border-rose-500/60 rounded-3xl p-7 text-center shadow-2xl space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-8 h-8 text-rose-400" />
+          </div>
+          <h2 className="text-2xl font-black text-white">ACCOUNT SUSPENDED</h2>
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            Access to Naija Life servers has been restricted for this account by Apex Syndicate administration.
+          </p>
+          <div className="p-3.5 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 font-medium">
+            {suspendedReason || 'Administrative suspension in effect.'}
+          </div>
+          <button
+            type="button"
+            onClick={handleLogoutAndReturn}
+            className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-black flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Sign Out & Return to Login</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentStep === 'VERIFY_EMAIL') {
+    return (
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-black text-white p-4 overflow-y-auto">
+        <div className="w-full max-w-md bg-zinc-950 border-2 border-emerald-500/50 rounded-3xl p-7 shadow-2xl space-y-4">
+          <div className="text-center space-y-2">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center mx-auto">
+              <Mail className="w-7 h-7 text-emerald-400" />
+            </div>
+            <h2 className="text-2xl font-black text-white">VERIFY YOUR EMAIL</h2>
+            <p className="text-xs text-zinc-400">
+              We sent a verification link to{' '}
+              <strong className="text-emerald-300 font-mono">{pendingVerifyEmail || auth.currentUser?.email}</strong>.
+            </p>
+          </div>
+
+          {successMessage && (
+            <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+              <span>{successMessage}</span>
+            </div>
+          )}
+
+          {errorMessage && (
+            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-300 text-xs flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 text-[11px] text-zinc-300 space-y-1.5">
+            <p className="font-bold text-white flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Why verify?</span>
+            </p>
+            <p className="text-zinc-400 leading-relaxed">
+              Email verification protects your cross-device cloud saves, unlocks account recovery, and secures Apex Syndicate role provisioning.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={handleCheckVerification}
+            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer"
+          >
+            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            <span>I Have Verified — Check Status & Continue</span>
+          </button>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={isSubmitting || resendCooldown > 0}
+              onClick={handleResendVerification}
+              className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 border border-zinc-700 text-xs font-bold text-zinc-200 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
+              <span>{resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Link'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleLogoutAndReturn}
+              className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-bold text-zinc-300 flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-400" />
+              <span>Switch Account</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentStep === 'FORGOT_PASSWORD') {
+    return (
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-black text-white p-4">
+        <div className="w-full max-w-md bg-zinc-950 border-2 border-amber-500/40 rounded-3xl p-7 shadow-2xl space-y-4">
+          <div className="text-center space-y-2">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center mx-auto">
+              <KeyRound className="w-6 h-6 text-amber-400" />
+            </div>
+            <h2 className="text-2xl font-black text-white">RESET PASSWORD</h2>
+            <p className="text-xs text-zinc-400">
+              Enter your registered email address and we will send a secure password reset link.
+            </p>
+          </div>
+
+          {successMessage && (
+            <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+              <span>{successMessage}</span>
+            </div>
+          )}
+
+          {errorMessage && (
+            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-300 text-xs flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
+            <div>
+              <label className="text-xs font-bold text-zinc-300 block mb-1.5">Registered Email Address</label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-amber-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  placeholder="Enter your email address"
+                  required
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 font-mono"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+              <span>Send Password Reset Link</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setErrorMessage(null);
+                setSuccessMessage(null);
+                setCurrentStep('AUTH_GATE');
+              }}
+              className="w-full py-2.5 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
+            >
+              Back to Log In
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   if (currentStep === 'STATUS_REVEAL' && pendingProfile) {
-    const isOwner = pendingProfile.username.toLowerCase() === 'chiboy_52';
+    const isOwner = pendingProfile.isOwner === true && pendingProfile.role === 'owner';
     const isNepo = pendingProfile.socialClass === 'nepo';
     const isMapo = pendingProfile.socialClass === 'mapo';
     const totalWealth = pendingProfile.bankNaira + pendingProfile.cashNaira;
@@ -683,39 +822,31 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
 
     return (
       <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-zinc-950 text-white select-none overflow-y-auto overflow-x-hidden py-6 px-4">
-        {/* Background Atmosphere */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-emerald-900/30 via-zinc-950 to-black pointer-events-none" />
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#05966908_1px,transparent_1px),linear-gradient(to_bottom,#05966908_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
-
         <div className="relative z-10 w-full max-w-lg mx-auto flex flex-col items-center text-center">
-          {/* Header */}
           <div className="mb-4">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-black tracking-widest uppercase mb-2">
               <Sparkles className="w-3.5 h-3.5" />
               <span>CITIZEN STATUS UNLOCKED</span>
             </div>
             <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-              {isOwner ? '👑 GAME OWNER IDENTIFIED' : 'YOUR NIGERIAN BACKGROUND'}
+              {isOwner ? 'APEX SYNDICATE OWNER VERIFIED' : 'YOUR NIGERIAN BACKGROUND'}
             </h2>
             <p className="text-xs text-zinc-400 mt-1">
               {isOwner
-                ? 'Welcome back, Creator! ₦999 Sextillion and master privileges confirmed.'
+                ? 'Verified owner identity confirmed. Master privileges & registry control active.'
                 : 'Here is your official social class and starting package.'}
             </p>
           </div>
 
-          {/* Social Status Card */}
           <div className="w-full bg-zinc-900/90 border border-zinc-800 rounded-3xl p-6 shadow-2xl backdrop-blur-md mb-5 relative overflow-hidden text-left">
-            <div className="absolute top-0 right-0 w-36 h-36 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
-
-            {/* Status Badge */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 gap-2">
               <span className="flex items-center gap-1.5 text-xs text-emerald-300 font-bold">
                 <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Spawning in {currentSpawnState.name} State ({currentSpawnState.zone})</span>
+                <span>Spawning in {currentSpawnState.name} ({currentSpawnState.zone})</span>
               </span>
               <span
-                className={`px-3 py-1 rounded-full text-xs font-black tracking-wide uppercase shadow-sm flex items-center gap-1.5 ${
+                className={`px-3 py-1 rounded-full text-xs font-black tracking-wide uppercase flex items-center gap-1.5 ${
                   isNepo
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                     : isMapo
@@ -724,32 +855,28 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                 }`}
               >
                 <Crown className="w-3.5 h-3.5" />
-                <span>
-                  {isOwner ? '👑 GAME OWNER (NEPO)' : `${pendingProfile.socialClass.toUpperCase()} STATUS`}
-                </span>
+                <span>{isOwner ? 'OWNER (NEPO)' : `${pendingProfile.socialClass.toUpperCase()} STATUS`}</span>
               </span>
             </div>
 
-            {/* Avatar & Character Identity */}
             <div className="flex items-center gap-4 bg-zinc-950/70 border border-zinc-800 p-3.5 rounded-2xl mb-4">
               <CharacterRenderer avatar={avatar} size="sm" showBackground={false} />
               <div>
                 <h3 className="text-lg font-black text-white flex items-center gap-2">
                   <span>{pendingProfile.firstName} {pendingProfile.lastName}</span>
                   {isOwner && (
-                    <span className="px-2 py-0.5 rounded bg-amber-400 text-black text-[10px] font-black uppercase tracking-wider">
+                    <span className="px-2 py-0.5 rounded bg-amber-400 text-black text-[10px] font-black uppercase">
                       OWNER
                     </span>
                   )}
                 </h3>
                 <p className="text-xs text-emerald-400 font-mono">@{pendingProfile.username}</p>
                 <p className="text-[11px] text-zinc-400 mt-0.5">
-                  Born {pendingProfile.dateOfBirth} · Capital: {currentSpawnState.capital}
+                  Capital: {currentSpawnState.capital}
                 </p>
               </div>
             </div>
 
-            {/* Perks Breakdown */}
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="bg-zinc-950/70 p-3 rounded-xl border border-zinc-800">
                 <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Starting Wealth</span>
@@ -764,7 +891,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                 </span>
               </div>
               <div className="bg-zinc-950/70 p-3 rounded-xl border border-zinc-800">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Father's Rent Aid</span>
+                <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Father&apos;s Rent Aid</span>
                 <span className="text-xs font-bold text-amber-300">
                   {pendingProfile.fatherRentSubsidyPct}% Paid by Father
                 </span>
@@ -778,18 +905,17 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
             </div>
           </div>
 
-          {/* PRIMARY CALL TO ACTION: "ENTER [STATE] MAP" */}
           <button
             type="button"
+            disabled={isSubmitting}
             onClick={handleProceedDirectlyToMap}
-            className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-zinc-950 font-black text-lg tracking-wide shadow-xl shadow-emerald-500/25 transition-all transform hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-3 cursor-pointer"
+            className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-zinc-950 font-black text-lg tracking-wide shadow-xl shadow-emerald-500/25 transition-all flex items-center justify-center gap-3 cursor-pointer"
           >
             <Play className="w-5 h-5 fill-current" />
             <span>ENTER {currentSpawnState.name.toUpperCase()} MAP</span>
             <ArrowRight className="w-5 h-5" />
           </button>
 
-          {/* Secondary Option: Change Starting State */}
           <div className="mt-3 flex items-center justify-center gap-4 text-xs">
             <button
               type="button"
@@ -797,13 +923,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
               className="text-zinc-300 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer font-bold"
             >
               <Compass className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Change Starting State (36 States)</span>
+              <span>Change Starting State</span>
             </button>
             <span className="text-zinc-600">·</span>
             <button
               type="button"
               onClick={() => setCurrentStep('CUSTOMIZE')}
-              className="text-zinc-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer"
+              className="text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer"
             >
               <span>Customize Character</span>
             </button>
@@ -813,9 +939,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     );
   }
 
-  // =========================================================================
-  // STEP: Character Customizer
-  // =========================================================================
   if (currentStep === 'CUSTOMIZE' && pendingProfile) {
     return (
       <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-zinc-950 text-white overflow-y-auto overflow-x-hidden py-8">
@@ -829,9 +952,6 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
     );
   }
 
-  // =========================================================================
-  // STEP: Spawn State Picker
-  // =========================================================================
   if (currentStep === 'PICK_SPAWN' && pendingProfile) {
     return (
       <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-zinc-950 text-white overflow-y-auto overflow-x-hidden py-8">
@@ -847,172 +967,167 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
   }
 
   // =========================================================================
-  // MAIN AUTH GATE: LOGIN / SIGNUP SCREEN (1000% MORE ANIMATION, ZERO LAG)
+  // MAIN AUTH GATE: LOGIN & 6-FIELD REGISTRATION
   // =========================================================================
-  return (
-    <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-black text-white select-none overflow-y-auto overflow-x-hidden py-6 px-4">
-      {/* Dynamic Animated Auroras (GPU compositor only) */}
-      <div className="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/20 rounded-full blur-[100px] pointer-events-none animate-aurora" />
-      <div className="absolute top-1/2 -right-32 w-96 h-96 bg-amber-500/15 rounded-full blur-[120px] pointer-events-none animate-aurora" style={{ animationDelay: '-4s' }} />
-      <div className="absolute -bottom-32 left-1/3 w-80 h-80 bg-teal-500/20 rounded-full blur-[90px] pointer-events-none animate-aurora" style={{ animationDelay: '-2s' }} />
+  const isAuthDisabledError =
+    errorMessage?.includes('Email/Password sign-in is not yet enabled') ||
+    errorMessage?.includes('PASSWORD_LOGIN_DISABLED');
 
-      {/* Grid Pattern Background */}
+  return (
+    <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#060809] text-white select-none overflow-y-auto overflow-x-hidden py-6 px-4">
+      <div className="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/15 rounded-full blur-[110px] pointer-events-none" />
+      <div className="absolute bottom-0 -right-32 w-96 h-96 bg-orange-500/15 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#0596690a_1px,transparent_1px),linear-gradient(to_bottom,#0596690a_1px,transparent_1px)] bg-[size:36px_36px] pointer-events-none" />
 
-      {/* Floating Ambient Particles (Hardware GPU accelerated with zero layout thrash) */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {[
-          { top: '15%', left: '12%', size: 'w-2 h-2', color: 'bg-emerald-400', anim: 'animate-float-particle-1', delay: '0s' },
-          { top: '28%', left: '85%', size: 'w-3 h-3', color: 'bg-amber-400', anim: 'animate-float-particle-2', delay: '1s' },
-          { top: '65%', left: '8%', size: 'w-2.5 h-2.5', color: 'bg-teal-300', anim: 'animate-float-particle-3', delay: '2s' },
-          { top: '80%', left: '78%', size: 'w-2 h-2', color: 'bg-emerald-300', anim: 'animate-float-particle-1', delay: '3.5s' },
-          { top: '45%', left: '92%', size: 'w-1.5 h-1.5', color: 'bg-amber-300', anim: 'animate-float-particle-2', delay: '0.8s' },
-          { top: '12%', left: '72%', size: 'w-2.5 h-2.5', color: 'bg-emerald-400', anim: 'animate-float-particle-3', delay: '4s' },
-          { top: '75%', left: '22%', size: 'w-2 h-2', color: 'bg-emerald-200', anim: 'animate-float-particle-1', delay: '2.5s' },
-          { top: '35%', left: '6%', size: 'w-3 h-3', color: 'bg-amber-400', anim: 'animate-float-particle-2', delay: '1.8s' },
-          { top: '90%', left: '50%', size: 'w-2 h-2', color: 'bg-teal-400', anim: 'animate-float-particle-3', delay: '5s' },
-        ].map((pt, i) => (
-          <div
-            key={i}
-            className={`absolute rounded-full shadow-[0_0_12px_currentColor] opacity-60 ${pt.size} ${pt.color} ${pt.anim}`}
-            style={{ top: pt.top, left: pt.left, animationDelay: pt.delay }}
-          />
-        ))}
-      </div>
-
-      <div className="relative z-10 w-full max-w-md mx-auto">
-        {/* Brand Header with Neon Glow */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-950/80 border border-emerald-400/40 text-emerald-300 text-xs font-black tracking-widest uppercase mb-3 animate-neon-badge shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+      <div className="relative z-10 w-full max-w-md mx-auto my-auto">
+        <div className="text-center mb-5">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900/90 border border-orange-500/40 text-orange-300 text-[11px] font-black tracking-widest uppercase mb-3 shadow-lg">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" style={{ animationDuration: '6s' }} />
-            <span>NIGERIA'S #1 REAL LIFE SIMULATION</span>
+            <span>CROSS-DEVICE CLOUD ACCOUNTS ACTIVE</span>
           </div>
 
           <div className="flex items-center justify-center gap-3.5 mb-1.5">
-            <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-2xl overflow-hidden shadow-[0_0_25px_rgba(16,185,129,0.5)] border-2 border-emerald-400/60 shrink-0">
-              <img
-                src="/nl-logo.png"
-                alt="Naija Life NL Emblem"
-                className="w-full h-full object-cover"
-              />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full ring-1 ring-black animate-pulse" />
+            <div className="relative w-12 h-12 rounded-2xl overflow-hidden shadow-[0_0_25px_rgba(16,185,129,0.45)] border-2 border-emerald-400/60 shrink-0">
+              <img src="/nl-logo.png" alt="Naija Life NL Emblem" className="w-full h-full object-cover" />
             </div>
-            <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-200 to-amber-300 drop-shadow-[0_0_25px_rgba(16,185,129,0.4)]">
+            <h1 className="text-4xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-amber-200 to-orange-400">
               NAIJA LIFE
             </h1>
           </div>
           <p className="text-xs text-zinc-400 font-medium">
-            36 Real States · Live Flights · Real-Life Economy · Democratic Government
+            36 Real States · Live Economy · Persistent Cross-Device Save
           </p>
         </div>
 
-        {/* Tab switch between Sign Up and Login */}
-        <div className="grid grid-cols-2 p-1 bg-zinc-900/90 border border-zinc-800 rounded-2xl mb-4 backdrop-blur-md shadow-xl">
-          <button
-            type="button"
-            onClick={() => {
-              setAuthMode('SIGNUP');
-              setErrorMessage(null);
-            }}
-            className={`py-2.5 text-xs font-black rounded-xl transition-all cursor-pointer relative overflow-hidden ${
-              authMode === 'SIGNUP'
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-zinc-950 shadow-lg shadow-emerald-500/30'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            {authMode === 'SIGNUP' && (
-              <span className="absolute inset-0 bg-white/25 -skew-x-12 translate-x-[-120%] animate-btn-shimmer" />
-            )}
-            CREATE NEW LIFE
-          </button>
+        {/* Auth Mode Switcher */}
+        <div className="grid grid-cols-2 p-1 bg-zinc-900/90 border border-zinc-800 rounded-2xl mb-4 shadow-xl">
           <button
             type="button"
             onClick={() => {
               setAuthMode('LOGIN');
               setErrorMessage(null);
+              setSuccessMessage(null);
             }}
-            className={`py-2.5 text-xs font-black rounded-xl transition-all cursor-pointer relative overflow-hidden ${
+            className={`py-2.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
               authMode === 'LOGIN'
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-zinc-950 shadow-lg shadow-emerald-500/30'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-zinc-950 shadow-lg'
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
-            {authMode === 'LOGIN' && (
-              <span className="absolute inset-0 bg-white/25 -skew-x-12 translate-x-[-120%] animate-btn-shimmer" />
-            )}
             LOG IN
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode('SIGNUP');
+              setErrorMessage(null);
+              setSuccessMessage(null);
+            }}
+            className={`py-2.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
+              authMode === 'SIGNUP'
+                ? 'bg-gradient-to-r from-orange-500 to-amber-400 text-zinc-950 shadow-lg'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            CREATE NEW LIFE
           </button>
         </div>
 
-        {/* Glowing Form Card Container */}
-        <div className="bg-zinc-950/90 border-2 rounded-3xl p-6 sm:p-7 shadow-[0_10px_40px_rgba(0,0,0,0.8)] backdrop-blur-xl relative overflow-hidden animate-border-glow">
-          {/* Subtle Inner Corner Accents */}
-          <div className="absolute top-0 right-0 w-28 h-28 bg-emerald-500/10 rounded-full blur-xl pointer-events-none" />
-          <div className="absolute bottom-0 left-0 w-28 h-28 bg-amber-500/10 rounded-full blur-xl pointer-events-none" />
-
+        <div className="bg-zinc-950/95 border border-zinc-800 rounded-3xl p-6 shadow-2xl backdrop-blur-xl">
           {successMessage && (
-            <div className="mb-4 p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2 shadow-lg shadow-emerald-950">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400 animate-bounce" />
+            <div className="mb-4 p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
               <span>{successMessage}</span>
             </div>
           )}
 
           {errorMessage && (
-            <div className="mb-4 p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-300 text-xs flex items-start gap-2 shadow-lg shadow-rose-950">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
-              <span>{errorMessage}</span>
+            <div className="mb-4 p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-200 text-xs space-y-1.5">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                <span>{errorMessage}</span>
+              </div>
+              {isAuthDisabledError && (
+                <p className="text-[11px] text-amber-300 pl-6">
+                  Project Owner Action: Open Firebase Console → Authentication → Sign-in method → Enable Email/Password.
+                </p>
+              )}
             </div>
           )}
 
           {authMode === 'SIGNUP' ? (
-            /* ================= SIGNUP FORM (STRICTLY 4 FIELDS: GMAIL, USERNAME, BIRTHDAY, PASSWORD) ================= */
-            <form onSubmit={handleSignupSubmit} className="space-y-3.5 relative z-10">
-              {/* 1. Gmail Address */}
+            <form onSubmit={handleSignupSubmit} className="space-y-3">
+              {/* 1. Email Address */}
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">Gmail / Email Address</label>
+                <label className="text-xs font-bold text-zinc-300 block mb-1">Email Address</label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="email"
-                    value={signupGmail}
-                    onChange={(e) => setSignupGmail(e.target.value)}
-                    placeholder="e.g. yourname@gmail.com"
+                    value={signupEmail}
+                    onChange={(e) => setSignupEmail(e.target.value)}
+                    placeholder="citizen@example.com"
                     required
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all font-mono"
+                    autoComplete="email"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 font-mono"
                   />
                 </div>
               </div>
 
-              {/* 2. Citizen Username (Letters only) */}
+              {/* 2. Username */}
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">
-                  Citizen Username <span className="text-[10px] text-zinc-400 font-normal">(Letters only, unique)</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-zinc-300">Username</label>
+                  <span className="text-[10px] text-zinc-400 font-mono">A-Z, 0-9, _ . -</span>
+                </div>
                 <div className="relative">
-                  <User className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <User className="w-4 h-4 text-orange-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={signupUsername}
                     onChange={(e) => setSignupUsername(e.target.value)}
-                    placeholder="e.g. chidubem"
+                    placeholder="e.g. chiboy_52 or naija.gamer"
                     required
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all font-mono"
+                    minLength={3}
+                    maxLength={24}
+                    autoComplete="username"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-8 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-orange-400 font-mono"
                   />
+                  {usernameStatus.checking && (
+                    <Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+                  )}
                 </div>
+                {usernameStatus.message && (
+                  <p
+                    className={`text-[10px] mt-1 font-medium ${
+                      usernameStatus.checking
+                        ? 'text-zinc-400'
+                        : usernameStatus.available
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}
+                  >
+                    {usernameStatus.message}
+                  </p>
+                )}
               </div>
 
-              {/* 3. Date of Birth */}
+              {/* 3. Date of Birth / Birthday */}
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">Date of Birth</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-zinc-300">Date of Birth</label>
+                  <span className="text-[10px] text-zinc-500">Private · Never shown publicly</span>
+                </div>
                 <div className="relative">
                   <Calendar className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="date"
                     value={dateOfBirth}
+                    max={todayMaxDate}
+                    min="1900-01-01"
                     onChange={(e) => setDateOfBirth(e.target.value)}
                     required
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
                   />
                 </div>
               </div>
@@ -1026,99 +1141,105 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                     type={showSignupPassword ? 'text' : 'password'}
                     value={signupPassword}
                     onChange={(e) => setSignupPassword(e.target.value)}
-                    placeholder="At least 4 characters"
+                    placeholder="Min 8 chars, Upper + Lower + Number/Symbol"
                     required
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-9 pr-9 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
+                    autoComplete="new-password"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-9 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
                   />
                   <button
                     type="button"
                     onClick={() => setShowSignupPassword(!showSignupPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                    aria-label="Toggle password visibility"
                   >
                     {showSignupPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                   </button>
                 </div>
+                {signupPassword.length > 0 && (
+                  <div className="mt-1.5 space-y-1">
+                    <div className="grid grid-cols-4 gap-1">
+                      {[1, 2, 3, 4].map((lvl) => (
+                        <div
+                          key={lvl}
+                          className={`h-1 rounded-full ${
+                            pwdStrength.score >= lvl
+                              ? pwdStrength.score >= 4
+                                ? 'bg-emerald-400'
+                                : pwdStrength.score >= 3
+                                ? 'bg-amber-400'
+                                : 'bg-rose-400'
+                              : 'bg-zinc-800'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-zinc-400">
+                      {pwdStrength.valid ? 'Strong password ready.' : pwdStrength.error}
+                    </p>
+                  </div>
+                )}
               </div>
 
+              {/* 5. Confirm Password */}
+              <div>
+                <label className="text-xs font-bold text-zinc-300 block mb-1">Confirm Password</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-teal-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter your password"
+                    required
+                    autoComplete="new-password"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-9 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                    aria-label="Toggle confirm password visibility"
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                {confirmPassword.length > 0 && confirmPassword !== signupPassword && (
+                  <p className="text-[10px] text-rose-400 mt-1">Passwords do not match.</p>
+                )}
+              </div>
+
+              {/* 6. Create Account Button */}
               <button
                 type="submit"
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:brightness-110 text-zinc-950 font-black text-sm tracking-wide shadow-xl shadow-emerald-500/30 transition-all cursor-pointer relative overflow-hidden group hover:scale-[1.01]"
+                disabled={isSubmitting || (usernameStatus.available === false && !usernameStatus.checking)}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-orange-500 via-amber-400 to-orange-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wider shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2 mt-1"
               >
-                <span className="absolute inset-0 bg-white/30 -skew-x-12 translate-x-[-150%] animate-btn-shimmer" />
-                <span className="relative z-10 flex items-center justify-center gap-2">
-                  <span>PROCEED TO AVATAR CUSTOMIZATION</span>
-                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </span>
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                <span>{isSubmitting ? 'Creating Account...' : 'Create Account & Send Verification'}</span>
+                {!isSubmitting && <ArrowRight className="w-4 h-4" />}
               </button>
+
+              {signupEmail.trim().toLowerCase() === OWNER_EMAIL &&
+                signupUsername.trim().toLowerCase() === OWNER_USERNAME && (
+                  <p className="text-[10px] text-amber-300 text-center font-medium">
+                    Apex Syndicate Owner identity detected — privileges will activate server-side once email verification completes.
+                  </p>
+                )}
             </form>
           ) : (
-            /* ================= LOGIN FORM ================= */
-            <form onSubmit={handleLoginSubmit} className="space-y-4 relative z-10">
-              {/* Quick Select for Accounts Saved on This Specific Device */}
-              {deviceUserKeys.length > 0 && (
-                <div className="space-y-1.5 pb-1">
-                  <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block flex items-center gap-1.5">
-                    <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Saved Accounts on This Device:</span>
-                  </span>
-                  <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-                    {deviceUserKeys.map((uKey: string) => {
-                      const uRec = syncedUsers[uKey];
-                      const isSelected = loginUsername.toLowerCase().trim() === uKey;
-                      const isOwner =
-                        uRec?.profile?.isOwner === true ||
-                        uRec?.profile?.isOwnerAccount === true ||
-                        uKey === 'chiboy' ||
-                        uKey === 'chiboy_52' ||
-                        uRec?.profile?.gmail?.toLowerCase() === 'kchiboy50@gmail.com' ||
-                        uRec?.profile?.email?.toLowerCase() === 'kchiboy50@gmail.com' ||
-                        uRec?.profile?.citizenName?.toLowerCase() === 'chiboy' ||
-                        uRec?.profile?.firstName?.toLowerCase() === 'chiboy';
-                      return (
-                        <button
-                          key={uKey}
-                          type="button"
-                          onClick={() => {
-                            setLoginUsername(uRec?.profile?.username || uKey);
-                            setErrorMessage(null);
-                          }}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                            isSelected
-                              ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300 font-black shadow-[0_0_15px_rgba(16,185,129,0.4)] scale-105'
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600'
-                          }`}
-                        >
-                          <span>{isOwner ? '👑' : '🇳🇬'}</span>
-                          <span>@{uRec?.profile?.username || uKey}</span>
-                          <span
-                            className={`text-[9px] uppercase px-1.5 py-0.5 rounded ${
-                              isOwner || uRec?.profile?.socialClass === 'nepo'
-                                ? 'bg-amber-500/30 text-amber-300'
-                                : uRec?.profile?.socialClass === 'mapo'
-                                ? 'bg-blue-500/30 text-blue-300'
-                                : 'bg-emerald-500/30 text-emerald-300'
-                            }`}
-                          >
-                            {isOwner ? 'OWNER' : uRec?.profile?.socialClass || 'Citizen'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
+            <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Citizen Username or Gmail</label>
+                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Email Address</label>
                 <div className="relative">
-                  <User className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Mail className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
-                    type="text"
-                    value={loginUsername}
-                    onChange={(e) => setLoginUsername(e.target.value)}
-                    placeholder="Enter your username or Gmail"
+                    type="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="Enter your registered email"
                     required
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all font-mono"
+                    autoComplete="email"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 font-mono"
                   />
                 </div>
               </div>
@@ -1132,27 +1253,59 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({ onAuthSuccess, triggerSo
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="Enter your password"
-                    className="w-full bg-zinc-900/90 border border-zinc-700/80 rounded-xl pl-10 pr-10 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
+                    required
+                    autoComplete="current-password"
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-10 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
                   />
                   <button
                     type="button"
                     onClick={() => setShowLoginPassword(!showLoginPassword)}
                     className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
+                    aria-label="Toggle password visibility"
                   >
                     {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
 
+              <div className="flex items-center justify-between text-xs">
+                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={rememberMe}
+                    onClick={() => setRememberMe(!rememberMe)}
+                    className={`w-4 h-4 rounded flex items-center justify-center border transition-colors cursor-pointer ${
+                      rememberMe ? 'bg-emerald-500 border-emerald-400 text-black' : 'bg-zinc-900 border-zinc-700'
+                    }`}
+                  >
+                    {rememberMe && <Check className="w-3 h-3 stroke-[3]" />}
+                  </button>
+                  <span>Remember Me on this device</span>
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetEmail(loginEmail);
+                    setErrorMessage(null);
+                    setSuccessMessage(null);
+                    setCurrentStep('FORGOT_PASSWORD');
+                  }}
+                  className="text-orange-400 hover:text-orange-300 font-bold cursor-pointer"
+                >
+                  Forgot Password?
+                </button>
+              </div>
+
               <button
                 type="submit"
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:brightness-110 text-zinc-950 font-black text-sm tracking-wide shadow-xl shadow-emerald-500/30 transition-all cursor-pointer mt-2 relative overflow-hidden group hover:scale-[1.01]"
+                disabled={isSubmitting}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-sm tracking-wide shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
               >
-                <span className="absolute inset-0 bg-white/30 -skew-x-12 translate-x-[-150%] animate-btn-shimmer" />
-                <span className="relative z-10 flex items-center justify-center gap-2">
-                  <span>Log In & Enter Naija Life</span>
-                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </span>
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                <span>{isSubmitting ? 'Signing In & Loading Cloud Save...' : 'Log In & Enter Naija Life'}</span>
+                {!isSubmitting && <ArrowRight className="w-4 h-4" />}
               </button>
             </form>
           )}
