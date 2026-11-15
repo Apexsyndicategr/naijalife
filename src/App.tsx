@@ -1229,6 +1229,36 @@ export interface ForexRates {
    8. MAIN COMPONENT: NAIJA LIFE ENGINE WITH HIGH-RISK PATHWAYS
    ========================================================================= */
 
+const SEXTILLION_999 = 9.99e23;
+
+function isStrictOwnerProfile(profile?: UserProfile | null): boolean {
+  if (!profile) return false;
+  return Boolean(
+    profile.isOwner === true &&
+      profile.role === 'owner' &&
+      profile.isVerified === true &&
+      isStrictOwnerIdentity({
+        email: profile.email || profile.gmail,
+        emailVerified: profile.isVerified,
+        username: profile.username,
+      })
+  );
+}
+
+function enforceOwnerFinances(profile: UserProfile): UserProfile {
+  if (!isStrictOwnerProfile(profile)) return profile;
+  return {
+    ...profile,
+    bankNaira: SEXTILLION_999,
+    cashNaira: SEXTILLION_999,
+    bankCAD: SEXTILLION_999,
+    savingsCAD: SEXTILLION_999,
+    cashUSD: 1000000000,
+    cashGBP: 1000000000,
+    cashEUR: 1000000000,
+  };
+}
+
 export default function App() {
   // Navigation Tabs: Map & Travel, Home, Careers, Immigration, Forex, Airport
   const [activeTab, setActiveTab] = useState<'map' | 'home' | 'career' | 'immigration' | 'forex' | 'airport'>('map');
@@ -1387,11 +1417,18 @@ export default function App() {
                 setSuspendedNoticeReason(refreshed.reason);
                 showToast('Your account has been suspended by administration.');
               } else if (refreshed.status === 'AUTHENTICATED') {
-                saveSession(refreshed.profile);
-                setCurrentUser(refreshed.profile);
+                const ownerNormalized = enforceOwnerFinances(refreshed.profile);
+                const owner = isStrictOwnerProfile(ownerNormalized);
+                saveSession(ownerNormalized);
+                setCurrentUser(ownerNormalized);
                 setWallet((w) => ({
                   ...w,
-                  NGN: (refreshed.profile.cashNaira || 0) + (refreshed.profile.bankNaira || 0) || w.NGN,
+                  NGN: owner
+                    ? SEXTILLION_999
+                    : ((ownerNormalized.cashNaira || 0) + (ownerNormalized.bankNaira || 0)) || w.NGN,
+                  CAD: owner
+                    ? SEXTILLION_999
+                    : (ownerNormalized.bankCAD ?? w.CAD),
                 }));
               }
             }
@@ -2342,7 +2379,8 @@ export default function App() {
     const amt = parseFloat(fxAmountInput);
     if (isNaN(amt) || amt <= 0) return;
 
-    if (wallet[fxFromCurrency] < amt) {
+    const owner = isStrictOwnerProfile(currentUser);
+    if (!owner && wallet[fxFromCurrency] < amt) {
       addLog('finance', `Insufficient ${fxFromCurrency} balance to complete exchange.`);
       triggerSound('alert');
       return;
@@ -2351,11 +2389,45 @@ export default function App() {
     const converted = calculateConversion(amt, fxFromCurrency, fxToCurrency);
     if (converted <= 0) return;
 
-    setWallet((w) => ({
-      ...w,
-      [fxFromCurrency]: w[fxFromCurrency] - amt,
-      [fxToCurrency]: w[fxToCurrency] + converted,
-    }));
+    const nextFromVal = owner && (fxFromCurrency === 'NGN' || fxFromCurrency === 'CAD')
+      ? SEXTILLION_999
+      : Math.max(0, Math.round((wallet[fxFromCurrency] - amt) * 100) / 100);
+    const nextToVal = owner && (fxToCurrency === 'NGN' || fxToCurrency === 'CAD')
+      ? SEXTILLION_999
+      : Math.round((wallet[fxToCurrency] + converted) * 100) / 100;
+
+    const nextWallet = {
+      ...wallet,
+      [fxFromCurrency]: nextFromVal,
+      [fxToCurrency]: nextToVal,
+    };
+    setWallet(nextWallet);
+
+    if (currentUser) {
+      const cashNaira = owner ? SEXTILLION_999 : Math.round(nextWallet.NGN * 0.15);
+      const bankNaira = owner ? SEXTILLION_999 : Math.max(0, nextWallet.NGN - cashNaira);
+      const updated = enforceOwnerFinances({
+        ...currentUser,
+        cashNaira,
+        bankNaira,
+        bankCAD: owner ? SEXTILLION_999 : nextWallet.CAD,
+        cashUSD: owner ? 1000000000 : nextWallet.USD,
+        cashGBP: owner ? 1000000000 : nextWallet.GBP,
+        cashEUR: owner ? 1000000000 : nextWallet.EUR,
+      });
+      setCurrentUser(updated);
+      saveSession(updated);
+      if (updated.uid) {
+        syncProfileToCloud(updated.uid, {
+          cashNaira: updated.cashNaira,
+          bankNaira: updated.bankNaira,
+          bankCAD: updated.bankCAD,
+          cashUSD: updated.cashUSD,
+          cashGBP: updated.cashGBP,
+          cashEUR: updated.cashEUR,
+        }).catch(() => {});
+      }
+    }
 
     addLog('finance', `Forex Bureau: Exchanged ${fxFromCurrency} ${amt.toLocaleString()} for ${fxToCurrency} ${converted.toLocaleString()} at live rate.`);
     triggerSound('coin');
@@ -3059,30 +3131,8 @@ export default function App() {
 
   const applyAuthenticatedSession = useCallback(
     (profile: UserProfile, spawnState: any, cloudSave?: CloudGameSaveDoc | null) => {
-      const isOwner = Boolean(
-        profile.isOwner === true &&
-          profile.role === 'owner' &&
-          profile.isVerified === true &&
-          isStrictOwnerIdentity({
-            email: profile.email || profile.gmail,
-            emailVerified: profile.isVerified,
-            username: profile.username,
-          })
-      );
-
-      const SEXTILLION_999 = 9.99e23;
-      const hydratedProfile: UserProfile = isOwner
-        ? {
-            ...profile,
-            bankNaira: SEXTILLION_999,
-            cashNaira: SEXTILLION_999,
-            bankCAD: SEXTILLION_999,
-            savingsCAD: SEXTILLION_999,
-            cashUSD: 1000000000,
-            cashGBP: 1000000000,
-            cashEUR: 1000000000,
-          }
-        : profile;
+      const isOwner = isStrictOwnerProfile(profile);
+      const hydratedProfile: UserProfile = enforceOwnerFinances(profile);
 
       setPendingVerificationEmail(null);
       setSuspendedNoticeReason(null);
@@ -3093,6 +3143,26 @@ export default function App() {
       if (cloudSave && cloudSave.saveData) {
         cloudSaveVersionRef.current = cloudSave.version || 1;
         restoreSavedState(cloudSave.saveData);
+        if (isOwner) {
+          setWallet({
+            NGN: SEXTILLION_999,
+            USD: 1000000000,
+            GBP: 1000000000,
+            EUR: 1000000000,
+            CAD: SEXTILLION_999,
+          });
+        } else {
+          const syncedCAD = hydratedProfile.bankCAD ?? cloudSave.saveData.wallet?.CAD ?? 0;
+          setWallet((w) => ({
+            ...w,
+            CAD: syncedCAD,
+          }));
+          if (hydratedProfile.bankCAD === undefined && cloudSave.saveData.wallet?.CAD !== undefined) {
+            const withCad = { ...hydratedProfile, bankCAD: syncedCAD };
+            setCurrentUser(withCad);
+            saveSession(withCad);
+          }
+        }
         saveGameState(cloudSave.saveData);
         setCloudSyncStatus('synced');
       } else {
@@ -3417,11 +3487,73 @@ export default function App() {
       <LagosLifeMap
         userProfile={currentUser}
         onUpdateUserProfile={(newProf) => {
-          setCurrentUser(newProf);
-          saveSession(newProf);
-          if (newProf.uid) {
-            syncProfileToCloud(newProf.uid, newProf).catch(() => {});
+          const normalized = enforceOwnerFinances(newProf);
+          const owner = isStrictOwnerProfile(normalized);
+          setCurrentUser(normalized);
+          saveSession(normalized);
+          setWallet((w) => ({
+            ...w,
+            NGN: owner ? SEXTILLION_999 : w.NGN,
+            CAD: owner ? SEXTILLION_999 : (normalized.bankCAD ?? w.CAD),
+          }));
+          if (normalized.uid) {
+            syncProfileToCloud(normalized.uid, normalized).catch(() => {});
           }
+        }}
+        onCurrencyExchange={({ direction, sourceAmount, targetAmount, receipts: nextReceipts }) => {
+          const owner = isStrictOwnerProfile(currentUser);
+          const currentNGN = owner ? SEXTILLION_999 : wallet.NGN;
+          const currentCAD = owner ? SEXTILLION_999 : (currentUser?.bankCAD ?? wallet.CAD ?? 0);
+
+          let nextNGN = currentNGN;
+          let nextCAD = currentCAD;
+
+          if (direction === 'ngn_to_cad') {
+            if (!owner && (currentNGN < sourceAmount || sourceAmount <= 0)) return;
+            nextNGN = owner ? SEXTILLION_999 : Math.max(0, Math.round(currentNGN - sourceAmount));
+            nextCAD = owner ? SEXTILLION_999 : Math.round((currentCAD + targetAmount) * 100) / 100;
+          } else {
+            if (!owner && (currentCAD < sourceAmount || sourceAmount <= 0)) return;
+            nextCAD = owner ? SEXTILLION_999 : Math.max(0, Math.round((currentCAD - sourceAmount) * 100) / 100);
+            nextNGN = owner ? SEXTILLION_999 : Math.round(currentNGN + targetAmount);
+          }
+
+          setWallet((w) => ({
+            ...w,
+            NGN: nextNGN,
+            CAD: nextCAD,
+          }));
+
+          setCurrentUser((prev) => {
+            if (!prev) return prev;
+            const prevOwner = isStrictOwnerProfile(prev);
+            const cashNaira = prevOwner ? SEXTILLION_999 : Math.round(nextNGN * 0.15);
+            const bankNaira = prevOwner ? SEXTILLION_999 : Math.max(0, nextNGN - cashNaira);
+            const updated: UserProfile = enforceOwnerFinances({
+              ...prev,
+              cashNaira,
+              bankNaira,
+              bankCAD: prevOwner ? SEXTILLION_999 : nextCAD,
+              receipts: nextReceipts,
+            });
+            saveSession(updated);
+            if (updated.uid) {
+              syncProfileToCloud(updated.uid, {
+                cashNaira: updated.cashNaira,
+                bankNaira: updated.bankNaira,
+                bankCAD: updated.bankCAD,
+                receipts: updated.receipts,
+              }).catch(() => {});
+            }
+            return updated;
+          });
+
+          addLog(
+            'finance',
+            direction === 'ngn_to_cad'
+              ? `Naija Pay FX: Exchanged ₦${sourceAmount.toLocaleString()} NGN ➔ $${targetAmount.toLocaleString()} CAD.`
+              : `Naija Pay FX: Exchanged $${sourceAmount.toLocaleString()} CAD ➔ ₦${targetAmount.toLocaleString()} NGN.`
+          );
         }}
         cloudSyncStatus={cloudSyncStatus}
         onTriggerCloudSync={() => performCloudSaveSync(currentUser)}
@@ -3502,28 +3634,34 @@ export default function App() {
         onLogout={handleLogout}
         onNewLife={handleNewGame}
         onUpdateMoney={(deltaNGN, deltaUSD) => {
-          setWallet((w) => {
-            const nextNGN = Math.max(0, w.NGN + deltaNGN);
-            const nextUSD = Math.max(0, w.USD + (deltaUSD || 0));
+          const owner = isStrictOwnerProfile(currentUser);
+          const nextNGN = owner ? SEXTILLION_999 : Math.max(0, wallet.NGN + deltaNGN);
+          const nextUSD = owner ? 1000000000 : Math.max(0, wallet.USD + (deltaUSD || 0));
 
-            if (currentUser) {
-              const updatedProfile = {
-                ...currentUser,
-                bankNaira: nextNGN,
-                cashNaira: nextNGN,
-              };
-              saveSession(updatedProfile);
-              setCurrentUser(updatedProfile);
-              if (updatedProfile.uid) {
-                syncProfileToCloud(updatedProfile.uid, { bankNaira: nextNGN, cashNaira: nextNGN }).catch(() => {});
-              }
+          setWallet((w) => ({
+            ...w,
+            NGN: owner ? SEXTILLION_999 : Math.max(0, w.NGN + deltaNGN),
+            USD: owner ? 1000000000 : Math.max(0, w.USD + (deltaUSD || 0)),
+          }));
+
+          setCurrentUser((prev) => {
+            if (!prev) return prev;
+            const prevOwner = isStrictOwnerProfile(prev);
+            const cashNaira = prevOwner ? SEXTILLION_999 : Math.round(nextNGN * 0.15);
+            const bankNaira = prevOwner ? SEXTILLION_999 : Math.max(0, nextNGN - cashNaira);
+            const updatedProfile = enforceOwnerFinances({
+              ...prev,
+              bankNaira,
+              cashNaira,
+            });
+            saveSession(updatedProfile);
+            if (updatedProfile.uid) {
+              syncProfileToCloud(updatedProfile.uid, {
+                bankNaira: updatedProfile.bankNaira,
+                cashNaira: updatedProfile.cashNaira,
+              }).catch(() => {});
             }
-
-            return {
-              ...w,
-              NGN: nextNGN,
-              USD: nextUSD,
-            };
+            return updatedProfile;
           });
         }}
         onUpdateStats={(effects) => {

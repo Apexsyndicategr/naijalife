@@ -267,6 +267,12 @@ export interface NaijaPhoneProps {
   onBusTravel?: (targetState: any, fare: number, busOperator?: string) => void;
   initialApp?: PhoneAppType;
   onUpdateProfile?: (updatedProfile: UserProfile) => void;
+  onCurrencyExchange?: (params: {
+    direction: 'ngn_to_cad' | 'cad_to_ngn';
+    sourceAmount: number;
+    targetAmount: number;
+    receipts: any[];
+  }) => void;
   cloudSyncStatus?: 'synced' | 'syncing' | 'conflict' | 'offline';
   onTriggerCloudSync?: () => Promise<void> | void;
 }
@@ -350,6 +356,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   onBusTravel,
   initialApp = 'home',
   onUpdateProfile,
+  onCurrencyExchange,
   cloudSyncStatus = 'synced',
   onTriggerCloudSync,
 }) => {
@@ -834,6 +841,28 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
     return false;
   };
 
+  const getEffectiveCAD = (): number =>
+    checkIsOwner(userProfile) ? 9.99e23 : (userProfile?.bankCAD || 0);
+
+  const getEffectiveNGN = (): number =>
+    checkIsOwner(userProfile) ? 9.99e23 : moneyNGN;
+
+  const persistProfileUpdate = (nextProf: UserProfile) => {
+    const normalized: UserProfile = checkIsOwner(nextProf)
+      ? {
+          ...nextProf,
+          bankNaira: 9.99e23,
+          cashNaira: 9.99e23,
+          bankCAD: 9.99e23,
+          savingsCAD: 9.99e23,
+        }
+      : nextProf;
+    try {
+      saveSession(normalized);
+    } catch {}
+    onUpdateProfile?.(normalized);
+  };
+
   const getAuthBearerHeaders = async (): Promise<Record<string, string>> => {
     const token = await auth.currentUser?.getIdToken(true);
     return {
@@ -916,13 +945,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
     const isCanada = activeStateKey === 'canada';
     const stakeCAD = Math.max(1, Math.round(aviatorStake / 960.54));
     if (isCanada) {
-      const userCAD = userProfile?.bankCAD || 0;
+      const userCAD = getEffectiveCAD();
       if (userCAD < stakeCAD) {
         onShowToast(`Insufficient CAD funds! Requires $${stakeCAD.toLocaleString()} CAD.`);
         triggerSound?.('alert');
         return;
       }
-      if (userProfile) userProfile.bankCAD = userCAD - stakeCAD;
+      if (userProfile) {
+        const nextCAD = checkIsOwner(userProfile) ? 9.99e23 : Math.max(0, Math.round((userCAD - stakeCAD) * 100) / 100);
+        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD });
+      }
     } else {
       if (moneyNGN < aviatorStake) {
         onShowToast('Insufficient funds for Aviator stake!');
@@ -967,7 +999,12 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
     const stakeCAD = Math.max(1, Math.round(aviatorStake / 960.54));
     if (isCanada) {
       const winCAD = Math.round(stakeCAD * aviatorMultiplier);
-      if (userProfile) userProfile.bankCAD = (userProfile.bankCAD || 0) + winCAD;
+      if (userProfile) {
+        const nextCAD = checkIsOwner(userProfile)
+          ? 9.99e23
+          : Math.round(((userProfile.bankCAD || 0) + winCAD) * 100) / 100;
+        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD });
+      }
       setHasCashedOut(true);
       setIsAviatorFlying(false);
       onShowToast(`🚀 CASHED OUT at ${aviatorMultiplier}x! Won $${winCAD.toLocaleString()} CAD!`);
@@ -1503,17 +1540,22 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
       earnedAmount = baseShiftCAD + performanceBonusCAD;
 
       if (userProfile) {
-        userProfile.bankCAD = (userProfile.bankCAD || 0) + earnedAmount;
-        if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-        userProfile.receipts.unshift({
-          id: `SHIFT_CAN_${Date.now()}`,
-          title: `Shift Payroll: ${job.title} (${correctCount}/15 Performance)`,
-          category: 'career',
-          amount: earnedAmount,
-          date: new Date().toLocaleDateString('en-CA'),
-          type: 'credit',
-          currency: 'CAD',
-        });
+        const nextCAD = checkIsOwner(userProfile)
+          ? 9.99e23
+          : Math.round(((userProfile.bankCAD || 0) + earnedAmount) * 100) / 100;
+        const nextReceipts = [
+          {
+            id: `SHIFT_CAN_${Date.now()}`,
+            title: `Shift Payroll: ${job.title} (${correctCount}/15 Performance)`,
+            category: 'career' as const,
+            amount: earnedAmount,
+            date: new Date().toLocaleDateString('en-CA'),
+            type: 'credit' as const,
+            currency: 'CAD' as const,
+          },
+          ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+        ];
+        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
       }
     } else {
       const baseWeeklyNGN = job.salaryNGN || 28000;
@@ -2810,7 +2852,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           const totalCanadaFare = canadaFlightDetails.totalFareNGN;
                           const isPlayerInCanada = currentStateId === 'canada' || activeStateKey === 'canada';
                           const totalCanadaFareCAD = Math.round(totalCanadaFare / 960.54);
-                          const userCadBalance = userProfile?.bankCAD || 0;
+                          const userCadBalance = getEffectiveCAD();
 
                           const ownedLuxuryVehicles = (ownedVehicles || []).filter(
                             (v: any) => v.isLuxuryAsset || ['jet', 'helicopter', 'yacht'].includes((v.category || '').toLowerCase())
@@ -2842,17 +2884,22 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 return;
                               }
                               if (userProfile) {
-                                userProfile.bankCAD = userCadBalance - fareCAD;
-                                if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                userProfile.receipts.unshift({
-                                  id: `TX_CAN_RET_${Date.now()}`,
-                                  title: isPrivate ? `Private Aircraft Flight to Nigeria (Jet A-1 Fuel Fee)` : `${selectedCanadaAirline.name} Return Flight to Nigeria (MMIA Lagos)`,
-                                  category: 'flight',
-                                  amount: fareCAD,
-                                  date: new Date().toLocaleDateString('en-CA'),
-                                  type: 'debit',
-                                  currency: 'CAD',
-                                });
+                                const nextCAD = checkIsOwner(userProfile)
+                                  ? 9.99e23
+                                  : Math.max(0, Math.round((userCadBalance - fareCAD) * 100) / 100);
+                                const nextReceipts = [
+                                  {
+                                    id: `TX_CAN_RET_${Date.now()}`,
+                                    title: isPrivate ? `Private Aircraft Flight to Nigeria (Jet A-1 Fuel Fee)` : `${selectedCanadaAirline.name} Return Flight to Nigeria (MMIA Lagos)`,
+                                    category: 'flight' as const,
+                                    amount: fareCAD,
+                                    date: new Date().toLocaleDateString('en-CA'),
+                                    type: 'debit' as const,
+                                    currency: 'CAD' as const,
+                                  },
+                                  ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                ];
+                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
                               }
                               onUpdateStats({ happiness: isPrivate ? 65 : selectedCanadaCabin.joyBonus, energy: -5 });
                               onLogAction(
@@ -3441,12 +3488,12 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             <span>Corporations Canada & TSX Venture Hub</span>
                           </span>
                           <span className="text-zinc-400 font-mono">
-                            Canadian Bank: <strong className="text-white">${(userProfile?.bankCAD || 0).toLocaleString()} CAD</strong>
+                            Canadian Bank: <strong className="text-white">{formatCAD(getEffectiveCAD())}</strong>
                           </span>
                         </div>
 
                         {CANADA_BUSINESSES.map((biz) => {
-                          const userCad = userProfile?.bankCAD || 0;
+                          const userCad = getEffectiveCAD();
                           return (
                             <div key={biz.id} className="p-3.5 rounded-2xl bg-zinc-950/90 border border-red-500/30 space-y-2 shadow-md">
                               <div className="flex items-start justify-between">
@@ -3478,7 +3525,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     }
 
                                     if (userProfile) {
-                                      userProfile.bankCAD = userCad - biz.costCAD;
+                                      const nextCAD = checkIsOwner(userProfile)
+                                        ? 9.99e23
+                                        : Math.max(0, Math.round((userCad - biz.costCAD) * 100) / 100);
                                       const newVenture: BusinessVenture = {
                                         id: `biz_can_${Date.now()}`,
                                         typeId: biz.id,
@@ -3488,18 +3537,24 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                         level: 1,
                                         registeredDate: new Date().toLocaleDateString('en-CA'),
                                       };
-                                      if (!Array.isArray(userProfile.ownedBusinesses)) userProfile.ownedBusinesses = [];
-                                      userProfile.ownedBusinesses.push(newVenture);
-
-                                      if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                      userProfile.receipts.unshift({
-                                        id: `BIZ_CAN_${Date.now()}`,
-                                        title: `Acquired: ${biz.name}`,
-                                        category: 'business',
-                                        amount: biz.costCAD,
-                                        date: new Date().toLocaleDateString('en-CA'),
-                                        type: 'debit',
-                                        currency: 'CAD',
+                                      const nextOwned = [...(Array.isArray(userProfile.ownedBusinesses) ? userProfile.ownedBusinesses : []), newVenture];
+                                      const nextReceipts = [
+                                        {
+                                          id: `BIZ_CAN_${Date.now()}`,
+                                          title: `Acquired: ${biz.name}`,
+                                          category: 'business' as const,
+                                          amount: biz.costCAD,
+                                          date: new Date().toLocaleDateString('en-CA'),
+                                          type: 'debit' as const,
+                                          currency: 'CAD' as const,
+                                        },
+                                        ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                      ];
+                                      persistProfileUpdate({
+                                        ...userProfile,
+                                        bankCAD: nextCAD,
+                                        ownedBusinesses: nextOwned,
+                                        receipts: nextReceipts,
                                       });
                                     }
 
@@ -3910,16 +3965,28 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             const nowStr = new Date().toLocaleDateString('en-GB');
 
                             if (userProfile) {
-                              if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                              userProfile.receipts.unshift({
-                                id: txRef,
-                                title: `Transfer to @${cleanRecipient}`,
-                                category: 'transfer',
-                                amount: transferAmount,
-                                date: nowStr,
-                                type: 'debit',
-                                currency: 'NGN',
-                                recipientOrSender: cleanRecipient,
+                              const isOwn = checkIsOwner(userProfile);
+                              const nextNGN = isOwn ? 9.99e23 : Math.max(0, moneyNGN - transferAmount);
+                              const cashNaira = isOwn ? 9.99e23 : Math.round(nextNGN * 0.15);
+                              const bankNaira = isOwn ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
+                              const nextReceipts = [
+                                {
+                                  id: txRef,
+                                  title: `Transfer to @${cleanRecipient}`,
+                                  category: 'transfer' as const,
+                                  amount: transferAmount,
+                                  date: nowStr,
+                                  type: 'debit' as const,
+                                  currency: 'NGN' as const,
+                                  recipientOrSender: cleanRecipient,
+                                },
+                                ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                              ];
+                              persistProfileUpdate({
+                                ...userProfile,
+                                cashNaira,
+                                bankNaira,
+                                receipts: nextReceipts,
                               });
                             }
 
@@ -4000,7 +4067,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             }
                             onUpdateMoney(-savingsInputAmount);
                             if (userProfile) {
-                              userProfile.savingsBalanceNGN = (userProfile.savingsBalanceNGN || 0) + savingsInputAmount;
+                              const isOwn = checkIsOwner(userProfile);
+                              const nextNGN = isOwn ? 9.99e23 : Math.max(0, moneyNGN - savingsInputAmount);
+                              const cashNaira = isOwn ? 9.99e23 : Math.round(nextNGN * 0.15);
+                              const bankNaira = isOwn ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
+                              persistProfileUpdate({
+                                ...userProfile,
+                                cashNaira,
+                                bankNaira,
+                                savingsBalanceNGN: (userProfile.savingsBalanceNGN || 0) + savingsInputAmount,
+                              });
                             }
                             onShowToast(`🔒 Successfully locked ₦${savingsInputAmount.toLocaleString()} into 18% Target Savings!`);
                             triggerSound?.('coin');
@@ -4035,7 +4111,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               }
                               onUpdateMoney(-toPay);
                               if (userProfile) {
-                                userProfile.loanBalanceNGN = Math.max(0, currentLoan - toPay);
+                                const isOwn = checkIsOwner(userProfile);
+                                const nextNGN = isOwn ? 9.99e23 : Math.max(0, moneyNGN - toPay);
+                                const cashNaira = isOwn ? 9.99e23 : Math.round(nextNGN * 0.15);
+                                const bankNaira = isOwn ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
+                                persistProfileUpdate({
+                                  ...userProfile,
+                                  cashNaira,
+                                  bankNaira,
+                                  loanBalanceNGN: Math.max(0, currentLoan - toPay),
+                                });
                               }
                               onShowToast(`🎉 Paid ${formatFullNairaNumber(toPay)} towards starter loan!`);
                               triggerSound?.('success');
@@ -4055,7 +4140,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               }
                               onUpdateMoney(-currentLoan);
                               if (userProfile) {
-                                userProfile.loanBalanceNGN = 0;
+                                const isOwn = checkIsOwner(userProfile);
+                                const nextNGN = isOwn ? 9.99e23 : Math.max(0, moneyNGN - currentLoan);
+                                const cashNaira = isOwn ? 9.99e23 : Math.round(nextNGN * 0.15);
+                                const bankNaira = isOwn ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
+                                persistProfileUpdate({
+                                  ...userProfile,
+                                  cashNaira,
+                                  bankNaira,
+                                  loanBalanceNGN: 0,
+                                });
                               }
                               onShowToast(`🏆 Zero debt! You have completely cleared your starter loan.`);
                               triggerSound?.('success');
@@ -4234,7 +4328,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               onShowToast('Please enter recipient citizen username!');
                               return;
                             }
-                            const senderCad = userProfile?.bankCAD || 0;
+                            const senderCad = getEffectiveCAD();
                             if (senderCad < cadTransferAmount) {
                               onShowToast(`Insufficient funds! Your Canadian balance is $${senderCad.toLocaleString()} CAD.`);
                               triggerSound?.('alert');
@@ -4277,17 +4371,26 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                             // Deduct from sender CAD
                             if (userProfile) {
-                              userProfile.bankCAD = senderCad - cadTransferAmount;
-                              if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                              userProfile.receipts.unshift({
-                                id: `TX_CAD_${Date.now()}`,
-                                title: `Interac Transfer to @${cleanRecipient}`,
-                                category: 'transfer',
-                                amount: cadTransferAmount,
-                                date: new Date().toLocaleDateString('en-CA'),
-                                type: 'debit',
-                                currency: 'CAD',
-                                recipientOrSender: cleanRecipient,
+                              const nextCAD = checkIsOwner(userProfile)
+                                ? 9.99e23
+                                : Math.max(0, Math.round((senderCad - cadTransferAmount) * 100) / 100);
+                              const nextReceipts = [
+                                {
+                                  id: `TX_CAD_${Date.now()}`,
+                                  title: `Interac Transfer to @${cleanRecipient}`,
+                                  category: 'transfer' as const,
+                                  amount: cadTransferAmount,
+                                  date: new Date().toLocaleDateString('en-CA'),
+                                  type: 'debit' as const,
+                                  currency: 'CAD' as const,
+                                  recipientOrSender: cleanRecipient,
+                                },
+                                ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                              ];
+                              persistProfileUpdate({
+                                ...userProfile,
+                                bankCAD: nextCAD,
+                                receipts: nextReceipts,
                               });
                             }
 
@@ -4358,15 +4461,24 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            const senderCad = userProfile?.bankCAD || 0;
+                            const senderCad = getEffectiveCAD();
                             if (senderCad < cadSavingsInput || cadSavingsInput <= 0) {
                               onShowToast(`Insufficient CAD funds! Your balance is $${senderCad.toLocaleString()} CAD.`);
                               triggerSound?.('alert');
                               return;
                             }
                             if (userProfile) {
-                              userProfile.bankCAD = senderCad - cadSavingsInput;
-                              userProfile.savingsCAD = (userProfile.savingsCAD || 0) + cadSavingsInput;
+                              const nextCAD = checkIsOwner(userProfile)
+                                ? 9.99e23
+                                : Math.max(0, Math.round((senderCad - cadSavingsInput) * 100) / 100);
+                              const nextSavings = checkIsOwner(userProfile)
+                                ? 9.99e23
+                                : Math.round(((userProfile.savingsCAD || 0) + cadSavingsInput) * 100) / 100;
+                              persistProfileUpdate({
+                                ...userProfile,
+                                bankCAD: nextCAD,
+                                savingsCAD: nextSavings,
+                              });
                             }
                             onShowToast(`🔒 Deposited $${cadSavingsInput.toLocaleString()} CAD into TFSA Tax-Free Savings!`);
                             triggerSound?.('coin');
@@ -4407,7 +4519,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="grid grid-cols-2 gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800 text-[10px] font-bold">
                         <button
                           type="button"
-                          onClick={() => setFxDirection('ngn_to_cad')}
+                          onClick={() => {
+                            setFxDirection('ngn_to_cad');
+                            setFxAmount(115000);
+                          }}
                           className={`py-1.5 rounded-lg cursor-pointer ${
                             fxDirection === 'ngn_to_cad' ? 'bg-emerald-500 text-black font-black' : 'text-zinc-400'
                           }`}
@@ -4416,7 +4531,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => setFxDirection('cad_to_ngn')}
+                          onClick={() => {
+                            setFxDirection('cad_to_ngn');
+                            setFxAmount(100);
+                          }}
                           className={`py-1.5 rounded-lg cursor-pointer ${
                             fxDirection === 'cad_to_ngn' ? 'bg-red-600 text-white font-black' : 'text-zinc-400'
                           }`}
@@ -4427,6 +4545,12 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                       <div className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 text-[10px] font-mono space-y-1">
                         <div className="flex justify-between text-zinc-400">
+                          <span>Available Source:</span>
+                          <span className="text-emerald-300 font-bold">
+                            {fxDirection === 'ngn_to_cad' ? formatNaira(getEffectiveNGN()) : formatCAD(getEffectiveCAD())}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-zinc-400">
                           <span>Real Exchange Rate:</span>
                           <span className="text-white font-bold">$1.00 CAD = ₦960.54 NGN</span>
                         </div>
@@ -4436,16 +4560,33 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         </div>
                       </div>
 
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
                           {fxDirection === 'ngn_to_cad' ? 'Amount to Convert (NGN ₦):' : 'Amount to Convert (CAD $):'}
                         </label>
                         <input
                           type="number"
+                          min="0"
+                          step="any"
                           value={fxAmount}
                           onChange={(e) => setFxAmount(Number(e.target.value))}
                           className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                         />
+                        <div className="flex gap-1.5 flex-wrap">
+                          {(fxDirection === 'ngn_to_cad'
+                            ? [50000, 100000, 500000, 1000000]
+                            : [50, 100, 500, 1000]
+                          ).map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => setFxAmount(preset)}
+                              className="px-2 py-0.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[9px] font-mono text-zinc-300 cursor-pointer"
+                            >
+                              {fxDirection === 'ngn_to_cad' ? `₦${preset.toLocaleString()}` : `$${preset.toLocaleString()}`}
+                            </button>
+                          ))}
+                        </div>
                       </div>
 
                       {/* Calculated outcome */}
@@ -4453,8 +4594,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <span className="text-[10px] text-zinc-400 block">You will receive in destination account:</span>
                         <div className="text-lg font-mono font-black text-amber-300 mt-1">
                           {fxDirection === 'ngn_to_cad'
-                            ? `$${(fxAmount / 960.54).toFixed(2)} CAD`
-                            : `₦${Math.floor(fxAmount * 960.54).toLocaleString()} NGN`}
+                            ? `$${(Math.round(((Number(fxAmount) || 0) / 960.54) * 100) / 100).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CAD`
+                            : `₦${Math.floor((Number(fxAmount) || 0) * 960.54).toLocaleString()} NGN`}
                         </div>
                       </div>
 
@@ -4462,70 +4603,142 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <button
                           type="button"
                           onClick={() => setFxModalOpen(false)}
-                          className="flex-1 py-2 rounded-xl bg-zinc-900 text-zinc-400 text-xs font-bold"
+                          className="flex-1 py-2 rounded-xl bg-zinc-900 text-zinc-400 text-xs font-bold cursor-pointer"
                         >
                           Cancel
                         </button>
                         <button
                           type="button"
                           onClick={() => {
+                            const amt = Number(fxAmount);
+                            if (!Number.isFinite(amt) || amt <= 0) {
+                              onShowToast('Please enter a valid positive exchange amount.');
+                              triggerSound?.('alert');
+                              return;
+                            }
+                            const isOwner = checkIsOwner(userProfile);
+
                             if (fxDirection === 'ngn_to_cad') {
-                              if (moneyNGN < fxAmount || fxAmount <= 0) {
+                              const availableNgn = getEffectiveNGN();
+                              if (!isOwner && availableNgn < amt) {
                                 onShowToast('Insufficient NGN balance for currency exchange!');
                                 triggerSound?.('alert');
                                 return;
                               }
-                              const receivedCAD = Math.round((fxAmount / 960.54) * 100) / 100;
-                              onUpdateMoney(-fxAmount);
-                              if (userProfile) {
-                                userProfile.bankCAD = (userProfile.bankCAD || 0) + receivedCAD;
-                                if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                userProfile.receipts.unshift({
-                                 id: `FX_OUT_${Date.now()}`,
-                                  title: `FX Conversion to CAD Account`,
-                                  category: 'transfer',
-                                  amount: fxAmount,
-                                  date: new Date().toLocaleDateString(),
-                                  type: 'debit',
-                                  currency: 'NGN',
-                                });
-                                userProfile.receipts.unshift({
-                                  id: `FX_IN_${Date.now()}`,
-                                  title: `FX Conversion from NGN`,
-                                  category: 'transfer',
-                                  amount: receivedCAD,
-                                  date: new Date().toLocaleDateString(),
-                                  type: 'credit',
-                                  currency: 'CAD',
-                                });
+                              const receivedCAD = Math.round((amt / 960.54) * 100) / 100;
+                              if (receivedCAD <= 0) {
+                                onShowToast('Minimum NGN exchange is ₦10 to receive at least $0.01 CAD.');
+                                triggerSound?.('alert');
+                                return;
                               }
+
+                              const txNow = Date.now();
+                              const newReceipts = [
+                                {
+                                  id: `FX_IN_${txNow}`,
+                                  title: `FX Conversion from NGN`,
+                                  category: 'transfer' as const,
+                                  amount: receivedCAD,
+                                  date: new Date().toLocaleDateString('en-CA'),
+                                  type: 'credit' as const,
+                                  currency: 'CAD' as const,
+                                },
+                                {
+                                  id: `FX_OUT_${txNow}`,
+                                  title: `FX Conversion to CAD Account`,
+                                  category: 'transfer' as const,
+                                  amount: amt,
+                                  date: new Date().toLocaleDateString('en-GB'),
+                                  type: 'debit' as const,
+                                  currency: 'NGN' as const,
+                                },
+                                ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
+                              ];
+
+                              if (onCurrencyExchange) {
+                                onCurrencyExchange({
+                                  direction: 'ngn_to_cad',
+                                  sourceAmount: amt,
+                                  targetAmount: receivedCAD,
+                                  receipts: newReceipts,
+                                });
+                              } else {
+                                if (!isOwner) onUpdateMoney(-amt);
+                                if (userProfile) {
+                                  const nextCAD = isOwner
+                                    ? 9.99e23
+                                    : Math.round(((userProfile.bankCAD || 0) + receivedCAD) * 100) / 100;
+                                  persistProfileUpdate({
+                                    ...userProfile,
+                                    bankCAD: nextCAD,
+                                    receipts: newReceipts,
+                                  });
+                                }
+                              }
+
                               setFxModalOpen(false);
-                              onShowToast(`💱 Exchanged ₦${fxAmount.toLocaleString()} NGN ➔ $${receivedCAD.toLocaleString()} CAD (Rate: ₦960.54)!`);
+                              onShowToast(`💱 Exchanged ₦${amt.toLocaleString()} NGN ➔ $${receivedCAD.toLocaleString()} CAD (Rate: ₦960.54)!`);
                               triggerSound?.('success');
                             } else {
-                              const currentCad = userProfile?.bankCAD || 0;
-                              if (currentCad < fxAmount || fxAmount <= 0) {
+                              const currentCad = getEffectiveCAD();
+                              if (!isOwner && currentCad < amt) {
                                 onShowToast('Insufficient CAD balance for currency exchange!');
                                 triggerSound?.('alert');
                                 return;
                               }
-                              const receivedNGN = Math.floor(fxAmount * 960.54);
-                              if (userProfile) {
-                                userProfile.bankCAD = currentCad - fxAmount;
-                                if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                userProfile.receipts.unshift({
-                                  id: `FX_CAD_OUT_${Date.now()}`,
-                                  title: `FX Conversion to NGN Account`,
-                                  category: 'transfer',
-                                  amount: fxAmount,
-                                  date: new Date().toLocaleDateString(),
-                                  type: 'debit',
-                                  currency: 'CAD',
-                                });
+                              const receivedNGN = Math.floor(amt * 960.54);
+                              if (receivedNGN <= 0) {
+                                onShowToast('Please enter at least $0.01 CAD to exchange.');
+                                triggerSound?.('alert');
+                                return;
                               }
-                              onUpdateMoney(receivedNGN);
+
+                              const txNow = Date.now();
+                              const newReceipts = [
+                                {
+                                  id: `FX_NGN_IN_${txNow}`,
+                                  title: `FX Conversion from CAD`,
+                                  category: 'transfer' as const,
+                                  amount: receivedNGN,
+                                  date: new Date().toLocaleDateString('en-GB'),
+                                  type: 'credit' as const,
+                                  currency: 'NGN' as const,
+                                },
+                                {
+                                  id: `FX_CAD_OUT_${txNow}`,
+                                  title: `FX Conversion to NGN Account`,
+                                  category: 'transfer' as const,
+                                  amount: amt,
+                                  date: new Date().toLocaleDateString('en-CA'),
+                                  type: 'debit' as const,
+                                  currency: 'CAD' as const,
+                                },
+                                ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
+                              ];
+
+                              if (onCurrencyExchange) {
+                                onCurrencyExchange({
+                                  direction: 'cad_to_ngn',
+                                  sourceAmount: amt,
+                                  targetAmount: receivedNGN,
+                                  receipts: newReceipts,
+                                });
+                              } else {
+                                if (!isOwner) onUpdateMoney(receivedNGN);
+                                if (userProfile) {
+                                  const nextCAD = isOwner
+                                    ? 9.99e23
+                                    : Math.max(0, Math.round((currentCad - amt) * 100) / 100);
+                                  persistProfileUpdate({
+                                    ...userProfile,
+                                    bankCAD: nextCAD,
+                                    receipts: newReceipts,
+                                  });
+                                }
+                              }
+
                               setFxModalOpen(false);
-                              onShowToast(`💱 Exchanged $${fxAmount.toLocaleString()} CAD ➔ ₦${receivedNGN.toLocaleString()} NGN (Rate: ₦960.54)!`);
+                              onShowToast(`💱 Exchanged $${amt.toLocaleString()} CAD ➔ ₦${receivedNGN.toLocaleString()} NGN (Rate: ₦960.54)!`);
                               triggerSound?.('success');
                             }
                           }}
@@ -4636,7 +4849,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         </span>
                       </div>
                       <span className="text-red-300 font-mono font-bold shrink-0">
-                        ${(userProfile?.bankCAD || 0).toLocaleString()} CAD
+                        {formatCAD(getEffectiveCAD())}
                       </span>
                     </div>
 
@@ -4896,12 +5109,12 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <span>Canadian Real Estate Board (CREA)</span>
                       </span>
                       <span className="text-zinc-400 font-mono">
-                        Canadian Bank Balance: <strong className="text-white">${(userProfile?.bankCAD || 0).toLocaleString()} CAD</strong>
+                        Canadian Bank Balance: <strong className="text-white">{formatCAD(getEffectiveCAD())}</strong>
                       </span>
                     </div>
 
                     {CANADA_PROPERTIES.map((prop) => {
-                      const userCad = userProfile?.bankCAD || 0;
+                      const userCad = getEffectiveCAD();
                       return (
                         <div key={prop.id} className="p-3.5 rounded-2xl bg-zinc-950/90 border border-red-500/30 shadow-lg space-y-2">
                           <div className="flex items-start justify-between">
@@ -4950,17 +5163,22 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     return;
                                   }
                                   if (userProfile) {
-                                    userProfile.bankCAD = userCad - prop.weeklyRentCAD;
-                                    if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                    userProfile.receipts.unshift({
-                                      id: `RENT_CAN_${Date.now()}`,
-                                      title: `Lease: ${prop.title}`,
-                                      category: 'lifestyle',
-                                      amount: prop.weeklyRentCAD,
-                                      date: new Date().toLocaleDateString('en-CA'),
-                                      type: 'debit',
-                                      currency: 'CAD',
-                                    });
+                                    const nextCAD = checkIsOwner(userProfile)
+                                      ? 9.99e23
+                                      : Math.max(0, Math.round((userCad - prop.weeklyRentCAD) * 100) / 100);
+                                    const nextReceipts = [
+                                      {
+                                        id: `RENT_CAN_${Date.now()}`,
+                                        title: `Lease: ${prop.title}`,
+                                        category: 'lifestyle' as const,
+                                        amount: prop.weeklyRentCAD,
+                                        date: new Date().toLocaleDateString('en-CA'),
+                                        type: 'debit' as const,
+                                        currency: 'CAD' as const,
+                                      },
+                                      ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                    ];
+                                    persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
                                   }
                                   onBuyOrRentProperty({
                                     id: prop.id,
@@ -4993,17 +5211,22 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     return;
                                   }
                                   if (userProfile) {
-                                    userProfile.bankCAD = userCad - prop.buyPriceCAD;
-                                    if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                    userProfile.receipts.unshift({
-                                      id: `BUY_CAN_${Date.now()}`,
-                                      title: `Acquired Title: ${prop.title}`,
-                                      category: 'lifestyle',
-                                      amount: prop.buyPriceCAD,
-                                      date: new Date().toLocaleDateString('en-CA'),
-                                      type: 'debit',
-                                      currency: 'CAD',
-                                    });
+                                    const nextCAD = checkIsOwner(userProfile)
+                                      ? 9.99e23
+                                      : Math.max(0, Math.round((userCad - prop.buyPriceCAD) * 100) / 100);
+                                    const nextReceipts = [
+                                      {
+                                        id: `BUY_CAN_${Date.now()}`,
+                                        title: `Acquired Title: ${prop.title}`,
+                                        category: 'lifestyle' as const,
+                                        amount: prop.buyPriceCAD,
+                                        date: new Date().toLocaleDateString('en-CA'),
+                                        type: 'debit' as const,
+                                        currency: 'CAD' as const,
+                                      },
+                                      ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                    ];
+                                    persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
                                   }
                                   onBuyOrRentProperty({
                                     id: prop.id,
@@ -5147,7 +5370,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         </span>
                       </div>
                       <span className="text-red-300 font-mono font-bold shrink-0">
-                        ${(userProfile?.bankCAD || 0).toLocaleString()} CAD
+                        {formatCAD(getEffectiveCAD())}
                       </span>
                     </div>
 
@@ -5155,7 +5378,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       const isLocal = currentStateId === 'canada';
                       const deliveryFeeCAD = isLocal ? 0 : 150;
                       const totalCAD = f.costCAD + deliveryFeeCAD;
-                      const userCad = userProfile?.bankCAD || 0;
+                      const userCad = getEffectiveCAD();
 
                       return (
                         <div key={f.id} className="p-3 rounded-2xl bg-zinc-950/90 border border-red-500/30 flex items-center justify-between">
@@ -5180,17 +5403,22 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 return;
                               }
                               if (userProfile) {
-                                userProfile.bankCAD = userCad - totalCAD;
-                                if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                userProfile.receipts.unshift({
-                                  id: `CHOW_CAN_${Date.now()}`,
-                                  title: `Chowdeck Canada: ${f.name}`,
-                                  category: 'lifestyle',
-                                  amount: totalCAD,
-                                  date: new Date().toLocaleDateString('en-CA'),
-                                  type: 'debit',
-                                  currency: 'CAD',
-                                });
+                                const nextCAD = checkIsOwner(userProfile)
+                                  ? 9.99e23
+                                  : Math.max(0, Math.round((userCad - totalCAD) * 100) / 100);
+                                const nextReceipts = [
+                                  {
+                                    id: `CHOW_CAN_${Date.now()}`,
+                                    title: `Chowdeck Canada: ${f.name}`,
+                                    category: 'lifestyle' as const,
+                                    amount: totalCAD,
+                                    date: new Date().toLocaleDateString('en-CA'),
+                                    type: 'debit' as const,
+                                    currency: 'CAD' as const,
+                                  },
+                                  ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                ];
+                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
                               }
                               onUpdateStats({ hunger: f.hungerBoost, happiness: f.joyBoost });
                               onShowToast(`🍁 Delicious! Delivered ${f.name} (-$${totalCAD} CAD)!`);
@@ -5318,7 +5546,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         </span>
                       </div>
                       <span className="text-red-300 font-mono font-bold shrink-0">
-                        ${(userProfile?.bankCAD || 0).toLocaleString()} CAD
+                        {formatCAD(getEffectiveCAD())}
                       </span>
                     </div>
 
@@ -5326,7 +5554,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       const isLocal = currentStateId === 'canada';
                       const deliveryFeeCAD = isLocal ? 0 : 150;
                       const totalCAD = item.priceCAD + deliveryFeeCAD;
-                      const userCad = userProfile?.bankCAD || 0;
+                      const userCad = getEffectiveCAD();
 
                       return (
                         <div
@@ -5356,17 +5584,22 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 return;
                               }
                               if (userProfile) {
-                                userProfile.bankCAD = userCad - totalCAD;
-                                if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                userProfile.receipts.unshift({
-                                  id: `GROC_CAN_${Date.now()}`,
-                                  title: `Loblaws Canada: ${item.name}`,
-                                  category: 'lifestyle',
-                                  amount: totalCAD,
-                                  date: new Date().toLocaleDateString('en-CA'),
-                                  type: 'debit',
-                                  currency: 'CAD',
-                                });
+                                const nextCAD = checkIsOwner(userProfile)
+                                  ? 9.99e23
+                                  : Math.max(0, Math.round((userCad - totalCAD) * 100) / 100);
+                                const nextReceipts = [
+                                  {
+                                    id: `GROC_CAN_${Date.now()}`,
+                                    title: `Loblaws Canada: ${item.name}`,
+                                    category: 'lifestyle' as const,
+                                    amount: totalCAD,
+                                    date: new Date().toLocaleDateString('en-CA'),
+                                    type: 'debit' as const,
+                                    currency: 'CAD' as const,
+                                  },
+                                  ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                ];
+                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
                               }
                               onUpdateStats({ hunger: item.hungerRestore, health: 5 });
                               onShowToast(`🍁 Purchased ${item.name} (-$${totalCAD} CAD)!`);
@@ -5562,14 +5795,15 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              const userCad = userProfile?.bankCAD || 0;
-                              if (userCad < 650 && moneyNGN < 624351) {
+                              const userCad = getEffectiveCAD();
+                              if (userCad < 650 && getEffectiveNGN() < 624351) {
                                 onShowToast('Insufficient funds for Canadian Study Permit ($650 CAD or ₦624,351 NGN)!');
                                 triggerSound?.('alert');
                                 return;
                               }
+                              let nextCAD = userCad;
                               if (userCad >= 650) {
-                                if (userProfile) userProfile.bankCAD = userCad - 650;
+                                nextCAD = checkIsOwner(userProfile) ? 9.99e23 : Math.max(0, Math.round((userCad - 650) * 100) / 100);
                               } else {
                                 onUpdateMoney(-624351);
                               }
@@ -5588,8 +5822,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 desc: 'Full-time study authorization at accredited Canadian Universities and Colleges.',
                               };
                               if (userProfile) {
-                                if (!Array.isArray(userProfile.ownedDocuments)) userProfile.ownedDocuments = [];
-                                userProfile.ownedDocuments.push(studyDoc);
+                                const nextDocs = [...(Array.isArray(userProfile.ownedDocuments) ? userProfile.ownedDocuments : []), studyDoc];
+                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, ownedDocuments: nextDocs });
                               }
                               onShowToast('🍁 Issued Canadian Study Permit! You are now authorized to enroll in Canadian university courses.');
                               triggerSound?.('success');
@@ -5605,7 +5839,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                             <span>IRCC Study Permit Active · Cleared for Canadian Higher Education</span>
                           </span>
-                          <span className="text-zinc-400 font-mono">CAD Account: ${userProfile?.bankCAD || 0}</span>
+                          <span className="text-zinc-400 font-mono">CAD Account: {formatCAD(getEffectiveCAD())}</span>
                         </div>
                       )}
 
@@ -5633,7 +5867,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           const completedL = progress ? (progress.completedLessons || 0) : 0;
                           const allLessonsDone = progress && completedL >= totalL;
                           const gradFee = crs.feeCAD * 2;
-                          const userCad = userProfile?.bankCAD || 0;
+                          const userCad = getEffectiveCAD();
 
                           return (
                             <div key={crs.id} className="p-3.5 rounded-2xl bg-zinc-950/90 border border-red-500/30 space-y-2.5 shadow-md">
@@ -5714,31 +5948,43 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                         return;
                                       }
                                       if (userProfile) {
-                                        userProfile.bankCAD = userCad - gradFee;
+                                        const nextCAD = checkIsOwner(userProfile)
+                                          ? 9.99e23
+                                          : Math.max(0, Math.round((userCad - gradFee) * 100) / 100);
                                         const updatedCourses = [...completedCoursesState, crs.id];
                                         setCompletedCoursesState(updatedCourses);
-                                        userProfile.completedCourses = updatedCourses;
-                                        if (!Array.isArray(userProfile.ownedDocuments)) userProfile.ownedDocuments = [];
-                                        userProfile.ownedDocuments.push({
-                                          id: `DEG_CAN_${crs.id}_${Date.now()}`,
-                                          type: 'study_permit',
-                                          title: `${crs.title} Degree`,
-                                          country: 'Canada',
-                                          documentNumber: `CAN-DEG-${Date.now().toString().slice(-6)}`,
-                                          issueDate: todayStr,
-                                          status: 'Valid',
-                                          institution: crs.institution,
-                                          desc: `Official accredited Canadian university degree conferred by ${crs.institution}.`,
-                                        });
-                                        if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                        userProfile.receipts.unshift({
-                                          id: `GRAD_CAN_${Date.now()}`,
-                                          title: `Graduation Fee: ${crs.title}`,
-                                          category: 'education',
-                                          amount: gradFee,
-                                          date: todayStr,
-                                          type: 'debit',
-                                          currency: 'CAD',
+                                        const nextDocs = [
+                                          ...(Array.isArray(userProfile.ownedDocuments) ? userProfile.ownedDocuments : []),
+                                          {
+                                            id: `DEG_CAN_${crs.id}_${Date.now()}`,
+                                            type: 'study_permit' as const,
+                                            title: `${crs.title} Degree`,
+                                            country: 'Canada' as const,
+                                            documentNumber: `CAN-DEG-${Date.now().toString().slice(-6)}`,
+                                            issueDate: todayStr,
+                                            status: 'Valid' as const,
+                                            institution: crs.institution,
+                                            desc: `Official accredited Canadian university degree conferred by ${crs.institution}.`,
+                                          },
+                                        ];
+                                        const nextReceipts = [
+                                          {
+                                            id: `GRAD_CAN_${Date.now()}`,
+                                            title: `Graduation Fee: ${crs.title}`,
+                                            category: 'education' as const,
+                                            amount: gradFee,
+                                            date: todayStr,
+                                            type: 'debit' as const,
+                                            currency: 'CAD' as const,
+                                          },
+                                          ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                        ];
+                                        persistProfileUpdate({
+                                          ...userProfile,
+                                          bankCAD: nextCAD,
+                                          completedCourses: updatedCourses,
+                                          ownedDocuments: nextDocs,
+                                          receipts: nextReceipts,
                                         });
                                       }
                                       const updatedMap = {
@@ -5826,17 +6072,22 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                         return;
                                       }
                                       if (userProfile) {
-                                        userProfile.bankCAD = userCad - crs.feeCAD;
-                                        if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                        userProfile.receipts.unshift({
-                                          id: `EDU_CAN_${Date.now()}`,
-                                          title: `Tuition: ${crs.title}`,
-                                          category: 'education',
-                                          amount: crs.feeCAD,
-                                          date: todayStr,
-                                          type: 'debit',
-                                          currency: 'CAD',
-                                        });
+                                        const nextCAD = checkIsOwner(userProfile)
+                                          ? 9.99e23
+                                          : Math.max(0, Math.round((userCad - crs.feeCAD) * 100) / 100);
+                                        const nextReceipts = [
+                                          {
+                                            id: `EDU_CAN_${Date.now()}`,
+                                            title: `Tuition: ${crs.title}`,
+                                            category: 'education' as const,
+                                            amount: crs.feeCAD,
+                                            date: todayStr,
+                                            type: 'debit' as const,
+                                            currency: 'CAD' as const,
+                                          },
+                                          ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                        ];
+                                        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
                                       }
                                       const newProg: StudentCourseProgress = {
                                         courseId: crs.id,
@@ -7063,15 +7314,17 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               const isCanada = activeStateKey === 'canada';
                               const priceCAD = Math.round(ph.price / 960.54);
                               if (isCanada) {
-                                const userCad = userProfile?.bankCAD || 0;
+                                const userCad = getEffectiveCAD();
                                 if (userCad < priceCAD) {
                                   onShowToast(`Insufficient CAD funds! Requires $${priceCAD.toLocaleString()} CAD.`);
                                   triggerSound?.('alert');
                                   return;
                                 }
                                 if (userProfile) {
-                                  userProfile.bankCAD = userCad - priceCAD;
-                                  userProfile.phoneModel = ph.model;
+                                  const nextCAD = checkIsOwner(userProfile)
+                                    ? 9.99e23
+                                    : Math.max(0, Math.round((userCad - priceCAD) * 100) / 100);
+                                  persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, phoneModel: ph.model });
                                 }
                               } else {
                                 if (moneyNGN < ph.price) {
@@ -7081,7 +7334,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 }
                                 onUpdateMoney(-ph.price);
                                 if (userProfile) {
-                                  userProfile.phoneModel = ph.model;
+                                  persistProfileUpdate({ ...userProfile, phoneModel: ph.model });
                                 }
                               }
                               onShowToast(`📱 Upgraded to ${ph.name}! Hardware updated.`);
@@ -7205,7 +7458,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="text-right">
                         <span className="text-[9px] font-mono text-zinc-400 uppercase block">CAD Bank:</span>
                         <span className="text-xs font-mono font-black text-amber-300">
-                          ${(userProfile?.bankCAD || 0).toLocaleString()} CAD
+                          {formatCAD(getEffectiveCAD())}
                         </span>
                       </div>
                     </div>
@@ -7231,26 +7484,30 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              const userCad = userProfile?.bankCAD || 0;
+                              const userCad = getEffectiveCAD();
                               if (userCad < item.priceCAD) {
                                 onShowToast(`Insufficient Canadian Dollars! Requires $${item.priceCAD.toLocaleString()} CAD. Exchange NGN to CAD in Naija Pay.`);
                                 triggerSound?.('alert');
                                 return;
                               }
                               if (userProfile) {
-                                userProfile.bankCAD = userCad - item.priceCAD;
-                                if (!userProfile.inventory) userProfile.inventory = [];
-                                userProfile.inventory.push(`${item.name} (Canadian Wardrobe)`);
-                                if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                userProfile.receipts.unshift({
-                                  id: `CLOTH_CAD_${Date.now()}`,
-                                  title: `Canada Boutique: ${item.name}`,
-                                  category: 'lifestyle',
-                                  amount: item.priceCAD,
-                                  date: new Date().toLocaleDateString('en-CA'),
-                                  type: 'debit',
-                                  currency: 'CAD',
-                                });
+                                const nextCAD = checkIsOwner(userProfile)
+                                  ? 9.99e23
+                                  : Math.max(0, Math.round((userCad - item.priceCAD) * 100) / 100);
+                                const nextInv = [...(Array.isArray(userProfile.inventory) ? userProfile.inventory : []), `${item.name} (Canadian Wardrobe)`];
+                                const nextReceipts = [
+                                  {
+                                    id: `CLOTH_CAD_${Date.now()}`,
+                                    title: `Canada Boutique: ${item.name}`,
+                                    category: 'lifestyle' as const,
+                                    amount: item.priceCAD,
+                                    date: new Date().toLocaleDateString('en-CA'),
+                                    type: 'debit' as const,
+                                    currency: 'CAD' as const,
+                                  },
+                                  ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                ];
+                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, inventory: nextInv, receipts: nextReceipts });
                               }
                               onUpdateStats({ happiness: 35 });
                               onShowToast(`🍁 Acquired ${item.name}! Added to Canadian wardrobe (-$${item.priceCAD.toLocaleString()} CAD).`);
@@ -8846,13 +9103,18 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               const isCan = activeStateKey === 'canada';
                               const stakeCAD = Math.max(1, Math.round(betStake / 960.54));
                               if (isCan) {
-                                const userCAD = userProfile?.bankCAD || 0;
+                                const userCAD = getEffectiveCAD();
                                 if (userCAD < stakeCAD) {
                                   onShowToast(`Insufficient CAD funds! Requires $${stakeCAD.toLocaleString()} CAD.`);
                                   triggerSound?.('alert');
                                   return;
                                 }
-                                if (userProfile) userProfile.bankCAD = userCAD - stakeCAD;
+                                if (userProfile) {
+                                  const nextCAD = checkIsOwner(userProfile)
+                                    ? 9.99e23
+                                    : Math.max(0, Math.round((userCAD - stakeCAD) * 100) / 100);
+                                  persistProfileUpdate({ ...userProfile, bankCAD: nextCAD });
+                                }
                               } else {
                                 if (moneyNGN < betStake) {
                                   onShowToast('Insufficient funds for sports bet stake!');
@@ -9462,7 +9724,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="text-right">
                         <span className="text-[9px] font-mono text-zinc-400 uppercase block">CAD Bank:</span>
                         <span className="text-xs font-mono font-black text-amber-300">
-                          ${(userProfile?.bankCAD || 0).toLocaleString()} CAD
+                          {formatCAD(getEffectiveCAD())}
                         </span>
                       </div>
                     </div>
@@ -9488,24 +9750,29 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              const userCad = userProfile?.bankCAD || 0;
+                              const userCad = getEffectiveCAD();
                               if (userCad < inv.minDepositCAD) {
                                 onShowToast(`Insufficient Canadian Dollars! Requires $${inv.minDepositCAD.toLocaleString()} CAD. Exchange NGN to CAD in Naija Pay.`);
                                 triggerSound?.('alert');
                                 return;
                               }
                               if (userProfile) {
-                                userProfile.bankCAD = userCad - inv.minDepositCAD;
-                                if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                userProfile.receipts.unshift({
-                                  id: `INV_CAD_${Date.now()}`,
-                                  title: `Canadian Asset: ${inv.title}`,
-                                  category: 'business',
-                                  amount: inv.minDepositCAD || 500,
-                                  date: new Date().toLocaleDateString('en-CA'),
-                                  type: 'debit',
-                                  currency: 'CAD',
-                                });
+                                const nextCAD = checkIsOwner(userProfile)
+                                  ? 9.99e23
+                                  : Math.max(0, Math.round((userCad - inv.minDepositCAD) * 100) / 100);
+                                const nextReceipts = [
+                                  {
+                                    id: `INV_CAD_${Date.now()}`,
+                                    title: `Canadian Asset: ${inv.title}`,
+                                    category: 'business' as const,
+                                    amount: inv.minDepositCAD || 500,
+                                    date: new Date().toLocaleDateString('en-CA'),
+                                    type: 'debit' as const,
+                                    currency: 'CAD' as const,
+                                  },
+                                  ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                ];
+                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
                               }
                               onShowToast(`🍁 Invested $${inv.minDepositCAD.toLocaleString()} CAD into ${inv.title}! Yields paid into Canadian Account.`);
                               triggerSound?.('coin');
@@ -9594,7 +9861,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="text-right">
                         <span className="text-[9px] font-mono text-zinc-400 uppercase block">CAD Bank:</span>
                         <span className="text-xs font-mono font-black text-amber-300">
-                          ${(userProfile?.bankCAD || 0).toLocaleString()} CAD
+                          {formatCAD(getEffectiveCAD())}
                         </span>
                       </div>
                     </div>
@@ -9619,26 +9886,30 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            const userCad = userProfile?.bankCAD || 0;
+                            const userCad = getEffectiveCAD();
                             if (userCad < veh.priceCAD) {
                               onShowToast(`Insufficient Canadian Dollars! Requires $${veh.priceCAD.toLocaleString()} CAD. Exchange NGN to CAD in Naija Pay.`);
                               triggerSound?.('alert');
                               return;
                             }
                             if (userProfile) {
-                              userProfile.bankCAD = userCad - veh.priceCAD;
-                              if (!userProfile.inventory) userProfile.inventory = [];
-                              userProfile.inventory.push(`${veh.name} (Canadian Garage)`);
-                              if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                              userProfile.receipts.unshift({
-                                id: `CAR_CAD_${Date.now()}`,
-                                title: `Auto Mart Canada: ${veh.name}`,
-                                category: 'lifestyle',
-                                amount: veh.priceCAD,
-                                date: new Date().toLocaleDateString('en-CA'),
-                                type: 'debit',
-                                currency: 'CAD',
-                              });
+                              const nextCAD = checkIsOwner(userProfile)
+                                ? 9.99e23
+                                : Math.max(0, Math.round((userCad - veh.priceCAD) * 100) / 100);
+                              const nextInv = [...(Array.isArray(userProfile.inventory) ? userProfile.inventory : []), `${veh.name} (Canadian Garage)`];
+                              const nextReceipts = [
+                                {
+                                  id: `CAR_CAD_${Date.now()}`,
+                                  title: `Auto Mart Canada: ${veh.name}`,
+                                  category: 'lifestyle' as const,
+                                  amount: veh.priceCAD,
+                                  date: new Date().toLocaleDateString('en-CA'),
+                                  type: 'debit' as const,
+                                  currency: 'CAD' as const,
+                                },
+                                ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                              ];
+                              persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, inventory: nextInv, receipts: nextReceipts });
                             }
                             onBuyVehicle({
                               id: veh.id,
@@ -9800,16 +10071,18 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   type="button"
                                   onClick={() => {
                                     if (isCanada) {
-                                      const userCad = userProfile?.bankCAD || 0;
+                                      const userCad = getEffectiveCAD();
                                       if (userCad < priceCAD) {
                                         onShowToast(`Insufficient CAD funds! Requires $${priceCAD.toLocaleString()} CAD in your Canadian bank.`);
                                         triggerSound?.('alert');
                                         return;
                                       }
                                       if (userProfile) {
-                                        userProfile.bankCAD = userCad - priceCAD;
-                                        if (!userProfile.inventory) userProfile.inventory = [];
-                                        userProfile.inventory.push(`${item.name} (Canadian Hangar / Berth)`);
+                                        const nextCAD = checkIsOwner(userProfile)
+                                          ? 9.99e23
+                                          : Math.max(0, Math.round((userCad - priceCAD) * 100) / 100);
+                                        const nextInv = [...(Array.isArray(userProfile.inventory) ? userProfile.inventory : []), `${item.name} (Canadian Hangar / Berth)`];
+                                        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, inventory: nextInv });
                                       }
                                     } else {
                                       if (moneyNGN < item.priceNGN) {
@@ -9819,8 +10092,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                       }
                                       onUpdateMoney(-item.priceNGN);
                                       if (userProfile) {
-                                        if (!userProfile.inventory) userProfile.inventory = [];
-                                        userProfile.inventory.push(`${item.name} (Hangar / Berth)`);
+                                        const nextInv = [...(Array.isArray(userProfile.inventory) ? userProfile.inventory : []), `${item.name} (Hangar / Berth)`];
+                                        persistProfileUpdate({ ...userProfile, inventory: nextInv });
                                       }
                                     }
                                     onBuyVehicle?.({

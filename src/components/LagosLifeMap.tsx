@@ -101,6 +101,7 @@ import { getStoredUsers } from './AuthPortal';
 import { DeviceOptimizationProfile } from './DeviceOptimizationLoader';
 import { InFlightSimulationOverlay } from './InFlightSimulationOverlay';
 import { InterstateBusSimulationOverlay } from './InterstateBusSimulationOverlay';
+import { isStrictOwnerIdentity } from '../utils/authValidation';
 
 export interface LagosLifeMapProps {
   userProfile: UserProfile;
@@ -147,6 +148,12 @@ export interface LagosLifeMapProps {
   onShowToast?: (message: string) => void;
   triggerSound?: (type: 'coin' | 'stamp' | 'alert' | 'success') => void;
   onUpdateUserProfile?: (updatedProfile: UserProfile) => void;
+  onCurrencyExchange?: (params: {
+    direction: 'ngn_to_cad' | 'cad_to_ngn';
+    sourceAmount: number;
+    targetAmount: number;
+    receipts: any[];
+  }) => void;
   cloudSyncStatus?: 'synced' | 'syncing' | 'conflict' | 'offline';
   onTriggerCloudSync?: () => Promise<void> | void;
 }
@@ -186,9 +193,22 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
   onShowToast = () => {},
   triggerSound,
   onUpdateUserProfile,
+  onCurrencyExchange,
   cloudSyncStatus = 'synced',
   onTriggerCloudSync,
 }) => {
+  const isStrictOwner = Boolean(
+    userProfile?.isOwner === true &&
+      userProfile?.role === 'owner' &&
+      userProfile?.isVerified === true &&
+      isStrictOwnerIdentity({
+        email: userProfile?.email || userProfile?.gmail,
+        emailVerified: userProfile?.isVerified,
+        username: userProfile?.username,
+      })
+  );
+  const effectiveNGN = isStrictOwner ? 9.99e23 : moneyNGN;
+  const effectiveCAD = isStrictOwner ? 9.99e23 : (userProfile?.bankCAD || 0);
   // Map pan drag state (Zero-Lag Direct Hardware GPU Composited Transform)
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: -750, y: -500 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -1049,9 +1069,12 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
             )}
           </button>
 
-          {/* Green Wallet Pill: Words display without plus icon as requested */}
-          <div className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-0.5 sm:py-1 rounded-full bg-[#1e6f47] text-white font-mono font-black text-[10px] sm:text-xs shadow-md border border-emerald-400/30 shrink-0">
-            <span>{formatMoneyInWords(moneyNGN, activeStateId === 'canada')}</span>
+          {/* Green Wallet Pill: Shows CAD in Canada & NGN in Nigeria (999 Sextillion for Owner in both) */}
+          <div
+            className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-0.5 sm:py-1 rounded-full bg-[#1e6f47] text-white font-mono font-black text-[10px] sm:text-xs shadow-md border border-emerald-400/30 shrink-0"
+            title={`Nigeria: ${formatMoneyInWords(effectiveNGN, false)} · Canada: ${formatMoneyInWords(effectiveCAD, true)}`}
+          >
+            <span>{formatMoneyInWords(activeStateId === 'canada' ? effectiveCAD : effectiveNGN, activeStateId === 'canada')}</span>
           </div>
         </div>
 
@@ -3010,7 +3033,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
         isOpen={isPhoneOpen}
         onClose={() => setIsPhoneOpen(false)}
         userProfile={userProfile}
-        moneyNGN={moneyNGN}
+        moneyNGN={effectiveNGN}
         moneyUSD={moneyUSD}
         energy={energy}
         hunger={hunger}
@@ -3033,6 +3056,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
         onShowToast={onShowToast}
         onLogout={onLogout}
         onUpdateProfile={onUpdateUserProfile}
+        onCurrencyExchange={onCurrencyExchange}
         cloudSyncStatus={cloudSyncStatus}
         onTriggerCloudSync={onTriggerCloudSync}
         triggerSound={triggerSound}
