@@ -88,7 +88,7 @@ import {
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { isStrictOwnerIdentity } from '../utils/authValidation';
+import { isStrictOwnerIdentity, OWNER_EMAIL, OWNER_USERNAME } from '../utils/authValidation';
 import {
   changeCitizenUsername,
   checkUsernameAvailable,
@@ -99,11 +99,13 @@ import {
   OwnerAuditLogEntry,
   purgeNonOwnerCitizenAccountsAsOwner,
   RegistryCitizenEntry,
+  repairAndActivateOwnerAccount,
   requestCitizenEmailUpdate,
   sendPasswordReset,
   setCitizenSuspensionStatus,
   syncProfileToCloud,
   updateCitizenPassword,
+  wipeAllAccountProgressAsOwner,
 } from '../services/firebaseAccountService';
 import {
   UserProfile,
@@ -275,6 +277,7 @@ export interface NaijaPhoneProps {
   }) => void;
   cloudSyncStatus?: 'synced' | 'syncing' | 'conflict' | 'offline';
   onTriggerCloudSync?: () => Promise<void> | void;
+  onOwnerResetAllProgress?: (freshOwnerProfile: UserProfile) => void;
 }
 
 export type PhoneAppType =
@@ -359,6 +362,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   onCurrencyExchange,
   cloudSyncStatus = 'synced',
   onTriggerCloudSync,
+  onOwnerResetAllProgress,
 }) => {
   const [currentApp, setCurrentApp] = useState<PhoneAppType>(initialApp);
 
@@ -762,6 +766,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [suspendReasonInput, setSuspendReasonInput] = useState<string>('');
   const [isSuspensionBusy, setIsSuspensionBusy] = useState<boolean>(false);
   const [confirmPurgeRegistry, setConfirmPurgeRegistry] = useState<boolean>(false);
+  const [confirmWipeAllProgress, setConfirmWipeAllProgress] = useState<boolean>(false);
+  const [isRepairingOwner, setIsRepairingOwner] = useState<boolean>(false);
   const [confirmDeleteTargetUid, setConfirmDeleteTargetUid] = useState<string | null>(null);
   const [academySearchQuery, setAcademySearchQuery] = useState<string>('');
 
@@ -8529,6 +8535,54 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   </div>
                 </div>
 
+                {/* OWNER RECOVERY CARD (ONLY VISIBLE IF VERIFIED kchiboy50@gmail.com LOGGED IN WITHOUT OWNER ACTIVE) */}
+                {!checkIsOwner(userProfile) &&
+                  auth.currentUser?.emailVerified &&
+                  String(auth.currentUser?.email || userProfile?.email || '').trim().toLowerCase() === OWNER_EMAIL && (
+                    <div className="p-4 rounded-3xl bg-gradient-to-br from-amber-950 via-zinc-950 to-orange-950/50 border-2 border-amber-400 shadow-lg space-y-2.5 text-left">
+                      <div className="flex items-center gap-2">
+                        <Crown className="w-5 h-5 text-amber-400" />
+                        <div>
+                          <h4 className="text-xs font-black text-amber-300 uppercase tracking-wider">
+                            Activate Owner Status
+                          </h4>
+                          <p className="text-[10px] text-zinc-300">
+                            Verified {OWNER_EMAIL} detected (current handle: @{userProfile?.username}).
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-zinc-400 leading-relaxed">
+                        Owner privileges require username <strong className="text-amber-300">@{OWNER_USERNAME}</strong> synced with your master role. Click below to restore @{OWNER_USERNAME} and unlock 999 Sextillion NGN &amp; CAD + Admin Controls immediately.
+                      </p>
+                      <button
+                        type="button"
+                        disabled={isRepairingOwner}
+                        onClick={async () => {
+                          setIsRepairingOwner(true);
+                          try {
+                            const repaired = await repairAndActivateOwnerAccount();
+                            if (repaired.status === 'AUTHENTICATED') {
+                              persistProfileUpdate(repaired.profile);
+                              onShowToast('Apex Syndicate Owner status activated! (@chiboy_52)');
+                              triggerSound?.('success');
+                            } else {
+                              onShowToast('Could not complete Owner activation. Please verify your email.');
+                            }
+                          } catch (err) {
+                            onShowToast(err instanceof Error ? err.message : 'Owner repair failed.');
+                            triggerSound?.('alert');
+                          } finally {
+                            setIsRepairingOwner(false);
+                          }
+                        }}
+                        className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-black font-black text-xs cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                        <Crown className="w-3.5 h-3.5" />
+                        <span>{isRepairingOwner ? 'Activating Owner...' : `Claim & Activate Owner (@${OWNER_USERNAME})`}</span>
+                      </button>
+                    </div>
+                  )}
+
                 {/* APEX SYNDICATE OWNER CONTROLS (STRICTLY VERIFIED kchiboy50@gmail.com + chiboy_52 ONLY) */}
                 {checkIsOwner(userProfile) && (
                   <div className="p-4 rounded-3xl bg-gradient-to-br from-amber-950 via-zinc-950 to-amber-950/40 border-2 border-amber-500/80 shadow-[0_0_25px_rgba(245,158,11,0.25)] space-y-3 text-left">
@@ -8683,6 +8737,61 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           <span>Remove Music</span>
                         </button>
                       </div>
+                    </div>
+
+                    {/* WIPE ALL ACCOUNT PROGRESS (PRESERVE OWNER kchiboy50@gmail.com / @chiboy_52) */}
+                    <div className="p-2.5 rounded-2xl bg-rose-950/35 border border-rose-500/40 space-y-2">
+                      <span className="text-[10px] font-bold text-rose-300 uppercase tracking-wider block">
+                        Fresh Reset · All Account Progress
+                      </span>
+                      {!confirmWipeAllProgress ? (
+                        <button
+                          type="button"
+                          disabled={isSuspensionBusy}
+                          onClick={() => setConfirmWipeAllProgress(true)}
+                          className="w-full py-2 px-3 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-500/50 text-rose-200 font-black text-[11px] cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Wipe ALL Account Progress (Keep @{OWNER_USERNAME})</span>
+                        </button>
+                      ) : (
+                        <div className="space-y-2 text-[10px]">
+                          <p className="text-rose-200 font-semibold leading-snug">
+                            Delete ALL non-owner citizen accounts, cloud saves &amp; your Day 2+ progress? Keeps <strong className="text-amber-300">{OWNER_EMAIL}</strong> (@{OWNER_USERNAME}) + password intact at Day 1 (999 Sextillion NGN &amp; CAD).
+                          </p>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              disabled={isSuspensionBusy}
+                              onClick={async () => {
+                                setIsSuspensionBusy(true);
+                                try {
+                                  const { deletedAccountsCount, freshOwnerProfile } = await wipeAllAccountProgressAsOwner();
+                                  setConfirmWipeAllProgress(false);
+                                  onOwnerResetAllProgress?.(freshOwnerProfile);
+                                  onShowToast(`Wiped ${deletedAccountsCount} citizen account(s) & all progress. @${OWNER_USERNAME} preserved at Day 1!`);
+                                  triggerSound?.('success');
+                                } catch (err) {
+                                  onShowToast(err instanceof Error ? err.message : 'Wipe failed.');
+                                  triggerSound?.('alert');
+                                } finally {
+                                  setIsSuspensionBusy(false);
+                                }
+                              }}
+                              className="flex-1 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-black cursor-pointer disabled:opacity-50"
+                            >
+                              {isSuspensionBusy ? 'Wiping All Progress...' : 'Confirm Full Wipe'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmWipeAllProgress(false)}
+                              className="px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-300 font-bold cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -11309,8 +11418,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   </div>
                 )}
 
-                {/* Owner Purge All Non-Owner Citizen Records Control */}
-                <div className="mb-2 shrink-0">
+                {/* Owner Wipe All Account Progress Control */}
+                <div className="mb-2 shrink-0 space-y-1.5">
                   {!confirmPurgeRegistry ? (
                     <button
                       type="button"
@@ -11319,12 +11428,12 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       className="w-full py-1.5 px-3 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 border border-rose-500/40 text-rose-300 text-[10px] font-bold cursor-pointer flex items-center justify-center gap-1.5"
                     >
                       <Trash2 className="w-3 h-3" />
-                      <span>Purge All Non-Owner Citizen Records (Keep Owner @chiboy_52)</span>
+                      <span>Wipe ALL Account Progress (Preserve Owner @chiboy_52)</span>
                     </button>
                   ) : (
                     <div className="p-2.5 rounded-xl bg-rose-950/70 border border-rose-500 space-y-2 text-[10px]">
                       <p className="text-rose-200 font-bold">
-                        Delete all non-owner citizen Firestore records &amp; free their usernames? Your Owner account (@chiboy_52) will be preserved.
+                        Delete ALL non-owner citizen accounts, cloud saves &amp; reset Owner progress to Day 1? Your Owner login ({OWNER_EMAIL} / @{OWNER_USERNAME}) &amp; password stay intact.
                       </p>
                       <div className="flex gap-2">
                         <button
@@ -11333,21 +11442,22 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           onClick={async () => {
                             setIsSuspensionBusy(true);
                             try {
-                              const { deletedCount } = await purgeNonOwnerCitizenAccountsAsOwner();
+                              const { deletedAccountsCount, freshOwnerProfile } = await wipeAllAccountProgressAsOwner();
+                              onOwnerResetAllProgress?.(freshOwnerProfile);
                               await fetchPlayersRegistry();
-                              setRegistryScanResult(`Purged ${deletedCount} non-owner citizen record(s). Owner @chiboy_52 preserved.`);
-                              onShowToast(`Purged ${deletedCount} citizen record(s).`);
+                              setRegistryScanResult(`Wiped ${deletedAccountsCount} citizen record(s) & all game saves. Owner @chiboy_52 preserved at Day 1.`);
+                              onShowToast(`Wiped all progress (${deletedAccountsCount} account(s)). Owner @chiboy_52 preserved.`);
                               setConfirmPurgeRegistry(false);
                               triggerSound?.('success');
                             } catch (err) {
-                              onShowToast(err instanceof Error ? err.message : 'Purge failed.');
+                              onShowToast(err instanceof Error ? err.message : 'Wipe failed.');
                             } finally {
                               setIsSuspensionBusy(false);
                             }
                           }}
                           className="flex-1 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-black cursor-pointer disabled:opacity-50"
                         >
-                          {isSuspensionBusy ? 'Purging...' : 'Confirm Purge'}
+                          {isSuspensionBusy ? 'Wiping...' : 'Confirm Full Wipe'}
                         </button>
                         <button
                           type="button"

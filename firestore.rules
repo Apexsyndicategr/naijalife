@@ -39,14 +39,16 @@ service cloud.firestore {
     // MUST match BOTH verified email kchiboy50@gmail.com AND registered username chiboy_52
     function isOwnerIdentity() {
       return isEmailVerified()
-        && request.auth.token.email == 'kchiboy50@gmail.com'
+        && ('email' in request.auth.token)
+        && request.auth.token.email.lower() == 'kchiboy50@gmail.com'
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.usernameLower == 'chiboy_52';
     }
 
     function isOwner() {
       return isEmailVerified()
-        && request.auth.token.email == 'kchiboy50@gmail.com'
+        && ('email' in request.auth.token)
+        && request.auth.token.email.lower() == 'kchiboy50@gmail.com'
         && exists(/databases/$(database)/documents/owner_roles/$(request.auth.uid));
     }
 
@@ -270,7 +272,11 @@ service cloud.firestore {
 
       allow delete: if isEmailVerified()
         && isValidUsernameId(usernameLower)
-        && (existing().uid == request.auth.uid || isOwner());
+        && (
+          existing().uid == request.auth.uid ||
+          isOwner() ||
+          (('email' in request.auth.token) && request.auth.token.email.lower() == 'kchiboy50@gmail.com' && usernameLower == 'chiboy_52')
+        );
     }
 
     // 8. /profiles/{uid} — Synchronized Naija Life RPG Profile
@@ -341,8 +347,10 @@ service cloud.firestore {
 
       allow delete: if isEmailVerified()
         && isValidId(uid)
-        && !exists(/databases/$(database)/documents/owner_roles/$(uid))
-        && ((isOwner() && request.auth.uid != uid) || (request.auth.uid == uid && !isOwner()));
+        && (
+          isOwner() ||
+          (request.auth.uid == uid && !exists(/databases/$(database)/documents/owner_roles/$(uid)))
+        );
     }
 
     // 10. /owner_roles/{uid} — Verified Apex Syndicate Owner Gate

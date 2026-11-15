@@ -1299,11 +1299,29 @@ export default function App() {
     }, 4000);
   }, []);
 
-  // One-time purge of legacy saved game glitch (Emeka Adeleke)
+  // One-time purge of legacy & stale local game progress (preserves Firebase Auth session)
   useEffect(() => {
     try {
       localStorage.removeItem('naija_life_savegame_v1');
       localStorage.removeItem('naija_life_users');
+      if (!localStorage.getItem('naija_life_local_wipe_v3')) {
+        const keysToClear = [
+          'naija_life_bet_slips',
+          'naija_life_active_sickness',
+          'naija_life_course_progress_v3',
+          'naija_life_biz_accrued_profit',
+          'naija_life_community_feedback_v1',
+          'naija_life_snap_session',
+        ];
+        keysToClear.forEach((k) => localStorage.removeItem(k));
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('snap_friends_') || k.startsWith('snap_reqs_') || k.startsWith('snap_messages_'))) {
+            localStorage.removeItem(k);
+          }
+        }
+        localStorage.setItem('naija_life_local_wipe_v3', String(Date.now()));
+      }
     } catch {
       // ignore
     }
@@ -3426,6 +3444,37 @@ export default function App() {
     showToast('Logged out cleanly. Your progress has been saved to the cloud.');
   };
 
+  const handleOwnerResetAllProgress = useCallback(
+    (freshOwnerProfile: UserProfile) => {
+      try {
+        clearSavedGame();
+        const keysToClear = [
+          'naija_life_savegame_v1',
+          'naija_life_users',
+          'naija_life_bet_slips',
+          'naija_life_active_sickness',
+          'naija_life_course_progress_v3',
+          'naija_life_biz_accrued_profit',
+          'naija_life_community_feedback_v1',
+          'naija_life_snap_session',
+        ];
+        keysToClear.forEach((k) => localStorage.removeItem(k));
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith('snap_friends_') || k.startsWith('snap_reqs_') || k.startsWith('snap_messages_'))) {
+            localStorage.removeItem(k);
+          }
+        }
+      } catch {}
+
+      cloudSaveVersionRef.current = 0;
+      setSaveConflictData(null);
+      handleNewGame();
+      applyAuthenticatedSession(freshOwnerProfile, getStateById('lagos'), null);
+    },
+    [applyAuthenticatedSession]
+  );
+
   /* =========================================================================
      0. UN-SKIPPABLE AUTHENTIC HARDWARE DETECTION & DEVICE OPTIMIZER
      Runs first before the login screen appears!
@@ -3490,6 +3539,7 @@ export default function App() {
           const normalized = enforceOwnerFinances(newProf);
           const owner = isStrictOwnerProfile(normalized);
           setCurrentUser(normalized);
+          setPlayerName(`${normalized.firstName || normalized.username} ${normalized.lastName || ''}`.trim());
           saveSession(normalized);
           setWallet((w) => ({
             ...w,
@@ -3500,6 +3550,7 @@ export default function App() {
             syncProfileToCloud(normalized.uid, normalized).catch(() => {});
           }
         }}
+        onOwnerResetAllProgress={handleOwnerResetAllProgress}
         onCurrencyExchange={({ direction, sourceAmount, targetAmount, receipts: nextReceipts }) => {
           const owner = isStrictOwnerProfile(currentUser);
           const currentNGN = owner ? SEXTILLION_999 : wallet.NGN;

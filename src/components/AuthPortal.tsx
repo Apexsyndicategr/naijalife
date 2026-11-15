@@ -416,6 +416,14 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     }
   }, [initialGoogleCompletionEmail, currentStep, isSubmitting]);
 
+  // Automatically pre-fill Owner username chiboy_52 when kchiboy50@gmail.com completes Google profile
+  useEffect(() => {
+    const activeEmail = (auth.currentUser?.email || pendingGoogleEmail || '').trim().toLowerCase();
+    if (currentStep === 'COMPLETE_GOOGLE_PROFILE' && activeEmail === OWNER_EMAIL && !signupUsername.trim()) {
+      setSignupUsername(OWNER_USERNAME);
+    }
+  }, [currentStep, pendingGoogleEmail, signupUsername]);
+
   // Debounced live username uniqueness check during signup or Google profile completion
   useEffect(() => {
     const isCheckingSignup = authMode === 'SIGNUP' && currentStep === 'AUTH_GATE';

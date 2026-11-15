@@ -156,6 +156,7 @@ export interface LagosLifeMapProps {
   }) => void;
   cloudSyncStatus?: 'synced' | 'syncing' | 'conflict' | 'offline';
   onTriggerCloudSync?: () => Promise<void> | void;
+  onOwnerResetAllProgress?: (freshOwnerProfile: UserProfile) => void;
 }
 
 export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
@@ -196,6 +197,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
   onCurrencyExchange,
   cloudSyncStatus = 'synced',
   onTriggerCloudSync,
+  onOwnerResetAllProgress,
 }) => {
   const isStrictOwner = Boolean(
     userProfile?.isOwner === true &&
@@ -3059,6 +3061,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
         onCurrencyExchange={onCurrencyExchange}
         cloudSyncStatus={cloudSyncStatus}
         onTriggerCloudSync={onTriggerCloudSync}
+        onOwnerResetAllProgress={onOwnerResetAllProgress}
         triggerSound={triggerSound}
         currentStateId={currentState.id}
         initialApp={phoneInitialApp}

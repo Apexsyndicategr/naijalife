@@ -722,7 +722,7 @@ app.post('/api/owner/delete-check', async (req, res) => {
   }
   const mode = String(req.body?.mode || 'single');
   const targetUid = String(req.body?.targetUid || '').trim();
-  if (mode !== 'purge-non-owner') {
+  if (mode !== 'purge-non-owner' && mode !== 'wipe-all-progress') {
     if (!targetUid || targetUid === ownerCheck.uid) {
       return res.status(400).json({ error: 'Cannot delete the active Apex Syndicate Owner master account.' });
     }
@@ -750,6 +750,12 @@ app.post('/api/auth/reset-all-accounts', async (req, res) => {
   }
   citizensDB = {};
   saveCitizensDB({});
+  snapchatUsersDB = {};
+  saveSnapUsers({});
+  snapMessagesDB = [];
+  saveSnapMessages([]);
+  communitySubmissions.length = 0;
+  globalRefreshCounter++;
   return res.json({ success: true, count: 0 });
 });
 app.post('/api/auth/sync', async (req, res) => {
