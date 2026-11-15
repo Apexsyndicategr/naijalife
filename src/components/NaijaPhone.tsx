@@ -92,9 +92,12 @@ import { isStrictOwnerIdentity } from '../utils/authValidation';
 import {
   changeCitizenUsername,
   checkUsernameAvailable,
+  deleteCitizenAccountAsOwner,
   fetchOwnerAuditLogs,
   fetchOwnerCitizenRegistry,
+  linkPasswordToGoogleAccount,
   OwnerAuditLogEntry,
+  purgeNonOwnerCitizenAccountsAsOwner,
   RegistryCitizenEntry,
   requestCitizenEmailUpdate,
   sendPasswordReset,
@@ -751,6 +754,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [inspectedCitizen, setInspectedCitizen] = useState<RegistryCitizenEntry | null>(null);
   const [suspendReasonInput, setSuspendReasonInput] = useState<string>('');
   const [isSuspensionBusy, setIsSuspensionBusy] = useState<boolean>(false);
+  const [confirmPurgeRegistry, setConfirmPurgeRegistry] = useState<boolean>(false);
+  const [confirmDeleteTargetUid, setConfirmDeleteTargetUid] = useState<string | null>(null);
   const [academySearchQuery, setAcademySearchQuery] = useState<string>('');
 
   // Account Settings & Security Panel state
@@ -7906,14 +7911,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const hasPwd = auth.currentUser?.providerData?.some((p) => p.providerId === 'password') ?? false;
-                        if (!hasPwd) {
-                          setAccountSecurityFeedback({
-                            type: 'err',
-                            text: 'This account uses Google Sign-In. Manage your password directly in your Google Account security settings.',
-                          });
-                          return;
-                        }
                         setAccountActionTab(accountActionTab === 'password' ? 'none' : 'password');
                         setCurPwdInput('');
                         setNewPwdInput('');
@@ -7927,7 +7924,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       }`}
                     >
                       <Lock className="w-3 h-3" />
-                      <span>Change Password</span>
+                      <span>
+                        {auth.currentUser?.providerData?.some((p) => p.providerId === 'password')
+                          ? 'Change Password'
+                          : 'Set Login Password'}
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -8056,68 +8057,96 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     </div>
                   )}
 
-                  {/* Change Password Form */}
-                  {accountActionTab === 'password' && (
-                    <div className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-zinc-400">Update Password</span>
+                  {/* Change / Set Login Password Form */}
+                  {accountActionTab === 'password' && (() => {
+                    const hasPwdProvider =
+                      auth.currentUser?.providerData?.some((p) => p.providerId === 'password') ?? false;
+                    return (
+                      <div className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-zinc-400">
+                            {hasPwdProvider
+                              ? 'Update Password'
+                              : 'Set Login Password (Allows Email + Password Login)'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowAccountPwds((v) => !v)}
+                            className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                          >
+                            {showAccountPwds ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                            <span>{showAccountPwds ? 'Hide' : 'Show'}</span>
+                          </button>
+                        </div>
+                        {!hasPwdProvider && (
+                          <p className="text-[10px] text-emerald-300/90 leading-snug">
+                            Signed in with Google ({userProfile?.email || auth.currentUser?.email}). Link a password below so you can also log in with Email &amp; Password on any device.
+                          </p>
+                        )}
+                        {hasPwdProvider && (
+                          <input
+                            type={showAccountPwds ? 'text' : 'password'}
+                            value={curPwdInput}
+                            onChange={(e) => setCurPwdInput(e.target.value)}
+                            placeholder="Current password"
+                            className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                          />
+                        )}
+                        <input
+                          type={showAccountPwds ? 'text' : 'password'}
+                          value={newPwdInput}
+                          onChange={(e) => setNewPwdInput(e.target.value)}
+                          placeholder="New strong password (min 8 chars)"
+                          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        />
+                        <input
+                          type={showAccountPwds ? 'text' : 'password'}
+                          value={confirmPwdInput}
+                          onChange={(e) => setConfirmPwdInput(e.target.value)}
+                          placeholder="Confirm password"
+                          className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        />
                         <button
                           type="button"
-                          onClick={() => setShowAccountPwds((v) => !v)}
-                          className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                          disabled={accountSecurityBusy}
+                          onClick={async () => {
+                            setAccountSecurityBusy(true);
+                            setAccountSecurityFeedback(null);
+                            try {
+                              if (hasPwdProvider) {
+                                await updateCitizenPassword(curPwdInput, newPwdInput, confirmPwdInput);
+                                setAccountSecurityFeedback({ type: 'ok', text: 'Password updated successfully!' });
+                                onShowToast('Password updated!');
+                              } else {
+                                await linkPasswordToGoogleAccount(newPwdInput, confirmPwdInput);
+                                setAccountSecurityFeedback({
+                                  type: 'ok',
+                                  text: 'Password linked! You can now log in with Email & Password or Google on any device.',
+                                });
+                                onShowToast('Login password linked to your account!');
+                              }
+                              setAccountActionTab('none');
+                              triggerSound?.('success');
+                            } catch (err) {
+                              setAccountSecurityFeedback({
+                                type: 'err',
+                                text: err instanceof Error ? err.message : 'Failed to save password.',
+                              });
+                            } finally {
+                              setAccountSecurityBusy(false);
+                            }
+                          }}
+                          className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs cursor-pointer disabled:opacity-50"
                         >
-                          {showAccountPwds ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                          <span>{showAccountPwds ? 'Hide' : 'Show'}</span>
+                          {accountSecurityBusy
+                            ? 'Saving...'
+                            : hasPwdProvider
+                            ? 'Save New Password'
+                            : 'Link Password to Account'}
                         </button>
                       </div>
-                      <input
-                        type={showAccountPwds ? 'text' : 'password'}
-                        value={curPwdInput}
-                        onChange={(e) => setCurPwdInput(e.target.value)}
-                        placeholder="Current password"
-                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                      />
-                      <input
-                        type={showAccountPwds ? 'text' : 'password'}
-                        value={newPwdInput}
-                        onChange={(e) => setNewPwdInput(e.target.value)}
-                        placeholder="New strong password (min 8 chars)"
-                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                      />
-                      <input
-                        type={showAccountPwds ? 'text' : 'password'}
-                        value={confirmPwdInput}
-                        onChange={(e) => setConfirmPwdInput(e.target.value)}
-                        placeholder="Confirm new password"
-                        className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                      />
-                      <button
-                        type="button"
-                        disabled={accountSecurityBusy}
-                        onClick={async () => {
-                          setAccountSecurityBusy(true);
-                          setAccountSecurityFeedback(null);
-                          try {
-                            await updateCitizenPassword(curPwdInput, newPwdInput, confirmPwdInput);
-                            setAccountSecurityFeedback({ type: 'ok', text: 'Password updated successfully!' });
-                            setAccountActionTab('none');
-                            onShowToast('Password updated!');
-                            triggerSound?.('success');
-                          } catch (err) {
-                            setAccountSecurityFeedback({
-                              type: 'err',
-                              text: err instanceof Error ? err.message : 'Failed to update password.',
-                            });
-                          } finally {
-                            setAccountSecurityBusy(false);
-                          }
-                        }}
-                        className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs cursor-pointer disabled:opacity-50"
-                      >
-                        {accountSecurityBusy ? 'Updating...' : 'Save New Password'}
-                      </button>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Change Email Form */}
                   {accountActionTab === 'email' && (
@@ -11007,6 +11036,58 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   </div>
                 )}
 
+                {/* Owner Purge All Non-Owner Citizen Records Control */}
+                <div className="mb-2 shrink-0">
+                  {!confirmPurgeRegistry ? (
+                    <button
+                      type="button"
+                      disabled={isSuspensionBusy}
+                      onClick={() => setConfirmPurgeRegistry(true)}
+                      className="w-full py-1.5 px-3 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 border border-rose-500/40 text-rose-300 text-[10px] font-bold cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Purge All Non-Owner Citizen Records (Keep Owner @chiboy_52)</span>
+                    </button>
+                  ) : (
+                    <div className="p-2.5 rounded-xl bg-rose-950/70 border border-rose-500 space-y-2 text-[10px]">
+                      <p className="text-rose-200 font-bold">
+                        Delete all non-owner citizen Firestore records &amp; free their usernames? Your Owner account (@chiboy_52) will be preserved.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={isSuspensionBusy}
+                          onClick={async () => {
+                            setIsSuspensionBusy(true);
+                            try {
+                              const { deletedCount } = await purgeNonOwnerCitizenAccountsAsOwner();
+                              await fetchPlayersRegistry();
+                              setRegistryScanResult(`Purged ${deletedCount} non-owner citizen record(s). Owner @chiboy_52 preserved.`);
+                              onShowToast(`Purged ${deletedCount} citizen record(s).`);
+                              setConfirmPurgeRegistry(false);
+                              triggerSound?.('success');
+                            } catch (err) {
+                              onShowToast(err instanceof Error ? err.message : 'Purge failed.');
+                            } finally {
+                              setIsSuspensionBusy(false);
+                            }
+                          }}
+                          className="flex-1 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-black cursor-pointer disabled:opacity-50"
+                        >
+                          {isSuspensionBusy ? 'Purging...' : 'Confirm Purge'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmPurgeRegistry(false)}
+                          className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-300 font-bold cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {registryActiveTab === 'citizens' ? (
                   <>
                     {/* Search & Filters */}
@@ -11320,6 +11401,55 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             <span>{isSuspensionBusy ? 'Restoring...' : 'Restore Account'}</span>
                           </button>
                         )}
+
+                        <div className="pt-2 border-t border-zinc-800/80">
+                          {confirmDeleteTargetUid !== inspectedCitizen.uid ? (
+                            <button
+                              type="button"
+                              disabled={isSuspensionBusy}
+                              onClick={() => setConfirmDeleteTargetUid(inspectedCitizen.uid)}
+                              className="w-full py-2 rounded-xl bg-zinc-900 hover:bg-rose-950/60 border border-rose-500/40 text-rose-300 font-bold text-[11px] cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete Citizen Database Record</span>
+                            </button>
+                          ) : (
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={isSuspensionBusy}
+                                onClick={async () => {
+                                  setIsSuspensionBusy(true);
+                                  try {
+                                    await deleteCitizenAccountAsOwner({
+                                      targetUid: inspectedCitizen.uid,
+                                      targetUsername: inspectedCitizen.username,
+                                    });
+                                    await fetchPlayersRegistry();
+                                    onShowToast(`Deleted @${inspectedCitizen.username} record.`);
+                                    setInspectedCitizen(null);
+                                    setConfirmDeleteTargetUid(null);
+                                    triggerSound?.('success');
+                                  } catch (err) {
+                                    onShowToast(err instanceof Error ? err.message : 'Delete failed.');
+                                  } finally {
+                                    setIsSuspensionBusy(false);
+                                  }
+                                }}
+                                className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-[11px] cursor-pointer disabled:opacity-50"
+                              >
+                                {isSuspensionBusy ? 'Deleting...' : 'Confirm Permanent Delete'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteTargetUid(null)}
+                                className="px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-300 font-bold text-[11px] cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

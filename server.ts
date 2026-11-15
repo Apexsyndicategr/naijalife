@@ -712,6 +712,24 @@ app.post('/api/owner/restore-check', async (req, res) => {
   return res.json({ authorized: true, actorUid: ownerCheck.uid, targetUid });
 });
 
+app.post('/api/owner/delete-check', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({
+      authorized: false,
+      error: ownerCheck.error || 'Unauthorized owner delete attempt.',
+    });
+  }
+  const mode = String(req.body?.mode || 'single');
+  const targetUid = String(req.body?.targetUid || '').trim();
+  if (mode !== 'purge-non-owner') {
+    if (!targetUid || targetUid === ownerCheck.uid) {
+      return res.status(400).json({ error: 'Cannot delete the active Apex Syndicate Owner master account.' });
+    }
+  }
+  return res.json({ authorized: true, actorUid: ownerCheck.uid, mode, targetUid: targetUid || null });
+});
+
 // 5. Legacy plaintext-password endpoints retired for security
 app.post('/api/auth/register', (_req, res) => {
   return res.status(410).json({ error: 'Use Firebase Authentication + Firestore registration.' });

@@ -11,6 +11,7 @@ import {
   EmailAuthProvider,
   getRedirectResult,
   GoogleAuthProvider,
+  linkWithCredential,
   onAuthStateChanged,
   reauthenticateWithCredential,
   sendEmailVerification,
@@ -27,6 +28,7 @@ import {
 } from 'firebase/auth';
 import {
   collection,
+  deleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -1044,6 +1046,23 @@ export async function updateCitizenPassword(currentPassword: string, newPassword
   }
 }
 
+export async function linkPasswordToGoogleAccount(newPassword: string, confirmPassword: string): Promise<void> {
+  const user = auth.currentUser;
+  if (!user || !user.email) throw new Error('No active authenticated user.');
+
+  const pwdCheck = validatePasswordStrength(newPassword);
+  if (!pwdCheck.valid) throw new Error(pwdCheck.error);
+  if (newPassword !== confirmPassword) throw new Error('Passwords do not match.');
+
+  try {
+    const cred = EmailAuthProvider.credential(user.email, newPassword);
+    await linkWithCredential(user, cred);
+    await user.reload();
+  } catch (err) {
+    throw new Error(mapFirebaseAuthError(err));
+  }
+}
+
 export async function requestCitizenEmailUpdate(currentPassword: string, newEmail: string): Promise<void> {
   const user = auth.currentUser;
   if (!user || !user.email) throw new Error('No active authenticated user.');
@@ -1298,6 +1317,112 @@ export async function setCitizenSuspensionStatus(params: {
       : `Restored @${params.targetUsername} to active status.`,
     createdAt: serverTimestamp(),
   });
+}
+
+export async function deleteCitizenAccountAsOwner(params: {
+  targetUid: string;
+  targetUsername: string;
+}): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Authentication required.');
+  if (params.targetUid === user.uid || params.targetUsername.toLowerCase() === OWNER_USERNAME) {
+    throw new Error('Cannot delete the active Apex Syndicate Owner master account.');
+  }
+
+  const idToken = await user.getIdToken(true);
+  const res = await fetch('/api/owner/delete-check', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ mode: 'single', targetUid: params.targetUid }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || 'Unauthorized owner delete attempt.');
+  }
+
+  const unameLower = String(params.targetUsername || '').trim().toLowerCase();
+  await Promise.all([
+    deleteDoc(doc(db, 'users', params.targetUid)).catch(() => {}),
+    deleteDoc(doc(db, 'users_private', params.targetUid)).catch(() => {}),
+    deleteDoc(doc(db, 'profiles', params.targetUid)).catch(() => {}),
+    deleteDoc(doc(db, 'game_saves', params.targetUid)).catch(() => {}),
+    unameLower ? deleteDoc(doc(db, 'usernames', unameLower)).catch(() => {}) : Promise.resolve(),
+  ]);
+
+  const logId = `audit_del_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  await setDoc(doc(db, 'owner_audit_logs', logId), {
+    id: logId,
+    actorUid: user.uid,
+    actorEmail: OWNER_EMAIL,
+    action: 'DELETE_ACCOUNT',
+    targetUid: params.targetUid,
+    targetUsername: params.targetUsername,
+    details: `Deleted Firestore citizen record & freed username @${params.targetUsername}.`,
+    createdAt: serverTimestamp(),
+  }).catch(() => {});
+}
+
+export async function purgeNonOwnerCitizenAccountsAsOwner(): Promise<{ deletedCount: number }> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Authentication required.');
+
+  const idToken = await user.getIdToken(true);
+  const res = await fetch('/api/owner/delete-check', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ mode: 'purge-non-owner' }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || 'Unauthorized owner purge attempt.');
+  }
+
+  const usersSnap = await getDocs(collection(db, 'users'));
+  let deletedCount = 0;
+
+  for (const userDoc of usersSnap.docs) {
+    const data = userDoc.data() as CloudUserAccount;
+    const uid = userDoc.id;
+    const unameLower = String(data.usernameLower || data.username || '').toLowerCase().trim();
+    if (uid === user.uid || data.role === 'owner' || unameLower === OWNER_USERNAME) {
+      continue;
+    }
+    await Promise.all([
+      deleteDoc(doc(db, 'users', uid)).catch(() => {}),
+      deleteDoc(doc(db, 'users_private', uid)).catch(() => {}),
+      deleteDoc(doc(db, 'profiles', uid)).catch(() => {}),
+      deleteDoc(doc(db, 'game_saves', uid)).catch(() => {}),
+      unameLower ? deleteDoc(doc(db, 'usernames', unameLower)).catch(() => {}) : Promise.resolve(),
+    ]);
+    deletedCount++;
+  }
+
+  // Also clear local legacy server file if any records remained
+  await fetch('/api/auth/reset-all-accounts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+  }).catch(() => {});
+
+  const logId = `audit_purge_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  await setDoc(doc(db, 'owner_audit_logs', logId), {
+    id: logId,
+    actorUid: user.uid,
+    actorEmail: OWNER_EMAIL,
+    action: 'PURGE_CITIZENS',
+    details: `Purged ${deletedCount} non-owner citizen record(s) from Firestore while preserving Owner @${OWNER_USERNAME}.`,
+    createdAt: serverTimestamp(),
+  }).catch(() => {});
+
+  return { deletedCount };
 }
 
 export async function fetchOwnerAuditLogs(): Promise<OwnerAuditLogEntry[]> {

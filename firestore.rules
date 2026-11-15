@@ -160,7 +160,7 @@ service cloud.firestore {
         && isValidId(data.id) && data.id == logId
         && isValidId(data.actorUid) && data.actorUid == request.auth.uid
         && data.actorEmail is string && data.actorEmail == 'kchiboy50@gmail.com'
-        && data.action in ['PROVISION_OWNER', 'VIEW_REGISTRY', 'VIEW_ACCOUNT', 'SUSPEND_ACCOUNT', 'RESTORE_ACCOUNT', 'GLOBAL_SYNC', 'NEPA_OVERRIDE', 'BROADCAST_AUDIO']
+        && data.action in ['PROVISION_OWNER', 'VIEW_REGISTRY', 'VIEW_ACCOUNT', 'SUSPEND_ACCOUNT', 'RESTORE_ACCOUNT', 'DELETE_ACCOUNT', 'PURGE_CITIZENS', 'GLOBAL_SYNC', 'NEPA_OVERRIDE', 'BROADCAST_AUDIO']
         && (!('targetUid' in data) || (data.targetUid is string && data.targetUid.size() <= 128))
         && (!('targetUsername' in data) || (data.targetUsername is string && data.targetUsername.size() <= 48))
         && data.details is string && data.details.size() <= 500
@@ -221,6 +221,11 @@ service cloud.firestore {
             )
           )
         );
+
+      allow delete: if isEmailVerified()
+        && isValidId(uid)
+        && !exists(/databases/$(database)/documents/owner_roles/$(uid))
+        && ((isOwner() && request.auth.uid != uid) || (request.auth.uid == uid && !isOwner()));
     }
 
     // 6. /users_private/{uid} — Strict PII Isolation
@@ -245,6 +250,11 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'emailLower', 'lastDevice', 'lastLoginAt', 'updatedAt']);
+
+      allow delete: if isEmailVerified()
+        && isValidId(uid)
+        && !exists(/databases/$(database)/documents/owner_roles/$(uid))
+        && ((isOwner() && request.auth.uid != uid) || (request.auth.uid == uid && !isOwner()));
     }
 
     // 7. /usernames/{usernameLower} — Atomic Uniqueness Registry (Zero PII)
@@ -300,6 +310,11 @@ service cloud.firestore {
             ])
           )
         );
+
+      allow delete: if isEmailVerified()
+        && isValidId(uid)
+        && !exists(/databases/$(database)/documents/owner_roles/$(uid))
+        && ((isOwner() && request.auth.uid != uid) || (request.auth.uid == uid && !isOwner()));
     }
 
     // 9. /game_saves/{uid} — Versioned Cross-Device Cloud Saves
@@ -323,6 +338,11 @@ service cloud.firestore {
         && incoming().version >= existing().version
         && incoming().updatedAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['version', 'clientUpdatedAtMs', 'deviceId', 'saveData', 'updatedAt']);
+
+      allow delete: if isEmailVerified()
+        && isValidId(uid)
+        && !exists(/databases/$(database)/documents/owner_roles/$(uid))
+        && ((isOwner() && request.auth.uid != uid) || (request.auth.uid == uid && !isOwner()));
     }
 
     // 10. /owner_roles/{uid} — Verified Apex Syndicate Owner Gate
