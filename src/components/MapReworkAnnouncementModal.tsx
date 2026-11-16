@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { ArrowRight, Building2, Car, Compass, SunMoon } from 'lucide-react';
+import { ArrowRight, Building2, Layers, MapPin, SunMoon } from 'lucide-react';
 
 interface MapReworkAnnouncementModalProps {
   isOpen: boolean;
@@ -24,25 +24,25 @@ export const MapReworkAnnouncementModal: React.FC<MapReworkAnnouncementModalProp
       aria-modal="true"
       aria-labelledby="map-rework-title"
     >
-      <div className="w-full sm:max-w-2xl max-h-[92dvh] flex flex-col bg-zinc-950 border border-emerald-500/35 rounded-t-3xl sm:rounded-3xl shadow-[0_24px_80px_rgba(0,0,0,0.85)] overflow-hidden text-left">
-        {/* Top Ambient Header Strip */}
-        <div className="px-5 pt-6 pb-5 sm:px-8 sm:pt-7 sm:pb-6 bg-gradient-to-br from-emerald-950/90 via-zinc-950 to-amber-950/40 border-b border-zinc-800/80 shrink-0">
+      <div className="w-full sm:max-w-2xl max-h-[92dvh] flex flex-col bg-[#07130d] border border-emerald-700/50 rounded-t-3xl sm:rounded-3xl shadow-[0_24px_80px_rgba(0,0,0,0.88)] overflow-hidden text-left">
+        {/* Top Header */}
+        <div className="px-5 pt-6 pb-5 sm:px-8 sm:pt-7 sm:pb-6 bg-[#0a1c13] border-b border-emerald-900/60 shrink-0">
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-amber-500 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-950/60">
-              <Compass className="w-6 h-6 text-zinc-950" />
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-950/70">
+              <Building2 className="w-6 h-6 text-[#04120b]" />
             </div>
             <div className="space-y-1.5">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-400">
-                Upcoming Major Expansion
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-emerald-400">
+                Upcoming Major Update
               </p>
               <h2
                 id="map-rework-title"
-                className="text-xl sm:text-2xl font-black text-white tracking-tight leading-tight"
+                className="font-display text-xl sm:text-2xl font-extrabold text-white tracking-tight leading-tight"
               >
-                Major Map Rework: Entering True 3D
+                Major Map Rework: Real 3D Buildings Coming Soon
               </h2>
-              <p className="text-sm text-zinc-300 leading-relaxed">
-                A complete world overhaul is in active development for Naija Life. Your entire city experience is being rebuilt from the ground up into a living, interactive 3D world.
+              <p className="text-sm text-emerald-100/75 leading-relaxed">
+                Naija Life is keeping its signature city-map style while upgrading every flat tile and icon into standing, real 3D buildings and towering Nigerian skylines.
               </p>
             </div>
           </div>
@@ -51,63 +51,63 @@ export const MapReworkAnnouncementModal: React.FC<MapReworkAnnouncementModalProp
         {/* Scrollable Roadmap Highlights */}
         <div className="flex-1 overflow-y-auto px-5 py-5 sm:px-8 sm:py-6 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
+            <div className="p-4 rounded-2xl bg-[#0b1f15] border border-emerald-800/45 space-y-2">
               <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
                 <Building2 className="w-5 h-5" />
               </div>
-              <h3 className="text-sm font-bold text-white">Full 3D Cities & Skylines</h3>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                The current flat map is evolving into rotatable, zoomable 3D districts with multi-story towers, expressway flyovers, bridges, and realistic neighborhoods across Lagos, Abuja, Port Harcourt, all 36 states, and Toronto.
+              <h3 className="text-sm font-bold text-white">Real 3D Standing Buildings</h3>
+              <p className="text-xs text-emerald-100/65 leading-relaxed">
+                Say goodbye to flat map cutouts. High-rise towers, glass banks, multi-story estates, malls, hospitals, and universities are being modeled as true 3D structures with height, roofs, and street-level depth.
               </p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+            <div className="p-4 rounded-2xl bg-[#0b1f15] border border-emerald-800/45 space-y-2">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-300">
+                <Layers className="w-5 h-5" />
+              </div>
+              <h3 className="text-sm font-bold text-white">Flyovers, Bridges &amp; City Depth</h3>
+              <p className="text-xs text-emerald-100/65 leading-relaxed">
+                Explore layered expressway flyovers, cable-stayed bridges, waterfront piers, and realistic architectural districts across Lagos, Abuja, Port Harcourt, all 36 states, and Toronto.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#0b1f15] border border-emerald-800/45 space-y-2">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-300">
                 <SunMoon className="w-5 h-5" />
               </div>
-              <h3 className="text-sm font-bold text-white">Dynamic Lighting, Weather & NEPA</h3>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Watch golden sunsets fade into neon city nights, streetlamps react in real time when the NEPA grid drops, generator headlights cut through blackouts, and tropical rainstorms sweep across rooftops.
+              <h3 className="text-sm font-bold text-white">3D Shadows, Weather &amp; NEPA</h3>
+              <p className="text-xs text-emerald-100/65 leading-relaxed">
+                Watch real building shadows move from sunrise to dusk, lit tower windows glow across the skyline at night, and generator lights react dynamically when NEPA cuts power.
               </p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
-              <div className="w-9 h-9 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400">
-                <Car className="w-5 h-5" />
+            <div className="p-4 rounded-2xl bg-[#0b1f15] border border-emerald-800/45 space-y-2">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <MapPin className="w-5 h-5" />
               </div>
-              <h3 className="text-sm font-bold text-white">Driveable 3D Vehicles & Flights</h3>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Take your cars, SUVs, kekes, and luxury rides onto 3D roads with smooth camera follow, animated airport runways for interstate &amp; international departures, and live citizen movement around town.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
-              <div className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                <Compass className="w-5 h-5" />
-              </div>
-              <h3 className="text-sm font-bold text-white">Walkable Landmarks & Interiors</h3>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Step directly inside redesigned 3D banks, malls, hospitals, mansions, nightclubs, and universities — plus new upcoming social experiences like Family &amp; Snapchat integration.
+              <h3 className="text-sm font-bold text-white">True to Naija Life</h3>
+              <p className="text-xs text-emerald-100/65 leading-relaxed">
+                Same fast, intuitive Naija Life gameplay you already know — tapping districts, buying estates, running businesses, traveling states, and enjoying upcoming phone apps like Family &amp; Snapchat — just in a lush 3D skyline.
               </p>
             </div>
           </div>
 
-          <div className="p-4 rounded-2xl bg-emerald-950/35 border border-emerald-500/25">
-            <p className="text-xs text-emerald-200 leading-relaxed">
-              <strong className="text-emerald-300">Your progress is safe:</strong> All your cash, Naira &amp; CAD balances, properties, vehicles, businesses, and current travel location carry straight forward when the 3D world goes live.
+          <div className="p-4 rounded-2xl bg-emerald-950/60 border border-emerald-600/35">
+            <p className="text-xs text-emerald-100/90 leading-relaxed">
+              <strong className="text-emerald-300">Your progress is completely safe:</strong> All your Naira &amp; CAD balances, homes, vehicles, businesses, and current travel location stay intact when the 3D city buildings go live.
             </p>
           </div>
         </div>
 
         {/* Sticky Bottom Thumb-Zone Primary Action */}
-        <div className="px-5 py-4 sm:px-8 sm:py-5 bg-zinc-950/95 border-t border-zinc-800/80 shrink-0">
+        <div className="px-5 py-4 sm:px-8 sm:py-5 bg-[#06100b] border-t border-emerald-900/60 shrink-0">
           <button
             type="button"
             onClick={onContinue}
-            className="w-full min-h-[48px] py-3.5 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-zinc-950 font-black text-sm tracking-wide shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] transition-all"
+            className="w-full min-h-[48px] py-3.5 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#031209] font-extrabold text-sm tracking-wide shadow-lg shadow-emerald-950/60 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99] transition-all"
           >
             <span>Continue to Game</span>
-            <ArrowRight className="w-4 h-4 text-zinc-950" />
+            <ArrowRight className="w-4 h-4 text-[#031209]" />
           </button>
         </div>
       </div>

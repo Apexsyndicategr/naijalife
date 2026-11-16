@@ -8,10 +8,19 @@ body,
   height: 100dvh;
   margin: 0;
   padding: 0;
-  background-color: #000000;
-  color: #ffffff;
+  background-color: #030a06;
+  color: #f4f7f5;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  font-family: 'Bricolage Grotesque', 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
 @keyframes floatParticle {
@@ -84,6 +93,68 @@ body,
   }
 }
 
+@keyframes nlEmeraldSweep {
+  0% {
+    transform: translate3d(-18%, 8%, 0) scale(1);
+    opacity: 0.42;
+  }
+  50% {
+    transform: translate3d(10%, -6%, 0) scale(1.09);
+    opacity: 0.68;
+  }
+  100% {
+    transform: translate3d(-18%, 8%, 0) scale(1);
+    opacity: 0.42;
+  }
+}
+
+@keyframes nlHorizonPulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scaleX(0.96);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scaleX(1.02);
+  }
+}
+
+@keyframes nlEmblemFloat {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -5px, 0);
+  }
+}
+
+@keyframes nlSpinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes nlProgressSheen {
+  0% {
+    transform: translate3d(-100%, 0, 0);
+  }
+  100% {
+    transform: translate3d(220%, 0, 0);
+  }
+}
+
+@keyframes nlTowerLight {
+  0%, 100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
 .animate-float-particle-1 {
   animation: floatParticle 6s ease-in-out infinite alternate;
   will-change: transform, opacity;
@@ -114,4 +185,48 @@ body,
 
 .animate-neon-badge {
   animation: neonBadgeGlow 2.5s ease-in-out infinite;
+}
+
+.nl-emerald-sweep {
+  animation: nlEmeraldSweep 14s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.nl-horizon-pulse {
+  animation: nlHorizonPulse 6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.nl-emblem-float {
+  animation: nlEmblemFloat 4.5s ease-in-out infinite;
+  will-change: transform;
+}
+
+.nl-spin-slow {
+  animation: nlSpinSlow 10s linear infinite;
+  will-change: transform;
+}
+
+.nl-progress-sheen {
+  animation: nlProgressSheen 1.9s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  will-change: transform;
+}
+
+.nl-tower-light {
+  animation: nlTowerLight 5s ease-in-out infinite;
+  will-change: opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nl-emerald-sweep,
+  .nl-horizon-pulse,
+  .nl-emblem-float,
+  .nl-spin-slow,
+  .nl-progress-sheen,
+  .nl-tower-light,
+  .animate-aurora,
+  .animate-btn-shimmer,
+  .animate-border-glow {
+    animation: none !important;
+  }
 }

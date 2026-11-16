@@ -9,12 +9,11 @@ import {
   Tablet,
   Laptop,
   Globe,
-  Sparkles,
   CheckCircle2,
-  ShieldCheck,
   Server,
   RefreshCw,
 } from 'lucide-react';
+import { EmeraldAtmosphere } from './EmeraldAtmosphere';
 
 export interface DeviceOptimizationProfile {
   deviceCategory: 'phone' | 'tablet' | 'pc';
@@ -73,23 +72,22 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
 
       if (isIPad || isAndroidTablet || (isTouch && minDim >= 600 && minDim <= 1024)) {
         category = 'tablet';
-        brandLabel = isIPad ? 'Apple iPad / Tablet' : 'Android Tablet';
+        brandLabel = isIPad ? 'Apple iPad' : 'Android Tablet';
       } else if (isIOS || (isAndroid && /Mobile/.test(ua)) || (isTouch && minDim < 600)) {
         category = 'phone';
-        brandLabel = isIOS ? 'Apple iPhone' : isAndroid ? 'Android Smartphone' : 'Mobile Phone';
+        brandLabel = isIOS ? 'Apple iPhone' : isAndroid ? 'Android Phone' : 'Mobile Device';
       } else if (isTouch && width < 1024) {
         category = 'tablet';
-        brandLabel = 'Touch Tablet / Convertible';
+        brandLabel = 'Touch Tablet';
       } else {
         category = 'pc';
-        brandLabel = /Mac/.test(ua) ? 'Apple Mac / MacBook' : /Windows/.test(ua) ? 'Windows PC / Laptop' : 'Desktop PC';
+        brandLabel = /Mac/.test(ua) ? 'Apple Mac' : /Windows/.test(ua) ? 'Windows PC' : 'Desktop PC';
       }
 
       const cpuCores = navigator.hardwareConcurrency || 4;
       const memoryGB = (navigator as any).deviceMemory || (category === 'phone' ? 4 : 8);
 
-      // Real WebGL GPU profiling
-      let gpuName = 'Standard Mobile GPU';
+      let gpuName = 'Standard Graphics';
       try {
         const canvas = document.createElement('canvas');
         const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
@@ -100,7 +98,7 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
           }
         }
       } catch {
-        gpuName = category === 'phone' ? 'Hardware Accelerated Mobile GPU' : 'Desktop Graphics Adapter';
+        gpuName = category === 'phone' ? 'Mobile GPU' : 'Desktop Graphics';
       }
 
       let cleanGpu = gpuName
@@ -111,7 +109,6 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
         .trim();
       if (cleanGpu.length > 36) cleanGpu = cleanGpu.substring(0, 36) + '...';
 
-      // Real RAF frame timing measurement
       const benchmarkStartTime = performance.now();
       let framesCount = 0;
       await new Promise<void>((resolve) => {
@@ -128,7 +125,6 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
       const elapsed = performance.now() - benchmarkStartTime;
       const benchmarkScore = Math.min(100, Math.round((framesCount / (elapsed / 1000)) * 1.6));
 
-      // Build Device Profile
       const profile: DeviceOptimizationProfile = {
         deviceCategory: category,
         deviceBrandLabel: brandLabel,
@@ -150,35 +146,34 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
         localStorage.setItem('naija_life_optimized_device_profile', JSON.stringify(profile));
       } catch {}
 
-      // Moderate pacing delay for Phase 1
       await new Promise((r) => setTimeout(r, 1200));
       if (isCancelled) return;
 
       // =========================================================================
-      // PHASE 2: DEVICE IDENTIFIED (~1.4s, 35% -> 55%)
+      // PHASE 2: DEVICE IDENTIFIED
       // =========================================================================
       setCurrentPhase('IDENTIFIED');
       setScanProgress(45);
       setCompletedSteps((prev) => [
         ...prev,
-        `Identified: ${brandLabel} (${cpuCores} CPU Threads · ${cleanGpu})`,
+        `${brandLabel} configured for play`,
       ]);
 
       await new Promise((r) => setTimeout(r, 1400));
       if (isCancelled) return;
 
       // =========================================================================
-      // PHASE 3: AUTHENTIC GAME OPTIMIZATION (~2.2s, 55% -> 80%)
+      // PHASE 3: AUTHENTIC GAME OPTIMIZATION
       // =========================================================================
       setCurrentPhase('OPTIMIZING');
       setScanProgress(60);
       setCompletedSteps((prev) => [
         ...prev,
         category === 'phone'
-          ? 'Calibrating mobile GPU transform layer & active viewport culling'
+          ? 'Mobile viewport and touch controls calibrated'
           : category === 'tablet'
-          ? 'Calibrating touch responsiveness & responsive widescreen viewport'
-          : 'Enabling high-definition PC 60fps unlocked rendering pipeline',
+          ? 'Tablet widescreen layout calibrated'
+          : 'Desktop widescreen graphics enabled',
       ]);
 
       await new Promise((r) => setTimeout(r, 1100));
@@ -188,22 +183,19 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
       setCompletedSteps((prev) => [
         ...prev,
         category !== 'pc'
-          ? 'Scaling compact auto-fit HUD: top status bar & bottom dock calibrated'
-          : 'Calibrating desktop panoramic command center viewport',
+          ? 'Compact mobile HUD scaled to fit screen'
+          : 'City map view and dock layout tuned',
       ]);
 
       await new Promise((r) => setTimeout(r, 1100));
       if (isCancelled) return;
 
       // =========================================================================
-      // PHASE 4: SYNCHRONIZING NAIJA LIFE SERVERS (~2.0s, 80% -> 98%)
-      // Server cloud sync & server connection verification
-      // Pushes local device accounts up to central servers, and cleans any fake accounts
+      // PHASE 4: SYNCHRONIZING NAIJA LIFE SERVERS
       // =========================================================================
       setCurrentPhase('SYNCHRONIZING');
       setScanProgress(85);
 
-      // Purge all legacy fake accounts and test storage keys
       try {
         [
           'naija_life_citizens_v15_gmail',
@@ -229,20 +221,20 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
       setScanProgress(94);
       setCompletedSteps((prev) => [
         ...prev,
-        'Naija Life Central Servers synchronized: Cloud cross-device login active!',
+        'Cloud save service connected across regions',
       ]);
 
       await new Promise((r) => setTimeout(r, 1400));
       if (isCancelled) return;
 
       // =========================================================================
-      // PHASE 5: READY & LAUNCH (~0.8s, 100%)
+      // PHASE 5: READY & LAUNCH
       // =========================================================================
       setScanProgress(100);
       setCurrentPhase('READY');
       setCompletedSteps((prev) => [
         ...prev,
-        `Ready! Zero-Lag ${category === 'phone' ? 'Mobile' : category === 'tablet' ? 'Tablet' : 'PC'} Engine Activated!`,
+        'All systems ready — launching Naija Life',
       ]);
 
       await new Promise((r) => setTimeout(r, 800));
@@ -258,66 +250,58 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
     };
   }, []);
 
-  return (
-    <div className="fixed inset-0 z-50 bg-[#080d0a] text-white flex flex-col items-center justify-center p-4 select-none overflow-hidden">
-      {/* Background radial atmosphere */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(16,185,129,0.18),transparent_65%)] pointer-events-none" />
-      <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:32px_32px] pointer-events-none" />
+  const phaseHeadline =
+    currentPhase === 'DETECTING'
+      ? 'Preparing display for your device'
+      : currentPhase === 'IDENTIFIED'
+      ? `${detectedProfile?.deviceBrandLabel || 'Device'} detected`
+      : currentPhase === 'OPTIMIZING'
+      ? 'Tuning city graphics and controls'
+      : currentPhase === 'SYNCHRONIZING'
+      ? 'Checking Naija Life game servers'
+      : 'Ready to enter Naija Life';
 
-      {/* Floating ambient particles */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {Array.from({ length: 12 }).map((_, i) => (
-          <div
-            key={i}
-            className="absolute rounded-full bg-emerald-400/20 blur-[1px] animate-pulse"
-            style={{
-              width: `${Math.random() * 6 + 3}px`,
-              height: `${Math.random() * 6 + 3}px`,
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              animationDuration: `${Math.random() * 3 + 2}s`,
-            }}
-          />
-        ))}
-      </div>
+  return (
+    <div className="fixed inset-0 z-50 bg-[#040b07] text-[#f4f7f5] flex flex-col items-center justify-center p-4 sm:p-6 select-none overflow-hidden">
+      <EmeraldAtmosphere />
 
       <div className="relative z-10 w-full max-w-md mx-auto flex flex-col items-center text-center">
-        {/* =========================================================================
-            NAIJA LIFE BRAND HEADER WITH EXACT NEON GLOW ANIMATION AS LOGIN
-            ========================================================================= */}
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-950/80 border border-emerald-400/40 text-emerald-300 text-xs font-black tracking-widest uppercase mb-3 shadow-[0_0_20px_rgba(16,185,129,0.3)]">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-          <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" style={{ animationDuration: '6s' }} />
-          <span>NIGERIA'S #1 REAL LIFE SIMULATION</span>
+        {/* Clean Animated Brand Emblem */}
+        <div className="nl-emblem-float relative mb-5">
+          <div className="relative w-16 h-16 sm:w-[72px] sm:h-[72px] rounded-2xl p-[2px] bg-[#0b2619] border border-emerald-500/40 shadow-[0_14px_40px_rgba(0,0,0,0.65)] overflow-hidden">
+            <div
+              className="nl-spin-slow absolute -inset-6 opacity-55 pointer-events-none"
+              style={{
+                background:
+                  'conic-gradient(from 0deg, transparent 0deg, rgba(16, 185, 129, 0.85) 60deg, transparent 140deg)',
+              }}
+            />
+            <div className="relative w-full h-full rounded-[14px] overflow-hidden bg-[#06150d]">
+              <img
+                src="/nl-logo.png"
+                alt="Naija Life Emblem"
+                className="w-full h-full object-cover"
+              />
+            </div>
+          </div>
         </div>
 
-        <div className="flex items-center justify-center gap-3.5 mb-1.5">
-          <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-2xl overflow-hidden shadow-[0_0_25px_rgba(16,185,129,0.5)] border-2 border-emerald-400/60 shrink-0">
-            <img
-              src="/nl-logo.png"
-              alt="Naija Life NL Emblem"
-              className="w-full h-full object-cover"
-            />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full ring-1 ring-black animate-pulse" />
-          </div>
-          <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-200 to-amber-300 drop-shadow-[0_0_25px_rgba(16,185,129,0.4)]">
-            NAIJA LIFE
-          </h1>
-        </div>
-        <p className="text-xs text-zinc-400 font-medium mb-5">
-          36 Real States · Live Flights · Real-Life Economy · Democratic Government
+        {/* Crisp Brand Wordmark */}
+        <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+          Naija Life
+        </h1>
+        <p className="mt-1.5 text-xs sm:text-sm text-emerald-200/70 font-medium mb-6">
+          36 Real States · Live Economy · Persistent Save
         </p>
 
-        {/* =========================================================================
-            AUTHENTIC DEVICE SCANNER & OPTIMIZATION CARD
-            ========================================================================= */}
-        <div className="w-full bg-zinc-950/90 border-2 border-emerald-500/50 rounded-3xl p-5 sm:p-6 shadow-[0_10px_40px_rgba(0,0,0,0.85)] backdrop-blur-xl relative overflow-hidden text-left space-y-4">
-          {/* Top Status Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400">
+        {/* Single-Elevation Boot Panel */}
+        <div className="w-full bg-[#08150f]/92 border border-emerald-800/50 rounded-2xl p-5 sm:p-6 shadow-[0_24px_60px_rgba(0,0,0,0.72)] backdrop-blur-xl text-left space-y-4">
+          {/* Active Step Header */}
+          <div className="flex items-center justify-between gap-3 pb-3.5 border-b border-emerald-900/50">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
                 {currentPhase === 'SYNCHRONIZING' ? (
-                  <Server className="w-4 h-4 animate-pulse text-amber-400" />
+                  <Server className="w-4 h-4" />
                 ) : detectedProfile?.deviceCategory === 'phone' ? (
                   <Smartphone className="w-4 h-4" />
                 ) : detectedProfile?.deviceCategory === 'tablet' ? (
@@ -326,127 +310,81 @@ export const DeviceOptimizationLoader: React.FC<DeviceOptimizationLoaderProps> =
                   <Laptop className="w-4 h-4" />
                 )}
               </div>
-              <div>
-                <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider block">
-                  {currentPhase === 'SYNCHRONIZING' ? 'Multi-Server Cloud Sync' : 'Hardware Engine'}
+              <div className="min-w-0">
+                <span className="text-[11px] font-medium text-emerald-300/70 block">
+                  {currentPhase === 'SYNCHRONIZING' ? 'Server Check' : 'Game Startup'}
                 </span>
-                <h3 className="text-xs font-black text-white flex items-center gap-1.5">
-                  {currentPhase === 'DETECTING' && (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                      <span>Detecting device...</span>
-                    </>
-                  )}
-                  {currentPhase === 'IDENTIFIED' && (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                      <span>{detectedProfile?.deviceBrandLabel} Detected</span>
-                    </>
-                  )}
-                  {currentPhase === 'OPTIMIZING' && (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
-                      <span>Optimizing game for your device...</span>
-                    </>
-                  )}
+                <h2 className="text-sm font-bold text-white flex items-center gap-2 truncate">
                   {currentPhase === 'SYNCHRONIZING' && (
-                    <>
-                      <RefreshCw className="w-3 h-3 text-amber-400 animate-spin" />
-                      <span className="text-amber-300">Synchronizing Naija Life servers...</span>
-                    </>
+                    <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" />
                   )}
-                  {currentPhase === 'READY' && (
-                    <>
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                      <span className="text-emerald-300">Ready to Play!</span>
-                    </>
-                  )}
-                </h3>
+                  <span className={currentPhase === 'READY' ? 'text-emerald-300' : 'text-white'}>
+                    {phaseHeadline}
+                  </span>
+                </h2>
               </div>
             </div>
 
-            <span className="px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-700 text-emerald-400 font-mono text-[10px] font-bold">
+            <span className="text-sm font-mono font-bold tabular-nums text-emerald-300 shrink-0">
               {scanProgress}%
             </span>
           </div>
 
-          {/* Progress bar */}
-          <div className="w-full h-2 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
+          {/* Animated Progress Track */}
+          <div className="relative w-full h-2 bg-[#040c08] rounded-full overflow-hidden border border-emerald-900/60">
             <div
-              className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-amber-400 transition-all duration-300 ease-out"
+              className="relative h-full bg-emerald-500 transition-all duration-300 ease-out rounded-full overflow-hidden"
               style={{ width: `${scanProgress}%` }}
-            />
+            >
+              <div className="nl-progress-sheen absolute inset-y-0 w-24 bg-gradient-to-r from-transparent via-emerald-200/70 to-transparent" />
+            </div>
           </div>
 
-          {/* Device Profile Badge when Identified */}
+          {/* Clean Unboxed Device Summary */}
           {detectedProfile && (
-            <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-950/60 via-zinc-900 to-teal-950/60 border border-emerald-500/40 space-y-1.5 animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black text-emerald-300 flex items-center gap-1.5">
-                  <span>
-                    {detectedProfile.deviceCategory === 'phone'
-                      ? '📱'
-                      : detectedProfile.deviceCategory === 'tablet'
-                      ? '📟'
-                      : '💻'}
-                  </span>
-                  <span>{detectedProfile.deviceBrandLabel}</span>
-                </span>
-                <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 uppercase">
-                  {detectedProfile.deviceCategory} mode
+            <div className="grid grid-cols-3 gap-3 py-2.5 border-y border-emerald-900/45 text-xs animate-in fade-in duration-200">
+              <div className="min-w-0">
+                <span className="text-[11px] text-emerald-200/55 block">Device</span>
+                <span className="font-semibold text-white truncate block">
+                  {detectedProfile.deviceBrandLabel}
                 </span>
               </div>
-
-              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono pt-1 text-zinc-300">
-                <div>
-                  <span className="text-zinc-500 block">CPU & Cores</span>
-                  <span className="font-bold text-white">{detectedProfile.cpuCores} Threads Active</span>
-                </div>
-                <div>
-                  <span className="text-zinc-500 block">Touch Matrix</span>
-                  <span className="font-bold text-white">
-                    {detectedProfile.isTouch ? 'Enabled (Touch Screen)' : 'Keyboard & Mouse'}
-                  </span>
-                </div>
-                <div className="col-span-2 truncate">
-                  <span className="text-zinc-500 block">Graphics Renderer</span>
-                  <span className="font-bold text-teal-300 truncate block">
-                    {detectedProfile.gpuRenderer}
-                  </span>
-                </div>
+              <div className="min-w-0">
+                <span className="text-[11px] text-emerald-200/55 block">Controls</span>
+                <span className="font-semibold text-white truncate block">
+                  {detectedProfile.isTouch ? 'Touch Screen' : 'Mouse & Keys'}
+                </span>
+              </div>
+              <div className="min-w-0">
+                <span className="text-[11px] text-emerald-200/55 block">Layout</span>
+                <span className="font-semibold text-emerald-300 capitalize truncate block">
+                  {detectedProfile.deviceCategory}
+                </span>
               </div>
             </div>
           )}
 
-          {/* Server Sync Indicator Pill */}
           {currentPhase === 'SYNCHRONIZING' && (
-            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2.5 text-xs text-amber-200 animate-pulse">
-              <Globe className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Putting all citizen accounts in sync across Naija Life servers...</span>
+            <div className="flex items-center gap-2.5 text-xs text-emerald-200/90 py-1">
+              <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Syncing citizen accounts and regional servers...</span>
             </div>
           )}
 
-          {/* Real Diagnostic Step Checkmarks */}
-          <div className="space-y-1.5 pt-1">
-            {completedSteps.map((step, idx) => (
-              <div
-                key={idx}
-                className="flex items-center gap-2 text-[11px] text-zinc-300 font-medium animate-in fade-in slide-in-from-bottom-1 duration-200"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span className="truncate">{step}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Unskippable Guarantee Label */}
-          <div className="pt-2 border-t border-zinc-900 flex items-center justify-between text-[10px] text-zinc-500 font-mono">
-            <span className="flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-500" />
-              <span>Unskippable Hardware Calibration</span>
-            </span>
-            <span className="text-emerald-400 font-bold">Auto-Fit Guaranteed</span>
-          </div>
+          {/* Completed Steps */}
+          {completedSteps.length > 0 && (
+            <div className="space-y-2 pt-0.5">
+              {completedSteps.map((step, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-2.5 text-xs text-emerald-100/80 animate-in fade-in duration-200"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="truncate">{step}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

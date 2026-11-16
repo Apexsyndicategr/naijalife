@@ -8,7 +8,6 @@ import {
   User,
   Lock,
   Calendar,
-  Sparkles,
   ArrowRight,
   ShieldAlert,
   CheckCircle2,
@@ -29,6 +28,7 @@ import {
   ExternalLink,
   Copy,
 } from 'lucide-react';
+import { EmeraldAtmosphere } from './EmeraldAtmosphere';
 import { auth, firebaseConfig } from '../firebase';
 import { UserProfile, CharacterAvatar, StateData, SocialClass } from '../types/game';
 export type { UserProfile };
@@ -1080,25 +1080,26 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   // =========================================================================
   if (currentStep === 'SUSPENDED') {
     return (
-      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-black text-white p-4">
-        <div className="w-full max-w-md bg-zinc-950 border-2 border-rose-500/60 rounded-3xl p-7 text-center shadow-2xl space-y-4">
-          <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center mx-auto">
-            <ShieldAlert className="w-8 h-8 text-rose-400" />
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#040b07] text-[#f4f7f5] p-4 overflow-y-auto">
+        <EmeraldAtmosphere />
+        <div className="relative z-10 w-full max-w-md bg-[#08150f]/95 border border-rose-500/45 rounded-2xl p-6 sm:p-7 text-center shadow-[0_24px_60px_rgba(0,0,0,0.8)] backdrop-blur-xl space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-rose-500/15 border border-rose-500/35 flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-7 h-7 text-rose-400" />
           </div>
-          <h2 className="text-2xl font-black text-white">ACCOUNT SUSPENDED</h2>
-          <p className="text-xs text-zinc-400 leading-relaxed">
+          <h2 className="font-display text-2xl font-extrabold text-white">Account Suspended</h2>
+          <p className="text-xs text-emerald-100/70 leading-relaxed">
             Access to Naija Life servers has been restricted for this account by Apex Syndicate administration.
           </p>
-          <div className="p-3.5 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 font-medium">
+          <div className="p-3.5 rounded-xl bg-rose-950/55 border border-rose-500/35 text-xs text-rose-200 font-medium">
             {suspendedReason || 'Administrative suspension in effect.'}
           </div>
           <button
             type="button"
             onClick={handleLogoutAndReturn}
-            className="w-full py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-black flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full min-h-[44px] py-3 rounded-xl bg-[#0e2419] hover:bg-[#133022] border border-emerald-800/60 text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
           >
             <LogOut className="w-4 h-4" />
-            <span>Sign Out & Return to Login</span>
+            <span>Sign Out &amp; Return to Login</span>
           </button>
         </div>
       </div>
@@ -1107,40 +1108,41 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
   if (currentStep === 'VERIFY_EMAIL') {
     return (
-      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-black text-white p-4 overflow-y-auto">
-        <div className="w-full max-w-md bg-zinc-950 border-2 border-emerald-500/50 rounded-3xl p-7 shadow-2xl space-y-4">
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#040b07] text-[#f4f7f5] p-4 overflow-y-auto">
+        <EmeraldAtmosphere />
+        <div className="relative z-10 w-full max-w-md bg-[#08150f]/95 border border-emerald-800/55 rounded-2xl p-6 sm:p-7 shadow-[0_24px_60px_rgba(0,0,0,0.8)] backdrop-blur-xl space-y-4">
           <div className="text-center space-y-2">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center mx-auto">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center mx-auto">
               <Mail className="w-7 h-7 text-emerald-400" />
             </div>
-            <h2 className="text-2xl font-black text-white">VERIFY YOUR EMAIL</h2>
-            <p className="text-xs text-zinc-400">
+            <h2 className="font-display text-2xl font-extrabold text-white">Verify Your Email</h2>
+            <p className="text-xs text-emerald-100/70 leading-relaxed">
               We sent a verification link to{' '}
               <strong className="text-emerald-300 font-mono">{pendingVerifyEmail || auth.currentUser?.email}</strong>.
             </p>
           </div>
 
           {successMessage && (
-            <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2">
+            <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/50 text-emerald-200 text-xs flex items-start gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
               <span>{successMessage}</span>
             </div>
           )}
 
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-300 text-xs flex items-start gap-2">
+            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500/60 text-rose-200 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
               <span>{errorMessage}</span>
             </div>
           )}
 
-          <div className="p-3.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 text-[11px] text-zinc-300 space-y-1.5">
+          <div className="p-3.5 rounded-xl bg-[#050f0a] border border-emerald-900/55 text-xs text-emerald-100/75 space-y-1.5">
             <p className="font-bold text-white flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
               <span>Why verify?</span>
             </p>
-            <p className="text-zinc-400 leading-relaxed">
-              Email verification protects your cross-device cloud saves, unlocks account recovery, and secures Apex Syndicate role provisioning.
+            <p className="text-emerald-100/65 leading-relaxed">
+              Email verification protects your cross-device cloud saves, unlocks account recovery, and keeps your account secure.
             </p>
           </div>
 
@@ -1148,26 +1150,26 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             type="button"
             disabled={isSubmitting}
             onClick={handleCheckVerification}
-            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full min-h-[46px] py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#031209] font-extrabold text-xs tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-colors"
           >
             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-            <span>I Have Verified — Check Status & Continue</span>
+            <span>I Have Verified — Continue</span>
           </button>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2.5">
             <button
               type="button"
               disabled={isSubmitting || resendCooldown > 0}
               onClick={handleResendVerification}
-              className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-50 border border-zinc-700 text-xs font-bold text-zinc-200 flex items-center justify-center gap-1.5 cursor-pointer"
+              className="min-h-[42px] py-2.5 px-3 rounded-xl bg-[#0b1f15] hover:bg-[#102b1d] disabled:opacity-50 border border-emerald-800/55 text-xs font-bold text-emerald-100 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             >
-              <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
               <span>{resendCooldown > 0 ? `Resend (${resendCooldown}s)` : 'Resend Link'}</span>
             </button>
             <button
               type="button"
               onClick={handleLogoutAndReturn}
-              className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-bold text-zinc-300 flex items-center justify-center gap-1.5 cursor-pointer"
+              className="min-h-[42px] py-2.5 px-3 rounded-xl bg-[#0b1f15] hover:bg-[#102b1d] border border-emerald-800/55 text-xs font-bold text-emerald-100/80 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             >
               <LogOut className="w-3.5 h-3.5 text-rose-400" />
               <span>Switch Account</span>
@@ -1184,20 +1186,21 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       activeGoogleEmail === OWNER_EMAIL && signupUsername.trim().toLowerCase() === OWNER_USERNAME;
 
     return (
-      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#060809] text-white p-4 overflow-y-auto">
-        <div className="w-full max-w-md bg-zinc-950 border-2 border-emerald-500/50 rounded-3xl p-7 shadow-2xl space-y-4">
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#040b07] text-[#f4f7f5] p-4 overflow-y-auto">
+        <EmeraldAtmosphere />
+        <div className="relative z-10 w-full max-w-md bg-[#08150f]/95 border border-emerald-800/55 rounded-2xl p-6 sm:p-7 shadow-[0_24px_60px_rgba(0,0,0,0.8)] backdrop-blur-xl space-y-4">
           <div className="text-center space-y-2">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center mx-auto">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center mx-auto">
               <ShieldCheck className="w-7 h-7 text-emerald-400" />
             </div>
-            <h2 className="text-2xl font-black text-white">COMPLETE CITIZEN PROFILE</h2>
-            <p className="text-xs text-zinc-400">
-              Google verified <strong className="text-emerald-300 font-mono">{activeGoogleEmail}</strong>. Choose your unique username and private birthday to activate your cross-device account.
+            <h2 className="font-display text-2xl font-extrabold text-white">Complete Citizen Profile</h2>
+            <p className="text-xs text-emerald-100/70 leading-relaxed">
+              Google verified <strong className="text-emerald-300 font-mono">{activeGoogleEmail}</strong>. Choose your username and birthday to activate your account.
             </p>
           </div>
 
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-200 text-xs flex items-start gap-2">
+            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500/60 text-rose-200 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
               <span>{errorMessage}</span>
             </div>
@@ -1205,12 +1208,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
           <form onSubmit={handleCompleteGoogleProfile} className="space-y-3.5">
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-bold text-zinc-300">Username</label>
-                <span className="text-[10px] text-zinc-400 font-mono">A-Z, 0-9, _ . -</span>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-emerald-100">Username</label>
+                <span className="text-[11px] text-emerald-200/50 font-mono">A-Z, 0-9, _ . -</span>
               </div>
               <div className="relative">
-                <User className="w-4 h-4 text-orange-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <User className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={signupUsername}
@@ -1220,17 +1223,17 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                   minLength={3}
                   maxLength={24}
                   autoComplete="username"
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-8 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-orange-400 font-mono"
+                  className="w-full min-h-[42px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-10 pr-8 py-2.5 text-xs text-white placeholder-emerald-200/35 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 font-mono"
                 />
                 {usernameStatus.checking && (
-                  <Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+                  <Loader2 className="w-3.5 h-3.5 text-emerald-300 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
                 )}
               </div>
               {usernameStatus.message && (
                 <p
-                  className={`text-[10px] mt-1 font-medium ${
+                  className={`text-[11px] mt-1 font-medium ${
                     usernameStatus.checking
-                      ? 'text-zinc-400'
+                      ? 'text-emerald-200/60'
                       : usernameStatus.available
                       ? 'text-emerald-400'
                       : 'text-rose-400'
@@ -1242,12 +1245,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-bold text-zinc-300">Date of Birth</label>
-                <span className="text-[10px] text-zinc-500">Private · Never shown publicly</span>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-emerald-100">Date of Birth</label>
+                <span className="text-[11px] text-emerald-200/50">Private</span>
               </div>
               <div className="relative">
-                <Calendar className="w-4 h-4 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Calendar className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="date"
                   value={dateOfBirth}
@@ -1255,13 +1258,13 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                   min="1900-01-01"
                   onChange={(e) => setDateOfBirth(e.target.value)}
                   required
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-400"
+                  className="w-full min-h-[42px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-10 pr-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30"
                 />
               </div>
             </div>
 
             {isPendingOwnerMatch && (
-              <p className="text-[11px] text-amber-300 text-center font-medium bg-amber-950/40 border border-amber-500/30 rounded-xl p-2">
+              <p className="text-[11px] text-amber-300 text-center font-medium bg-amber-950/35 border border-amber-500/30 rounded-xl p-2.5">
                 Verified Apex Syndicate Owner identity detected — master Owner privileges will be provisioned server-side upon activation.
               </p>
             )}
@@ -1269,17 +1272,17 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             <button
               type="submit"
               disabled={isSubmitting || (usernameStatus.available === false && !usernameStatus.checking)}
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full min-h-[46px] py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#031209] font-extrabold text-xs tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-colors"
             >
-              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              <span>{isSubmitting ? 'Activating Account...' : 'Activate Citizen Account & Continue'}</span>
+              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+              <span>{isSubmitting ? 'Activating Account...' : 'Activate Citizen Account'}</span>
               {!isSubmitting && <ArrowRight className="w-4 h-4" />}
             </button>
 
             <button
               type="button"
               onClick={handleLogoutAndReturn}
-              className="w-full py-2.5 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer flex items-center justify-center gap-1.5"
+              className="w-full min-h-[40px] py-2 text-xs font-semibold text-emerald-200/70 hover:text-white cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>Use a Different Account</span>
@@ -1292,27 +1295,28 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
   if (currentStep === 'FORGOT_PASSWORD') {
     return (
-      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-black text-white p-4">
-        <div className="w-full max-w-md bg-zinc-950 border-2 border-amber-500/40 rounded-3xl p-7 shadow-2xl space-y-4">
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#040b07] text-[#f4f7f5] p-4 overflow-y-auto">
+        <EmeraldAtmosphere />
+        <div className="relative z-10 w-full max-w-md bg-[#08150f]/95 border border-emerald-800/55 rounded-2xl p-6 sm:p-7 shadow-[0_24px_60px_rgba(0,0,0,0.8)] backdrop-blur-xl space-y-4">
           <div className="text-center space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center mx-auto">
-              <KeyRound className="w-6 h-6 text-amber-400" />
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center mx-auto">
+              <KeyRound className="w-6 h-6 text-emerald-400" />
             </div>
-            <h2 className="text-2xl font-black text-white">RESET PASSWORD</h2>
-            <p className="text-xs text-zinc-400">
-              Enter your registered email address and we will send a secure password reset link.
+            <h2 className="font-display text-2xl font-extrabold text-white">Reset Password</h2>
+            <p className="text-xs text-emerald-100/70 leading-relaxed">
+              Enter your registered email address and we will send a password reset link.
             </p>
           </div>
 
           {successMessage && (
-            <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2">
+            <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/50 text-emerald-200 text-xs flex items-start gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
               <span>{successMessage}</span>
             </div>
           )}
 
           {errorMessage && (
-            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-300 text-xs flex items-start gap-2">
+            <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500/60 text-rose-200 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
               <span>{errorMessage}</span>
             </div>
@@ -1320,16 +1324,16 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
           <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
             <div>
-              <label className="text-xs font-bold text-zinc-300 block mb-1.5">Registered Email Address</label>
+              <label className="text-xs font-semibold text-emerald-100 block mb-1.5">Registered Email Address</label>
               <div className="relative">
-                <Mail className="w-4 h-4 text-amber-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Mail className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="email"
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
                   placeholder="Enter your email address"
                   required
-                  className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-400 font-mono"
+                  className="w-full min-h-[44px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-emerald-200/35 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 font-mono"
                 />
               </div>
             </div>
@@ -1337,7 +1341,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full min-h-[46px] py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#031209] font-extrabold text-xs tracking-wide flex items-center justify-center gap-2 cursor-pointer transition-colors"
             >
               {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
               <span>Send Password Reset Link</span>
@@ -1350,7 +1354,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                 setSuccessMessage(null);
                 setCurrentStep('AUTH_GATE');
               }}
-              className="w-full py-2.5 text-xs font-bold text-zinc-400 hover:text-white cursor-pointer"
+              className="w-full min-h-[40px] py-2 text-xs font-semibold text-emerald-200/70 hover:text-white cursor-pointer transition-colors"
             >
               Back to Log In
             </button>
@@ -1368,84 +1372,83 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     const currentSpawnState = getStateById(pendingProfile.spawnStateId || signupStateId || 'lagos');
 
     return (
-      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-zinc-950 text-white select-none overflow-y-auto overflow-x-hidden py-6 px-4">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-emerald-900/30 via-zinc-950 to-black pointer-events-none" />
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#040b07] text-[#f4f7f5] select-none overflow-y-auto overflow-x-hidden py-6 px-4">
+        <EmeraldAtmosphere />
         <div className="relative z-10 w-full max-w-lg mx-auto flex flex-col items-center text-center">
-          <div className="mb-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-black tracking-widest uppercase mb-2">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>CITIZEN STATUS UNLOCKED</span>
-            </div>
-            <h2 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-              {isOwner ? 'APEX SYNDICATE OWNER VERIFIED' : 'YOUR NIGERIAN BACKGROUND'}
+          <div className="mb-5 space-y-1.5">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-emerald-400">
+              Citizen Profile Ready
+            </p>
+            <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+              {isOwner ? 'Apex Syndicate Owner Verified' : 'Your Nigerian Background'}
             </h2>
-            <p className="text-xs text-zinc-400 mt-1">
+            <p className="text-xs sm:text-sm text-emerald-100/70">
               {isOwner
-                ? 'Verified owner identity confirmed. Master privileges & registry control active.'
-                : 'Here is your official social class and starting package.'}
+                ? 'Verified owner identity confirmed with full master registry privileges.'
+                : 'Your starting social class, residence, and account balance are ready.'}
             </p>
           </div>
 
-          <div className="w-full bg-zinc-900/90 border border-zinc-800 rounded-3xl p-6 shadow-2xl backdrop-blur-md mb-5 relative overflow-hidden text-left">
-            <div className="flex items-center justify-between mb-4 gap-2">
-              <span className="flex items-center gap-1.5 text-xs text-emerald-300 font-bold">
-                <MapPin className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Spawning in {currentSpawnState.name} ({currentSpawnState.zone})</span>
+          <div className="w-full bg-[#08150f]/95 border border-emerald-800/55 rounded-2xl p-5 sm:p-6 shadow-[0_24px_60px_rgba(0,0,0,0.8)] backdrop-blur-xl mb-5 text-left space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-emerald-900/50">
+              <span className="flex items-center gap-1.5 text-xs text-emerald-200 font-semibold">
+                <MapPin className="w-4 h-4 text-emerald-400" />
+                <span>{currentSpawnState.name} ({currentSpawnState.zone})</span>
               </span>
               <span
-                className={`px-3 py-1 rounded-full text-xs font-black tracking-wide uppercase flex items-center gap-1.5 ${
-                  isNepo
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                className={`text-xs font-bold flex items-center gap-1.5 ${
+                  isNepo || isOwner
+                    ? 'text-amber-300'
                     : isMapo
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    ? 'text-emerald-300'
+                    : 'text-emerald-200/80'
                 }`}
               >
                 <Crown className="w-3.5 h-3.5" />
-                <span>{isOwner ? 'OWNER (NEPO)' : `${pendingProfile.socialClass.toUpperCase()} STATUS`}</span>
+                <span>{isOwner ? 'Owner · Nepo Class' : `${pendingProfile.socialClass.toUpperCase()} Class`}</span>
               </span>
             </div>
 
-            <div className="flex items-center gap-4 bg-zinc-950/70 border border-zinc-800 p-3.5 rounded-2xl mb-4">
+            <div className="flex items-center gap-4 py-1">
               <CharacterRenderer avatar={avatar} size="sm" showBackground={false} />
-              <div>
-                <h3 className="text-lg font-black text-white flex items-center gap-2">
+              <div className="min-w-0">
+                <h3 className="text-lg font-extrabold text-white flex items-center gap-2 flex-wrap">
                   <span>{pendingProfile.firstName} {pendingProfile.lastName}</span>
                   {isOwner && (
-                    <span className="px-2 py-0.5 rounded bg-amber-400 text-black text-[10px] font-black uppercase">
-                      OWNER
+                    <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">
+                      · Owner
                     </span>
                   )}
                 </h3>
                 <p className="text-xs text-emerald-400 font-mono">@{pendingProfile.username}</p>
-                <p className="text-[11px] text-zinc-400 mt-0.5">
+                <p className="text-xs text-emerald-100/60 mt-0.5">
                   Capital: {currentSpawnState.capital}
                 </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="bg-zinc-950/70 p-3 rounded-xl border border-zinc-800">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Starting Wealth</span>
-                <span className="text-sm font-black text-emerald-400 font-mono">
+            <div className="grid grid-cols-2 gap-3 pt-3 border-t border-emerald-900/50 text-xs">
+              <div className="bg-[#050f0a] p-3.5 rounded-xl border border-emerald-900/50">
+                <span className="text-[11px] text-emerald-200/55 block mb-1">Starting Wealth</span>
+                <span className="text-sm font-extrabold text-emerald-300 font-mono tabular-nums">
                   {formatNaira(totalWealth)}
                 </span>
               </div>
-              <div className="bg-zinc-950/70 p-3 rounded-xl border border-zinc-800">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Smartphone</span>
+              <div className="bg-[#050f0a] p-3.5 rounded-xl border border-emerald-900/50">
+                <span className="text-[11px] text-emerald-200/55 block mb-1">Smartphone</span>
                 <span className="text-xs font-bold text-white capitalize">
                   {pendingProfile.phoneModel.replace(/_/g, ' ')}
                 </span>
               </div>
-              <div className="bg-zinc-950/70 p-3 rounded-xl border border-zinc-800">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Father&apos;s Rent Aid</span>
-                <span className="text-xs font-bold text-amber-300">
+              <div className="bg-[#050f0a] p-3.5 rounded-xl border border-emerald-900/50">
+                <span className="text-[11px] text-emerald-200/55 block mb-1">Father&apos;s Rent Aid</span>
+                <span className="text-xs font-bold text-amber-300 tabular-nums">
                   {pendingProfile.fatherRentSubsidyPct}% Paid by Father
                 </span>
               </div>
-              <div className="bg-zinc-950/70 p-3 rounded-xl border border-zinc-800">
-                <span className="text-[10px] text-zinc-500 uppercase font-bold block mb-1">Residence</span>
-                <span className="text-xs font-bold text-zinc-200">
+              <div className="bg-[#050f0a] p-3.5 rounded-xl border border-emerald-900/50">
+                <span className="text-[11px] text-emerald-200/55 block mb-1">Residence</span>
+                <span className="text-xs font-bold text-emerald-50">
                   {isOwner || isNepo ? 'Two-Story Luxury Villa' : isMapo ? '4-Bedroom Flat' : 'Self-Contain Apartment'}
                 </span>
               </div>
@@ -1456,27 +1459,27 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
             type="button"
             disabled={isSubmitting}
             onClick={handleProceedDirectlyToMap}
-            className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-zinc-950 font-black text-lg tracking-wide shadow-xl shadow-emerald-500/25 transition-all flex items-center justify-center gap-3 cursor-pointer"
+            className="w-full min-h-[52px] py-3.5 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#031209] font-extrabold text-base tracking-wide shadow-lg shadow-emerald-950/60 transition-colors flex items-center justify-center gap-2.5 cursor-pointer"
           >
-            <Play className="w-5 h-5 fill-current" />
-            <span>ENTER {currentSpawnState.name.toUpperCase()} MAP</span>
-            <ArrowRight className="w-5 h-5" />
+            <Play className="w-4 h-4 fill-current" />
+            <span>Enter {currentSpawnState.name} Map</span>
+            <ArrowRight className="w-4 h-4" />
           </button>
 
-          <div className="mt-3 flex items-center justify-center gap-4 text-xs">
+          <div className="mt-4 flex items-center justify-center gap-4 text-xs">
             <button
               type="button"
               onClick={() => setCurrentStep('PICK_SPAWN')}
-              className="text-zinc-300 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer font-bold"
+              className="text-emerald-200/80 hover:text-emerald-300 transition-colors flex items-center gap-1.5 cursor-pointer font-semibold"
             >
               <Compass className="w-3.5 h-3.5 text-emerald-400" />
               <span>Change Starting State</span>
             </button>
-            <span className="text-zinc-600">·</span>
+            <span className="text-emerald-800">·</span>
             <button
               type="button"
               onClick={() => setCurrentStep('CUSTOMIZE')}
-              className="text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer"
+              className="text-emerald-200/65 hover:text-emerald-300 transition-colors cursor-pointer font-medium"
             >
               <span>Customize Character</span>
             </button>
@@ -1488,27 +1491,33 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
   if (currentStep === 'CUSTOMIZE' && pendingProfile) {
     return (
-      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-zinc-950 text-white overflow-y-auto overflow-x-hidden py-8">
-        <CharacterCustomizer
-          avatar={avatar}
-          onChange={setAvatar}
-          onProceed={handleCustomizationComplete}
-          playerName={`${pendingProfile.firstName} ${pendingProfile.lastName}`}
-        />
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#040b07] text-white overflow-y-auto overflow-x-hidden py-8">
+        <EmeraldAtmosphere showSkyline={false} />
+        <div className="relative z-10 w-full flex justify-center">
+          <CharacterCustomizer
+            avatar={avatar}
+            onChange={setAvatar}
+            onProceed={handleCustomizationComplete}
+            playerName={`${pendingProfile.firstName} ${pendingProfile.lastName}`}
+          />
+        </div>
       </div>
     );
   }
 
   if (currentStep === 'PICK_SPAWN' && pendingProfile) {
     return (
-      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-zinc-950 text-white overflow-y-auto overflow-x-hidden py-8">
-        <SpawnStateSelector
-          initialStateId={pendingProfile.spawnStateId || signupStateId}
-          onSelectState={handleSpawnSelected}
-          userName={`${pendingProfile.firstName} ${pendingProfile.lastName}`}
-          socialClass={pendingProfile.socialClass}
-          avatar={avatar}
-        />
+      <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#040b07] text-white overflow-y-auto overflow-x-hidden py-8">
+        <EmeraldAtmosphere showSkyline={false} />
+        <div className="relative z-10 w-full flex justify-center">
+          <SpawnStateSelector
+            initialStateId={pendingProfile.spawnStateId || signupStateId}
+            onSelectState={handleSpawnSelected}
+            userName={`${pendingProfile.firstName} ${pendingProfile.lastName}`}
+            socialClass={pendingProfile.socialClass}
+            avatar={avatar}
+          />
+        </div>
       </div>
     );
   }
@@ -1523,527 +1532,565 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const firebaseProvidersUrl = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`;
 
   return (
-    <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 flex items-center justify-center bg-[#060809] text-white select-none overflow-y-auto overflow-x-hidden py-4 px-4">
-      <div className="absolute -top-32 -left-32 w-96 h-96 bg-emerald-500/15 rounded-full blur-[110px] pointer-events-none" />
-      <div className="absolute bottom-0 -right-32 w-96 h-96 bg-orange-500/15 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#0596690a_1px,transparent_1px),linear-gradient(to_bottom,#0596690a_1px,transparent_1px)] bg-[size:36px_36px] pointer-events-none" />
+    <div className="fixed inset-0 w-screen h-screen min-h-[100dvh] z-50 bg-[#040b07] text-[#f4f7f5] select-none overflow-y-auto overflow-x-hidden">
+      <EmeraldAtmosphere />
 
-      <div className="relative z-10 w-full max-w-lg mx-auto my-auto">
-        <div className="text-center mb-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900/90 border border-orange-500/40 text-orange-300 text-[10px] font-black tracking-widest uppercase mb-2 shadow-lg">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            <span>CROSS-DEVICE CLOUD ACCOUNTS ACTIVE</span>
-          </div>
-
-          <div className="flex items-center justify-center gap-3 mb-1">
-            <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-[0_0_20px_rgba(16,185,129,0.45)] border-2 border-emerald-400/60 shrink-0">
-              <img src="/nl-logo.png" alt="Naija Life NL Emblem" className="w-full h-full object-cover" />
+      <div className="relative z-10 w-full max-w-5xl mx-auto min-h-full flex flex-col justify-center py-6 px-4 sm:px-6 lg:px-10">
+        <div className="grid grid-cols-1 lg:grid-cols-12 lg:items-center gap-6 lg:gap-12">
+          {/* Left Column: World Identity & Architectural Highlights */}
+          <div className="lg:col-span-6 text-center lg:text-left space-y-5">
+            <div className="flex items-center justify-center lg:justify-start gap-3.5">
+              <div className="nl-emblem-float w-12 h-12 sm:w-14 sm:h-14 rounded-2xl overflow-hidden border border-emerald-500/45 bg-[#071910] shadow-[0_12px_36px_rgba(0,0,0,0.65)] shrink-0">
+                <img src="/nl-logo.png" alt="Naija Life Emblem" className="w-full h-full object-cover" />
+              </div>
+              <div>
+                <h1 className="font-display text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white">
+                  Naija Life
+                </h1>
+                <p className="text-xs sm:text-sm text-emerald-300/80 font-medium lg:hidden">
+                  36 Real States · Live Economy · Cloud Save
+                </p>
+              </div>
             </div>
-            <h1 className="text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-amber-200 to-orange-400">
-              NAIJA LIFE
-            </h1>
+
+            <div className="hidden lg:block space-y-6 max-w-md">
+              <h2 className="font-display text-2xl xl:text-3xl font-bold text-emerald-50 leading-snug text-balance">
+                Build your hustle across Nigeria&apos;s 36 states and beyond.
+              </h2>
+              <p className="text-sm text-emerald-100/70 leading-relaxed">
+                Step into a living economy with Nigerian banking, real estate, street hustles, NEPA power cycles, and cross-border flights to Canada.
+              </p>
+
+              <div className="border-t border-emerald-900/55 pt-5 space-y-4 text-left">
+                <div className="flex items-baseline gap-3">
+                  <span className="font-mono text-xs font-bold text-emerald-400">01</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Real States &amp; Living Cities</h3>
+                    <p className="text-xs text-emerald-100/60 mt-0.5">
+                      Start in Lagos, Abuja, Port Harcourt, or any of the 36 states with dynamic neighborhoods.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-baseline gap-3 border-t border-emerald-900/40 pt-4">
+                  <span className="font-mono text-xs font-bold text-emerald-400">02</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Cross-Border Naira &amp; CAD Economy</h3>
+                    <p className="text-xs text-emerald-100/60 mt-0.5">
+                      Run businesses, invest, buy luxury rides, and exchange currency seamlessly between accounts.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-baseline gap-3 border-t border-emerald-900/40 pt-4">
+                  <span className="font-mono text-xs font-bold text-emerald-400">03</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Seamless Cross-Device Progress</h3>
+                    <p className="text-xs text-emerald-100/60 mt-0.5">
+                      Your location, properties, and wealth stay synced wherever you sign in.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <p className="text-[11px] text-zinc-400 font-medium">
-            36 Real States · Live Economy · Persistent Cross-Device Save
-          </p>
-        </div>
 
-        {/* Auth Mode Switcher */}
-        <div className="grid grid-cols-2 p-1 bg-zinc-900/90 border border-zinc-800 rounded-2xl mb-3 shadow-xl">
-          <button
-            type="button"
-            onClick={() => {
-              setAuthMode('LOGIN');
-              setErrorMessage(null);
-              setSuccessMessage(null);
-            }}
-            className={`py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
-              authMode === 'LOGIN'
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-zinc-950 shadow-lg'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            LOG IN
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setAuthMode('SIGNUP');
-              setErrorMessage(null);
-              setSuccessMessage(null);
-            }}
-            className={`py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
-              authMode === 'SIGNUP'
-                ? 'bg-gradient-to-r from-orange-500 to-amber-400 text-zinc-950 shadow-lg'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            CREATE NEW LIFE
-          </button>
-        </div>
+          {/* Right Column: Auth Card */}
+          <div className="lg:col-span-6 w-full max-w-md mx-auto lg:ml-auto lg:mr-0">
+            {/* Auth Mode Switcher */}
+            <div className="grid grid-cols-2 p-1 bg-[#06120c] border border-emerald-900/60 rounded-xl mb-3.5 shadow-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('LOGIN');
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
+                }}
+                className={`min-h-[40px] py-2 text-xs font-bold rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                  authMode === 'LOGIN'
+                    ? 'bg-emerald-500 text-[#031209] shadow-sm'
+                    : 'text-emerald-200/70 hover:text-white'
+                }`}
+              >
+                Log In
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('SIGNUP');
+                  setErrorMessage(null);
+                  setSuccessMessage(null);
+                }}
+                className={`min-h-[40px] py-2 text-xs font-bold rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
+                  authMode === 'SIGNUP'
+                    ? 'bg-emerald-500 text-[#031209] shadow-sm'
+                    : 'text-emerald-200/70 hover:text-white'
+                }`}
+              >
+                Create Account
+              </button>
+            </div>
 
-        <div className="bg-zinc-950/95 border border-zinc-800 rounded-3xl p-5 shadow-2xl backdrop-blur-xl">
-          {/* Primary Instant Google Sign-In / Sign-Up CTA — Always visible without scrolling */}
-          <button
-            type="button"
-            disabled={isSubmitting || isProcessingRedirect}
-            onClick={handleGoogleSignIn}
-            className="w-full py-3 px-4 rounded-xl bg-white hover:bg-zinc-100 disabled:opacity-60 text-zinc-950 font-black text-xs tracking-wide shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2.5"
-          >
-            {isSubmitting || isProcessingRedirect ? (
-              <Loader2 className="w-4 h-4 animate-spin text-zinc-900" />
-            ) : (
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  fill="#4285F4"
-                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.37 24 12 24Z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
-                />
-              </svg>
-            )}
-            <span>
-              {isProcessingRedirect
-                ? 'Completing Google Sign-In...'
-                : authMode === 'SIGNUP'
-                ? 'Sign Up Instantly with Google (Verified Cloud Account)'
-                : 'Sign In with Google'}
-            </span>
-          </button>
-
-          {/* Published / Popup-Blocked Direct Fallback Strip (visible on first sight without scrolling) */}
-          <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-zinc-400">
-            {isEmbeddedIframe ? (
-              <>
-                <a
-                  href={typeof window !== 'undefined' ? window.location.href : '/'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-emerald-400 hover:text-emerald-300 font-bold underline inline-flex items-center gap-1"
-                >
-                  <span>Popup blocked when published? Open in Full Tab</span>
-                  <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-                {gisReady && (
-                  <>
-                    <span className="text-zinc-700">·</span>
-                    <button
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={handleGoogleFedCmPrompt}
-                      className="text-amber-300 hover:text-amber-200 font-bold cursor-pointer"
-                    >
-                      Try No-Popup Account Chooser
-                    </button>
-                  </>
-                )}
-              </>
-            ) : (
+            <div className="bg-[#08150f]/94 border border-emerald-800/50 rounded-2xl p-5 sm:p-6 shadow-[0_24px_65px_rgba(0,0,0,0.78)] backdrop-blur-xl">
+              {/* Primary Instant Google Sign-In / Sign-Up CTA */}
               <button
                 type="button"
                 disabled={isSubmitting || isProcessingRedirect}
-                onClick={handleGoogleRedirectSignIn}
-                className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer"
+                onClick={handleGoogleSignIn}
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-white hover:bg-emerald-50 disabled:opacity-60 text-[#05140c] font-bold text-xs sm:text-sm tracking-wide shadow-md transition-colors cursor-pointer flex items-center justify-center gap-2.5"
               >
-                Popup not opening? Sign in via Google Redirect (No Popup)
-              </button>
-            )}
-          </div>
-
-          <div className="my-3.5 flex items-center gap-3">
-            <div className="h-px flex-1 bg-zinc-800" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Or Email &amp; Password</span>
-            <div className="h-px flex-1 bg-zinc-800" />
-          </div>
-
-          {isPasswordAuthEnabled === false && !errorMessage && (
-            <div className="mb-3 p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-[11px] flex flex-col gap-1.5">
-              <div className="flex items-start justify-between gap-2">
+                {isSubmitting || isProcessingRedirect ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-[#05140c]" />
+                ) : (
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.37 24 12 24Z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+                    />
+                  </svg>
+                )}
                 <span>
-                  <strong className="text-amber-300">Tip:</strong> Email/Password login is currently off in Firebase Console, so use <strong className="text-white">Sign Up / Sign In with Google</strong> above to enter immediately.
+                  {isProcessingRedirect
+                    ? 'Completing Google Sign-In...'
+                    : authMode === 'SIGNUP'
+                    ? 'Sign Up with Google'
+                    : 'Sign In with Google'}
                 </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <a
-                  href={firebaseProvidersUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] font-bold text-amber-300 underline hover:text-amber-200 inline-flex items-center gap-1"
-                >
-                  <span>Enable Email/Password in Firebase Console</span>
-                  <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-                <span className="text-zinc-600">·</span>
-                <button
-                  type="button"
-                  disabled={checkingProviderStatus}
-                  onClick={refreshProviderStatus}
-                  className="text-[10px] font-bold text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1 cursor-pointer"
-                >
-                  <RefreshCw className={`w-2.5 h-2.5 ${checkingProviderStatus ? 'animate-spin' : ''}`} />
-                  <span>{checkingProviderStatus ? 'Checking...' : 'Re-check Status'}</span>
-                </button>
-              </div>
-            </div>
-          )}
+              </button>
 
-          {successMessage && (
-            <div className="mb-3 p-3 rounded-xl bg-emerald-950/70 border border-emerald-500 text-emerald-300 text-xs flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
-              <span>{successMessage}</span>
-            </div>
-          )}
-
-          {errorMessage && (
-            <div className="mb-3 p-3 rounded-xl bg-rose-950/70 border border-rose-500 text-rose-200 text-xs space-y-2">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
-                <span>{errorMessage}</span>
-              </div>
-              {(errorMessage.toLowerCase().includes('popup') || errorMessage.toLowerCase().includes('embedded')) && (
-                <div className="pl-6 space-y-2">
-                  <p className="text-[11px] text-amber-200">
-                    {isEmbeddedIframe
-                      ? 'Published viewer frames often block pop-up sign-in windows. Open Naija Life directly in a full browser tab (or use the no-popup chooser) to sign in with Google:'
-                      : 'Your browser blocked the pop-up window. Sign in directly using full-page Google Redirect (no pop-up required):'}
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {!isEmbeddedIframe && (
-                      <button
-                        type="button"
-                        disabled={isSubmitting}
-                        onClick={handleGoogleRedirectSignIn}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-400 text-zinc-950 font-black text-[11px] hover:bg-emerald-300 inline-flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <span>Continue via Google Redirect (No Popup)</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    )}
+              {/* Published / Popup-Blocked Direct Fallback Strip */}
+              <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-emerald-200/60">
+                {isEmbeddedIframe ? (
+                  <>
                     <a
                       href={typeof window !== 'undefined' ? window.location.href : '/'}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-3 py-1.5 rounded-lg bg-white text-zinc-950 font-black text-[11px] hover:bg-zinc-200 inline-flex items-center gap-1.5"
+                      className="text-emerald-300 hover:text-emerald-200 font-semibold underline underline-offset-2 inline-flex items-center gap-1"
                     >
-                      <span>Open Published App in Full Tab</span>
+                      <span>Popup blocked? Open in Full Tab</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
-                    <button
-                      type="button"
-                      onClick={handleCopyPublishedUrl}
-                      className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-200 font-bold text-[11px] hover:bg-zinc-800 inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>{copiedAppLink ? 'Link Copied!' : 'Copy App Link'}</span>
-                    </button>
                     {gisReady && (
-                      <button
-                        type="button"
-                        disabled={isSubmitting}
-                        onClick={handleGoogleFedCmPrompt}
-                        className="px-3 py-1.5 rounded-lg bg-amber-400 text-zinc-950 font-black text-[11px] hover:bg-amber-300 inline-flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <span>Try Account Chooser (No Popup)</span>
-                      </button>
+                      <>
+                        <span className="text-emerald-800">·</span>
+                        <button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={handleGoogleFedCmPrompt}
+                          className="text-emerald-200 hover:text-white font-semibold cursor-pointer"
+                        >
+                          Try No-Popup Chooser
+                        </button>
+                      </>
                     )}
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isSubmitting || isProcessingRedirect}
+                    onClick={handleGoogleRedirectSignIn}
+                    className="text-emerald-300 hover:text-emerald-200 font-semibold underline underline-offset-2 cursor-pointer"
+                  >
+                    Popup not opening? Sign in via Redirect
+                  </button>
+                )}
+              </div>
+
+              <div className="my-4 flex items-center gap-3">
+                <div className="h-px flex-1 bg-emerald-900/60" />
+                <span className="text-[11px] font-semibold text-emerald-200/50">Or with email</span>
+                <div className="h-px flex-1 bg-emerald-900/60" />
+              </div>
+
+              {isPasswordAuthEnabled === false && !errorMessage && (
+                <div className="mb-3.5 p-3 rounded-xl bg-amber-950/40 border border-amber-500/35 text-amber-200 text-[11px] flex flex-col gap-1.5">
+                  <div>
+                    <strong className="text-amber-300">Note:</strong> Email/Password sign-in is disabled in Firebase Console. Use <strong className="text-white">Google Sign-In</strong> above or enable it below.
                   </div>
-                </div>
-              )}
-              {isAuthDisabledError && (
-                <div className="pl-6 space-y-2">
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={handleGoogleSignIn}
-                      className="px-3 py-1.5 rounded-lg bg-white text-zinc-950 font-black text-[11px] hover:bg-zinc-200 cursor-pointer flex items-center gap-1.5"
-                    >
-                      <span>Continue with Google Now</span>
-                      <ArrowRight className="w-3 h-3" />
-                    </button>
+                  <div className="flex flex-wrap items-center gap-2">
                     <a
                       href={firebaseProvidersUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-amber-400/50 text-amber-300 font-bold text-[11px] hover:bg-zinc-800 inline-flex items-center gap-1"
+                      className="text-[11px] font-semibold text-amber-300 underline hover:text-amber-200 inline-flex items-center gap-1"
                     >
-                      <span>Enable in Firebase Console</span>
+                      <span>Open Firebase Console</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
+                    <span className="text-emerald-800">·</span>
+                    <button
+                      type="button"
+                      disabled={checkingProviderStatus}
+                      onClick={refreshProviderStatus}
+                      className="text-[11px] font-semibold text-emerald-300 hover:text-emerald-200 inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${checkingProviderStatus ? 'animate-spin' : ''}`} />
+                      <span>{checkingProviderStatus ? 'Checking...' : 'Re-check Status'}</span>
+                    </button>
                   </div>
                 </div>
               )}
-            </div>
-          )}
 
-          {authMode === 'SIGNUP' ? (
-            <form onSubmit={handleSignupSubmit} className="space-y-2.5">
-              {/* 1. Email Address */}
-              <div>
-                <label className="text-[11px] font-bold text-zinc-300 block mb-1">Email Address</label>
-                <div className="relative">
-                  <Mail className="w-3.5 h-3.5 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    value={signupEmail}
-                    onChange={(e) => setSignupEmail(e.target.value)}
-                    placeholder="citizen@example.com"
-                    required
-                    autoComplete="email"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 font-mono"
-                  />
+              {successMessage && (
+                <div className="mb-3.5 p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/50 text-emerald-200 text-xs flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+                  <span>{successMessage}</span>
                 </div>
-              </div>
+              )}
 
-              {/* 2 & 3. Username + Date of Birth side by side on wider screens */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold text-zinc-300">Username</label>
-                    <span className="text-[9px] text-zinc-400 font-mono">A-Z 0-9 _ . -</span>
+              {errorMessage && (
+                <div className="mb-3.5 p-3 rounded-xl bg-rose-950/70 border border-rose-500/60 text-rose-200 text-xs space-y-2">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                    <span>{errorMessage}</span>
                   </div>
-                  <div className="relative">
-                    <User className="w-3.5 h-3.5 text-orange-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={signupUsername}
-                      onChange={(e) => setSignupUsername(e.target.value)}
-                      placeholder="chiboy_52"
-                      required
-                      minLength={3}
-                      maxLength={24}
-                      autoComplete="username"
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-8 pr-7 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-orange-400 font-mono"
-                    />
-                    {usernameStatus.checking && (
-                      <Loader2 className="w-3.5 h-3.5 text-zinc-400 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
-                    )}
-                  </div>
-                  {usernameStatus.message && (
-                    <p
-                      className={`text-[10px] mt-1 font-medium ${
-                        usernameStatus.checking
-                          ? 'text-zinc-400'
-                          : usernameStatus.available
-                          ? 'text-emerald-400'
-                          : 'text-rose-400'
-                      }`}
-                    >
-                      {usernameStatus.message}
-                    </p>
+                  {(errorMessage.toLowerCase().includes('popup') || errorMessage.toLowerCase().includes('embedded')) && (
+                    <div className="pl-6 space-y-2">
+                      <p className="text-[11px] text-emerald-100/80">
+                        {isEmbeddedIframe
+                          ? 'Published viewer frames often block pop-up sign-in windows. Open Naija Life directly in a full browser tab (or use the no-popup chooser) to sign in with Google:'
+                          : 'Your browser blocked the pop-up window. Sign in directly using full-page Google Redirect (no pop-up required):'}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {!isEmbeddedIframe && (
+                          <button
+                            type="button"
+                            disabled={isSubmitting}
+                            onClick={handleGoogleRedirectSignIn}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-500 text-[#031209] font-bold text-[11px] hover:bg-emerald-400 inline-flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <span>Continue via Google Redirect</span>
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
+                        )}
+                        <a
+                          href={typeof window !== 'undefined' ? window.location.href : '/'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-lg bg-white text-[#05140c] font-bold text-[11px] hover:bg-emerald-50 inline-flex items-center gap-1.5"
+                        >
+                          <span>Open in Full Tab</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={handleCopyPublishedUrl}
+                          className="px-3 py-1.5 rounded-lg bg-[#0b1f15] border border-emerald-800/60 text-emerald-100 font-semibold text-[11px] hover:bg-[#102b1d] inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Copy className="w-3 h-3" />
+                          <span>{copiedAppLink ? 'Link Copied' : 'Copy Link'}</span>
+                        </button>
+                        {gisReady && (
+                          <button
+                            type="button"
+                            disabled={isSubmitting}
+                            onClick={handleGoogleFedCmPrompt}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-400 text-[#031209] font-bold text-[11px] hover:bg-emerald-300 inline-flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <span>Try No-Popup Chooser</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {isAuthDisabledError && (
+                    <div className="pl-6 space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={handleGoogleSignIn}
+                          className="px-3 py-1.5 rounded-lg bg-white text-[#05140c] font-bold text-[11px] hover:bg-emerald-50 cursor-pointer flex items-center gap-1.5"
+                        >
+                          <span>Continue with Google</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                        <a
+                          href={firebaseProvidersUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-lg bg-[#0b1f15] border border-emerald-700/60 text-emerald-300 font-semibold text-[11px] hover:bg-[#102b1d] inline-flex items-center gap-1"
+                        >
+                          <span>Enable in Firebase Console</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
                   )}
                 </div>
+              )}
 
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[11px] font-bold text-zinc-300">Date of Birth</label>
-                    <span className="text-[9px] text-zinc-500">Private</span>
-                  </div>
-                  <div className="relative">
-                    <Calendar className="w-3.5 h-3.5 text-amber-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="date"
-                      value={dateOfBirth}
-                      max={todayMaxDate}
-                      min="1900-01-01"
-                      onChange={(e) => setDateOfBirth(e.target.value)}
-                      required
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-8 pr-2.5 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* 4 & 5. Password + Confirm Password */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="text-[11px] font-bold text-zinc-300 block mb-1">Password</label>
-                  <div className="relative">
-                    <Lock className="w-3.5 h-3.5 text-teal-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showSignupPassword ? 'text' : 'password'}
-                      value={signupPassword}
-                      onChange={(e) => setSignupPassword(e.target.value)}
-                      placeholder="Min 8 chars, strong"
-                      required
-                      autoComplete="new-password"
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-8 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowSignupPassword(!showSignupPassword)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
-                      aria-label="Toggle password visibility"
-                    >
-                      {showSignupPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-bold text-zinc-300 block mb-1">Confirm Password</label>
-                  <div className="relative">
-                    <Lock className="w-3.5 h-3.5 text-teal-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showConfirmPassword ? 'text' : 'password'}
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Re-enter password"
-                      required
-                      autoComplete="new-password"
-                      className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-8 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
-                      aria-label="Toggle confirm password visibility"
-                    >
-                      {showConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {signupPassword.length > 0 && (
-                <div className="space-y-1">
-                  <div className="grid grid-cols-4 gap-1">
-                    {[1, 2, 3, 4].map((lvl) => (
-                      <div
-                        key={lvl}
-                        className={`h-1 rounded-full ${
-                          pwdStrength.score >= lvl
-                            ? pwdStrength.score >= 4
-                              ? 'bg-emerald-400'
-                              : pwdStrength.score >= 3
-                              ? 'bg-amber-400'
-                              : 'bg-rose-400'
-                            : 'bg-zinc-800'
-                        }`}
+              {authMode === 'SIGNUP' ? (
+                <form onSubmit={handleSignupSubmit} className="space-y-3">
+                  {/* 1. Email Address */}
+                  <div>
+                    <label className="text-xs font-semibold text-emerald-100 block mb-1">Email Address</label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="email"
+                        value={signupEmail}
+                        onChange={(e) => setSignupEmail(e.target.value)}
+                        placeholder="citizen@example.com"
+                        required
+                        autoComplete="email"
+                        className="w-full min-h-[42px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-emerald-200/35 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 font-mono"
                       />
-                    ))}
+                    </div>
                   </div>
-                  <p className="text-[10px] text-zinc-400">
-                    {pwdStrength.valid ? 'Strong password ready.' : pwdStrength.error}
-                  </p>
-                </div>
-              )}
 
-              {confirmPassword.length > 0 && confirmPassword !== signupPassword && (
-                <p className="text-[10px] text-rose-400">Passwords do not match.</p>
-              )}
+                  {/* 2 & 3. Username + Date of Birth */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-emerald-100">Username</label>
+                        <span className="text-[10px] text-emerald-200/45 font-mono">A-Z 0-9 _.-</span>
+                      </div>
+                      <div className="relative">
+                        <User className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={signupUsername}
+                          onChange={(e) => setSignupUsername(e.target.value)}
+                          placeholder="chiboy_52"
+                          required
+                          minLength={3}
+                          maxLength={24}
+                          autoComplete="username"
+                          className="w-full min-h-[42px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-9 pr-7 py-2 text-xs text-white placeholder-emerald-200/35 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 font-mono"
+                        />
+                        {usernameStatus.checking && (
+                          <Loader2 className="w-3.5 h-3.5 text-emerald-300 animate-spin absolute right-2.5 top-1/2 -translate-y-1/2" />
+                        )}
+                      </div>
+                      {usernameStatus.message && (
+                        <p
+                          className={`text-[11px] mt-1 font-medium ${
+                            usernameStatus.checking
+                              ? 'text-emerald-200/60'
+                              : usernameStatus.available
+                              ? 'text-emerald-400'
+                              : 'text-rose-400'
+                          }`}
+                        >
+                          {usernameStatus.message}
+                        </p>
+                      )}
+                    </div>
 
-              {/* 6. Create Account Button */}
-              <button
-                type="submit"
-                disabled={isSubmitting || (usernameStatus.available === false && !usernameStatus.checking)}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-orange-500 via-amber-400 to-orange-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-xs uppercase tracking-wider shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2 mt-1"
-              >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                <span>{isSubmitting ? 'Creating Account...' : 'Create Account & Send Verification'}</span>
-                {!isSubmitting && <ArrowRight className="w-4 h-4" />}
-              </button>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-emerald-100">Date of Birth</label>
+                        <span className="text-[10px] text-emerald-200/45">Private</span>
+                      </div>
+                      <div className="relative">
+                        <Calendar className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="date"
+                          value={dateOfBirth}
+                          max={todayMaxDate}
+                          min="1900-01-01"
+                          onChange={(e) => setDateOfBirth(e.target.value)}
+                          required
+                          className="w-full min-h-[42px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-9 pr-2.5 py-2 text-xs text-white focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30"
+                        />
+                      </div>
+                    </div>
+                  </div>
 
-              {signupEmail.trim().toLowerCase() === OWNER_EMAIL &&
-                signupUsername.trim().toLowerCase() === OWNER_USERNAME && (
-                  <p className="text-[10px] text-amber-300 text-center font-medium">
-                    Apex Syndicate Owner identity detected — privileges will activate server-side once email verification completes.
-                  </p>
-                )}
-            </form>
-          ) : (
-            <form onSubmit={handleLoginSubmit} className="space-y-3.5">
-              <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">Email Address</label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="Enter your registered email"
-                    required
-                    autoComplete="email"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400 font-mono"
-                  />
-                </div>
-              </div>
+                  {/* 4 & 5. Password + Confirm Password */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-emerald-100 block mb-1">Password</label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={showSignupPassword ? 'text' : 'password'}
+                          value={signupPassword}
+                          onChange={(e) => setSignupPassword(e.target.value)}
+                          placeholder="Min 8 chars, strong"
+                          required
+                          autoComplete="new-password"
+                          className="w-full min-h-[42px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-9 pr-9 py-2 text-xs text-white placeholder-emerald-200/35 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowSignupPassword(!showSignupPassword)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-emerald-200/60 hover:text-white cursor-pointer"
+                          aria-label="Toggle password visibility"
+                        >
+                          {showSignupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
 
-              <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1">Password</label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-teal-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type={showLoginPassword ? 'text' : 'password'}
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="Enter your password"
-                    required
-                    autoComplete="current-password"
-                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-400"
-                  />
+                    <div>
+                      <label className="text-xs font-semibold text-emerald-100 block mb-1">Confirm Password</label>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-emerald-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="Re-enter password"
+                          required
+                          autoComplete="new-password"
+                          className="w-full min-h-[42px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-9 pr-9 py-2 text-xs text-white placeholder-emerald-200/35 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-emerald-200/60 hover:text-white cursor-pointer"
+                          aria-label="Toggle confirm password visibility"
+                        >
+                          {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {signupPassword.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[1, 2, 3, 4].map((lvl) => (
+                          <div
+                            key={lvl}
+                            className={`h-1 rounded-full ${
+                              pwdStrength.score >= lvl
+                                ? pwdStrength.score >= 4
+                                  ? 'bg-emerald-400'
+                                  : pwdStrength.score >= 3
+                                  ? 'bg-amber-400'
+                                  : 'bg-rose-400'
+                                : 'bg-emerald-950'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-emerald-200/70">
+                        {pwdStrength.valid ? 'Strong password ready.' : pwdStrength.error}
+                      </p>
+                    </div>
+                  )}
+
+                  {confirmPassword.length > 0 && confirmPassword !== signupPassword && (
+                    <p className="text-[11px] text-rose-400">Passwords do not match.</p>
+                  )}
+
+                  {/* 6. Create Account Button */}
                   <button
-                    type="button"
-                    onClick={() => setShowLoginPassword(!showLoginPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white cursor-pointer"
-                    aria-label="Toggle password visibility"
+                    type="submit"
+                    disabled={isSubmitting || (usernameStatus.available === false && !usernameStatus.checking)}
+                    className="w-full min-h-[46px] py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#031209] font-extrabold text-xs tracking-wide shadow-lg shadow-emerald-950/60 transition-colors cursor-pointer flex items-center justify-center gap-2 mt-1"
                   >
-                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    <span>{isSubmitting ? 'Creating Account...' : 'Create Account & Send Verification'}</span>
+                    {!isSubmitting && <ArrowRight className="w-4 h-4" />}
                   </button>
-                </div>
-              </div>
 
-              <div className="flex items-center justify-between text-xs">
-                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                  {signupEmail.trim().toLowerCase() === OWNER_EMAIL &&
+                    signupUsername.trim().toLowerCase() === OWNER_USERNAME && (
+                      <p className="text-[11px] text-amber-300 text-center font-medium">
+                        Apex Syndicate Owner identity detected — privileges will activate server-side once email verification completes.
+                      </p>
+                    )}
+                </form>
+              ) : (
+                <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+                  <div>
+                    <label className="text-xs font-semibold text-emerald-100 block mb-1.5">Email Address</label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="email"
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        placeholder="Enter your registered email"
+                        required
+                        autoComplete="email"
+                        className="w-full min-h-[44px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-emerald-200/35 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-emerald-100 block mb-1.5">Password</label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-emerald-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type={showLoginPassword ? 'text' : 'password'}
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder="Enter your password"
+                        required
+                        autoComplete="current-password"
+                        className="w-full min-h-[44px] bg-[#040c08] border border-emerald-900/70 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-emerald-200/35 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowLoginPassword(!showLoginPassword)}
+                        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-200/60 hover:text-white cursor-pointer"
+                        aria-label="Toggle password visibility"
+                      >
+                        {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs pt-0.5">
+                    <label className="flex items-center gap-2 text-emerald-100/80 cursor-pointer">
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={rememberMe}
+                        onClick={() => setRememberMe(!rememberMe)}
+                        className={`w-4 h-4 rounded flex items-center justify-center border transition-colors cursor-pointer ${
+                          rememberMe ? 'bg-emerald-500 border-emerald-400 text-[#031209]' : 'bg-[#040c08] border-emerald-800'
+                        }`}
+                      >
+                        {rememberMe && <Check className="w-3 h-3 stroke-[3]" />}
+                      </button>
+                      <span>Remember me on this device</span>
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResetEmail(loginEmail);
+                        setErrorMessage(null);
+                        setSuccessMessage(null);
+                        setCurrentStep('FORGOT_PASSWORD');
+                      }}
+                      className="text-emerald-300 hover:text-emerald-200 font-semibold cursor-pointer"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+
                   <button
-                    type="button"
-                    role="checkbox"
-                    aria-checked={rememberMe}
-                    onClick={() => setRememberMe(!rememberMe)}
-                    className={`w-4 h-4 rounded flex items-center justify-center border transition-colors cursor-pointer ${
-                      rememberMe ? 'bg-emerald-500 border-emerald-400 text-black' : 'bg-zinc-900 border-zinc-700'
-                    }`}
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="w-full min-h-[46px] py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#031209] font-extrabold text-sm tracking-wide shadow-lg shadow-emerald-950/60 transition-colors cursor-pointer flex items-center justify-center gap-2"
                   >
-                    {rememberMe && <Check className="w-3 h-3 stroke-[3]" />}
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    <span>{isSubmitting ? 'Signing In & Loading Save...' : 'Log In & Enter Naija Life'}</span>
+                    {!isSubmitting && <ArrowRight className="w-4 h-4" />}
                   </button>
-                  <span>Remember Me on this device</span>
-                </label>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setResetEmail(loginEmail);
-                    setErrorMessage(null);
-                    setSuccessMessage(null);
-                    setCurrentStep('FORGOT_PASSWORD');
-                  }}
-                  className="text-orange-400 hover:text-orange-300 font-bold cursor-pointer"
-                >
-                  Forgot Password?
-                </button>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:brightness-110 disabled:opacity-60 text-zinc-950 font-black text-sm tracking-wide shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                <span>{isSubmitting ? 'Signing In & Loading Cloud Save...' : 'Log In & Enter Naija Life'}</span>
-                {!isSubmitting && <ArrowRight className="w-4 h-4" />}
-              </button>
-            </form>
-          )}
+                </form>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
