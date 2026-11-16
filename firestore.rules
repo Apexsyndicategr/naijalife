@@ -121,6 +121,7 @@ service cloud.firestore {
         && (data.socialClass == 'lapo' || data.socialClass == 'mapo' || data.socialClass == 'nepo')
         && data.spawnStateId is string && data.spawnStateId.size() >= 2 && data.spawnStateId.size() <= 32
         && (!('lastLocationStateId' in data) || (data.lastLocationStateId is string && data.lastLocationStateId.size() <= 32))
+        && (!('currentCountry' in data) || (data.currentCountry is string && data.currentCountry.size() <= 32))
         && data.avatar is map
         && (!('inventory' in data) || (data.inventory is list && data.inventory.size() <= 200))
         && (!('completedCourses' in data) || (data.completedCourses is list && data.completedCourses.size() <= 200))
@@ -166,6 +167,28 @@ service cloud.firestore {
         && (!('targetUid' in data) || (data.targetUid is string && data.targetUid.size() <= 128))
         && (!('targetUsername' in data) || (data.targetUsername is string && data.targetUsername.size() <= 48))
         && data.details is string && data.details.size() <= 500
+        && data.createdAt is timestamp;
+    }
+
+    function isValidGlobalBroadcast(data) {
+      return data.keys().hasAll(['trackId', 'title', 'mimeType', 'sizeBytes', 'totalChunks', 'uploadedBy', 'active', 'updatedAt'])
+        && data.keys().hasOnly(['trackId', 'title', 'mimeType', 'sizeBytes', 'totalChunks', 'uploadedBy', 'active', 'updatedAt'])
+        && data.trackId is string && data.trackId.size() <= 64
+        && data.title is string && data.title.size() <= 160
+        && data.mimeType is string && data.mimeType.size() <= 64
+        && data.sizeBytes is number && data.sizeBytes >= 0 && data.sizeBytes <= 26214400
+        && data.totalChunks is number && data.totalChunks >= 0 && data.totalChunks <= 100
+        && data.uploadedBy is string && data.uploadedBy.size() <= 32
+        && data.active is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBroadcastChunk(data) {
+      return data.keys().hasAll(['trackId', 'chunkIndex', 'chunkData', 'createdAt'])
+        && data.keys().hasOnly(['trackId', 'chunkIndex', 'chunkData', 'createdAt'])
+        && data.trackId is string && data.trackId.size() >= 1 && data.trackId.size() <= 64
+        && data.chunkIndex is number && data.chunkIndex >= 0 && data.chunkIndex < 100
+        && data.chunkData is string && data.chunkData.size() >= 1 && data.chunkData.size() <= 750000
         && data.createdAt is timestamp;
     }
 
@@ -375,6 +398,29 @@ service cloud.firestore {
         && isValidOwnerAuditLog(incoming(), logId)
         && incoming().createdAt == request.time;
       allow update, delete: if false;
+    }
+
+    // 12. /global_state/{docId} — Server-wide Radio Broadcast Metadata
+    match /global_state/{docId} {
+      allow get: if isSignedIn() && isValidId(docId) && docId == 'broadcast';
+      allow list: if false;
+      allow create, update: if isOwner()
+        && isValidId(docId)
+        && docId == 'broadcast'
+        && isValidGlobalBroadcast(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if isOwner() && isValidId(docId) && docId == 'broadcast';
+    }
+
+    // 13. /broadcast_chunks/{chunkId} — Chunked Audio Binary Slices (<750KB per doc)
+    match /broadcast_chunks/{chunkId} {
+      allow get: if isSignedIn() && isValidId(chunkId);
+      allow list: if isOwner();
+      allow create, update: if isOwner()
+        && isValidId(chunkId)
+        && isValidBroadcastChunk(incoming())
+        && incoming().createdAt == request.time;
+      allow delete: if isOwner() && isValidId(chunkId);
     }
   }
 }

@@ -1690,3 +1690,295 @@ export async function fetchOwnerAuditLogs(): Promise<OwnerAuditLogEntry[]> {
   });
   return logs;
 }
+
+// =========================================================================
+// CROSS-SERVER OWNER MP3 BROADCAST UPLOAD, SYNC & STREAM RECONSTRUCTION
+// =========================================================================
+
+export interface GlobalBroadcastMeta {
+  trackId: string;
+  title: string;
+  mimeType: string;
+  sizeBytes: number;
+  totalChunks: number;
+  uploadedBy: string;
+  active: boolean;
+}
+
+const BROADCAST_CHUNK_BYTES = 450 * 1024; // ~600KB base64 per chunk (<1MiB Firestore & gateway safe)
+const MAX_BROADCAST_FILE_BYTES = 25 * 1024 * 1024; // 25MB max
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const sliceSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += sliceSize) {
+    const sub = bytes.subarray(i, i + sliceSize);
+    binary += String.fromCharCode(...sub);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+export async function uploadOwnerBroadcastTrack(
+  file: File,
+  onProgress?: (pct: number) => void
+): Promise<{
+  trackId: string;
+  title: string;
+  sizeBytes: number;
+  localBlobUrl: string;
+  serverStreamUrl?: string;
+}> {
+  const user = auth.currentUser;
+  if (!user || !user.emailVerified || String(user.email || '').trim().toLowerCase() !== OWNER_EMAIL) {
+    throw new Error('Only the verified Apex Syndicate Owner (kchiboy50@gmail.com) can broadcast music.');
+  }
+
+  if (file.size <= 0) {
+    throw new Error('The selected MP3 file is empty.');
+  }
+  if (file.size > MAX_BROADCAST_FILE_BYTES) {
+    throw new Error('MP3 file must be 25 MB or smaller for fast cross-server streaming.');
+  }
+
+  onProgress?.(5);
+  const idToken = await user.getIdToken(true);
+  const arrayBuf = await file.arrayBuffer();
+  const fullBytes = new Uint8Array(arrayBuf);
+  const totalChunks = Math.max(1, Math.ceil(fullBytes.length / BROADCAST_CHUNK_BYTES));
+  const trackId = `trk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const cleanTitle = file.name.replace(/\.mp3$/i, '').trim().slice(0, 140) || 'Owner Custom Soundtrack';
+  const mimeType = file.type && file.type.includes('audio') ? file.type : 'audio/mpeg';
+
+  const base64Chunks: string[] = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * BROADCAST_CHUNK_BYTES;
+    const end = Math.min(start + BROADCAST_CHUNK_BYTES, fullBytes.length);
+    base64Chunks.push(uint8ToBase64(fullBytes.subarray(start, end)));
+  }
+  onProgress?.(15);
+
+  // Check/clean old chunks in Firestore before uploading new track
+  let oldChunkDocs: string[] = [];
+  try {
+    const existingChunksSnap = await getDocs(collection(db, 'broadcast_chunks'));
+    existingChunksSnap.forEach((d) => {
+      oldChunkDocs.push(d.id);
+    });
+  } catch {}
+
+  // Try Express chunked upload in parallel with Firestore chunk writes
+  let expressInitOk = false;
+  try {
+    const initRes = await fetch('/api/broadcast/music/init', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        trackId,
+        title: cleanTitle,
+        mimeType,
+        sizeBytes: fullBytes.length,
+        totalChunks,
+      }),
+    });
+    expressInitOk = initRes.ok;
+  } catch {}
+
+  // Upload chunks in small batches of 3 so neither network nor browser stalls
+  let uploadedCount = 0;
+  const BATCH_SIZE = 3;
+  for (let startIdx = 0; startIdx < totalChunks; startIdx += BATCH_SIZE) {
+    const batchIndices: number[] = [];
+    for (let j = startIdx; j < Math.min(startIdx + BATCH_SIZE, totalChunks); j++) {
+      batchIndices.push(j);
+    }
+
+    await Promise.all(
+      batchIndices.map(async (idx) => {
+        const chunkData = base64Chunks[idx];
+        const chunkDocId = `${trackId}_${idx}`;
+
+        // 1. Write chunk to Firestore /broadcast_chunks (ensures cross-device & multi-instance availability)
+        await setDoc(doc(db, 'broadcast_chunks', chunkDocId), {
+          trackId,
+          chunkIndex: idx,
+          chunkData,
+          createdAt: serverTimestamp(),
+        });
+
+        // 2. Also send chunk to Express server if init succeeded
+        if (expressInitOk) {
+          try {
+            const chunkRes = await fetch('/api/broadcast/music/chunk', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`,
+              },
+              body: JSON.stringify({
+                trackId,
+                index: idx,
+                chunkBase64: chunkData,
+              }),
+            });
+            if (!chunkRes.ok) expressInitOk = false;
+          } catch {
+            expressInitOk = false;
+          }
+        }
+
+        uploadedCount++;
+        const pct = 15 + Math.round((uploadedCount / totalChunks) * 75);
+        onProgress?.(Math.min(90, pct));
+      })
+    );
+  }
+
+  let serverStreamUrl: string | undefined;
+  if (expressInitOk) {
+    try {
+      const completeRes = await fetch('/api/broadcast/music/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ trackId }),
+      });
+      if (completeRes.ok) {
+        const compJson = await completeRes.json().catch(() => null);
+        if (compJson?.streamUrl) serverStreamUrl = compJson.streamUrl;
+      }
+    } catch {}
+  }
+
+  onProgress?.(94);
+
+  // Atomically publish active broadcast metadata to /global_state/broadcast (triggers real-time onSnapshot on ALL devices)
+  await setDoc(doc(db, 'global_state', 'broadcast'), {
+    trackId,
+    title: cleanTitle,
+    mimeType,
+    sizeBytes: fullBytes.length,
+    totalChunks,
+    uploadedBy: OWNER_USERNAME,
+    active: true,
+    updatedAt: serverTimestamp(),
+  });
+
+  // Delete previous track's chunks cleanly in background
+  if (oldChunkDocs.length > 0) {
+    Promise.all(
+      oldChunkDocs
+        .filter((id) => !id.startsWith(`${trackId}_`))
+        .map((id) => deleteDoc(doc(db, 'broadcast_chunks', id)).catch(() => {}))
+    ).catch(() => {});
+  }
+
+  const logId = `audit_audio_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  await setDoc(doc(db, 'owner_audit_logs', logId), {
+    id: logId,
+    actorUid: user.uid,
+    actorEmail: OWNER_EMAIL,
+    action: 'BROADCAST_AUDIO',
+    details: `Uploaded server radio broadcast "${cleanTitle}" (${(fullBytes.length / (1024 * 1024)).toFixed(2)} MB, ${totalChunks} chunks).`,
+    createdAt: serverTimestamp(),
+  }).catch(() => {});
+
+  onProgress?.(100);
+  const localBlobUrl = URL.createObjectURL(new Blob([fullBytes], { type: mimeType }));
+
+  return {
+    trackId,
+    title: cleanTitle,
+    sizeBytes: fullBytes.length,
+    localBlobUrl,
+    serverStreamUrl,
+  };
+}
+
+export async function fetchGlobalBroadcastBlobUrl(meta: GlobalBroadcastMeta): Promise<string | null> {
+  if (!meta.active || !meta.trackId || meta.totalChunks <= 0) return null;
+
+  // Prefer Express stream if this server instance already holds the exact trackId
+  try {
+    const res = await fetch('/api/broadcast/music', { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data?.active && data?.trackId === meta.trackId && data?.streamUrl) {
+        return String(data.streamUrl);
+      }
+    }
+  } catch {}
+
+  // Otherwise download & reassemble all chunks directly from Firestore (works across ALL devices/instances)
+  const chunkPromises: Promise<Uint8Array | null>[] = [];
+  for (let i = 0; i < meta.totalChunks; i++) {
+    chunkPromises.push(
+      getDoc(doc(db, 'broadcast_chunks', `${meta.trackId}_${i}`)).then((snap) => {
+        if (!snap.exists()) return null;
+        const raw = String(snap.data()?.chunkData || '');
+        if (!raw) return null;
+        return base64ToUint8(raw);
+      })
+    );
+  }
+
+  const decodedParts = await Promise.all(chunkPromises);
+  if (decodedParts.some((p) => p === null)) {
+    return null;
+  }
+
+  const validParts = decodedParts as Uint8Array[];
+  const blobParts: BlobPart[] = validParts.map((u) => {
+    const copy = new Uint8Array(u.byteLength);
+    copy.set(u);
+    return copy.buffer;
+  });
+  const blob = new Blob(blobParts, { type: meta.mimeType || 'audio/mpeg' });
+  return URL.createObjectURL(blob);
+}
+
+export async function removeOwnerBroadcastTrack(): Promise<void> {
+  const user = auth.currentUser;
+  if (!user || !user.emailVerified || String(user.email || '').trim().toLowerCase() !== OWNER_EMAIL) {
+    throw new Error('Unauthorized: Only the verified game owner can remove broadcast.');
+  }
+
+  const idToken = await user.getIdToken(true);
+  await fetch('/api/broadcast/music', {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+    },
+  }).catch(() => {});
+
+  await setDoc(doc(db, 'global_state', 'broadcast'), {
+    trackId: '',
+    title: '',
+    mimeType: 'audio/mpeg',
+    sizeBytes: 0,
+    totalChunks: 0,
+    uploadedBy: OWNER_USERNAME,
+    active: false,
+    updatedAt: serverTimestamp(),
+  });
+
+  try {
+    const chunksSnap = await getDocs(collection(db, 'broadcast_chunks'));
+    await Promise.all(chunksSnap.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
+  } catch {}
+}
+

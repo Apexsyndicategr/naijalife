@@ -978,17 +978,26 @@ app.post('/api/bank/transfer', (req, res) => {
 // OWNER-ONLY BACKGROUND MUSIC BROADCAST SYSTEM (CHIBOY_52 ONLY)
 // =========================================================================
 interface BroadcastTrack {
+  trackId: string;
   title: string;
-  audioData: string; // base64 mp3 data URL
+  mimeType?: string;
+  sizeBytes?: number;
+  audioData: string; // stream URL
   uploadedBy: string;
   uploadedAt: number;
 }
+
+const AUDIO_STREAM_FILE = path.resolve(DB_DIR, 'broadcast_audio.mp3');
 
 function loadBroadcastTrack(): BroadcastTrack | null {
   try {
     if (fs.existsSync(BROADCAST_FILE)) {
       const data = fs.readFileSync(BROADCAST_FILE, 'utf-8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (parsed && !parsed.trackId) {
+        parsed.trackId = `trk_${parsed.uploadedAt || Date.now()}`;
+      }
+      return parsed;
     }
   } catch (err) {
     console.error('Error loading broadcast track:', err);
@@ -1011,7 +1020,18 @@ function saveBroadcastTrack(track: BroadcastTrack | null) {
   }
 }
 
-const AUDIO_STREAM_FILE = path.resolve(DB_DIR, 'broadcast_audio.mp3');
+interface PendingChunkUpload {
+  trackId: string;
+  title: string;
+  mimeType: string;
+  sizeBytes: number;
+  totalChunks: number;
+  uploadedBy: string;
+  chunks: Map<number, string>;
+  createdAt: number;
+}
+
+const pendingBroadcastUploads = new Map<string, PendingChunkUpload>();
 
 app.get('/api/broadcast/audio.mp3', (req, res) => {
   if (!fs.existsSync(AUDIO_STREAM_FILE)) {
@@ -1020,28 +1040,35 @@ app.get('/api/broadcast/audio.mp3', (req, res) => {
   try {
     const stat = fs.statSync(AUDIO_STREAM_FILE);
     const fileSize = stat.size;
+    if (fileSize === 0) {
+      return res.status(404).end();
+    }
     const range = req.headers.range;
+    const contentType = currentBroadcastTrack?.mimeType || 'audio/mpeg';
 
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunkSize = (end - start) + 1;
-      const fileStream = fs.createReadStream(AUDIO_STREAM_FILE, { start, end });
+      const safeEnd = Math.min(end, fileSize - 1);
+      const chunkSize = safeEnd - start + 1;
+      const fileStream = fs.createReadStream(AUDIO_STREAM_FILE, { start, end: safeEnd });
       res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Content-Range': `bytes ${start}-${safeEnd}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
-        'Content-Type': 'audio/mpeg',
-        'Cache-Control': 'no-cache',
+        'Content-Type': contentType,
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
       });
       return fileStream.pipe(res);
     } else {
       res.writeHead(200, {
         'Content-Length': fileSize,
-        'Content-Type': 'audio/mpeg',
+        'Content-Type': contentType,
         'Accept-Ranges': 'bytes',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
       });
       return fs.createReadStream(AUDIO_STREAM_FILE).pipe(res);
     }
@@ -1054,14 +1081,119 @@ app.get('/api/broadcast/audio.mp3', (req, res) => {
 let currentBroadcastTrack: BroadcastTrack | null = loadBroadcastTrack();
 
 app.get('/api/broadcast/music', (req, res) => {
-  const hasAudioFile = fs.existsSync(AUDIO_STREAM_FILE);
+  const hasAudioFile = fs.existsSync(AUDIO_STREAM_FILE) && fs.statSync(AUDIO_STREAM_FILE).size > 0;
   const ts = currentBroadcastTrack?.uploadedAt || 1;
+  const streamUrl = hasAudioFile ? `/api/broadcast/audio.mp3?t=${ts}` : null;
   res.json({
-    active: !!currentBroadcastTrack || hasAudioFile,
-    audioData: currentBroadcastTrack?.audioData || (hasAudioFile ? `/api/broadcast/audio.mp3?t=${ts}` : null),
-    streamUrl: hasAudioFile ? `/api/broadcast/audio.mp3?t=${ts}` : null,
-    track: currentBroadcastTrack,
+    active: !!currentBroadcastTrack && hasAudioFile,
+    trackId: currentBroadcastTrack?.trackId || (hasAudioFile ? `trk_${ts}` : null),
+    title: currentBroadcastTrack?.title || 'Owner Custom Soundtrack',
+    audioData: streamUrl || currentBroadcastTrack?.audioData || null,
+    streamUrl,
+    track: hasAudioFile ? currentBroadcastTrack : null,
   });
+});
+
+app.post('/api/broadcast/music/init', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({ error: ownerCheck.error || 'Unauthorized: Only the verified game owner can broadcast music.' });
+  }
+  const { trackId, title, mimeType, sizeBytes, totalChunks } = req.body || {};
+  const cleanTrackId = String(trackId || `trk_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '');
+  const cleanTotal = Number(totalChunks || 0);
+  if (!cleanTrackId || cleanTotal < 1 || cleanTotal > 120) {
+    return res.status(400).json({ error: 'Invalid chunked broadcast upload metadata.' });
+  }
+  // Clean stale pending uploads (>10 mins old)
+  const now = Date.now();
+  for (const [k, v] of pendingBroadcastUploads.entries()) {
+    if (now - v.createdAt > 10 * 60 * 1000) pendingBroadcastUploads.delete(k);
+  }
+  pendingBroadcastUploads.set(cleanTrackId, {
+    trackId: cleanTrackId,
+    title: String(title || 'Owner Custom Soundtrack').trim().slice(0, 160),
+    mimeType: String(mimeType || 'audio/mpeg').trim().slice(0, 64),
+    sizeBytes: Number(sizeBytes || 0),
+    totalChunks: cleanTotal,
+    uploadedBy: ownerCheck.usernameLower || 'chiboy_52',
+    chunks: new Map(),
+    createdAt: now,
+  });
+  return res.json({ success: true, trackId: cleanTrackId });
+});
+
+app.post('/api/broadcast/music/chunk', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({ error: ownerCheck.error || 'Unauthorized' });
+  }
+  const { trackId, index, chunkBase64 } = req.body || {};
+  const cleanTrackId = String(trackId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const session = pendingBroadcastUploads.get(cleanTrackId);
+  if (!session) {
+    return res.status(404).json({ error: 'Upload session not found or expired. Please retry upload.' });
+  }
+  const idx = Number(index);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= session.totalChunks || typeof chunkBase64 !== 'string' || !chunkBase64) {
+    return res.status(400).json({ error: 'Invalid audio chunk.' });
+  }
+  session.chunks.set(idx, chunkBase64);
+  return res.json({ success: true, received: session.chunks.size, totalChunks: session.totalChunks });
+});
+
+app.post('/api/broadcast/music/complete', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) {
+    return res.status(ownerCheck.status || 403).json({ error: ownerCheck.error || 'Unauthorized' });
+  }
+  const { trackId } = req.body || {};
+  const cleanTrackId = String(trackId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const session = pendingBroadcastUploads.get(cleanTrackId);
+  if (!session) {
+    return res.status(404).json({ error: 'Upload session not found.' });
+  }
+  if (session.chunks.size !== session.totalChunks) {
+    return res.status(400).json({ error: `Missing audio chunks (${session.chunks.size}/${session.totalChunks}).` });
+  }
+
+  try {
+    if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+    const buffers: Buffer[] = [];
+    for (let i = 0; i < session.totalChunks; i++) {
+      const b64 = session.chunks.get(i) || '';
+      buffers.push(Buffer.from(b64, 'base64'));
+    }
+    const fullBuffer = Buffer.concat(buffers);
+    fs.writeFileSync(AUDIO_STREAM_FILE, fullBuffer);
+    pendingBroadcastUploads.delete(cleanTrackId);
+
+    const uploadTs = Date.now();
+    const streamUrl = `/api/broadcast/audio.mp3?t=${uploadTs}`;
+    currentBroadcastTrack = {
+      trackId: cleanTrackId,
+      title: session.title,
+      mimeType: session.mimeType,
+      sizeBytes: fullBuffer.length,
+      audioData: streamUrl,
+      uploadedBy: session.uploadedBy,
+      uploadedAt: uploadTs,
+    };
+    saveBroadcastTrack(currentBroadcastTrack);
+    globalRefreshCounter++;
+
+    return res.json({
+      success: true,
+      active: true,
+      trackId: cleanTrackId,
+      streamUrl,
+      track: currentBroadcastTrack,
+    });
+  } catch (err) {
+    console.error('Error finalizing chunked audio broadcast:', err);
+    pendingBroadcastUploads.delete(cleanTrackId);
+    return res.status(500).json({ error: 'Server failed to assemble uploaded audio file.' });
+  }
 });
 
 app.post('/api/broadcast/music', async (req, res) => {
@@ -1069,27 +1201,33 @@ app.post('/api/broadcast/music', async (req, res) => {
   if (!ownerCheck.ok) {
     return res.status(ownerCheck.status || 403).json({ error: ownerCheck.error || 'Unauthorized: Only the verified game owner can broadcast music.' });
   }
-  const { title, audioData } = req.body;
+  const { title, audioData, trackId } = req.body || {};
   if (!audioData || typeof audioData !== 'string') {
     return res.status(400).json({ error: 'Audio data is required' });
   }
 
   const uploadTs = Date.now();
+  const cleanTrackId = String(trackId || `trk_${uploadTs}`).replace(/[^a-zA-Z0-9_-]/g, '');
+  let savedBytes = 0;
   try {
     if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
     const base64Index = audioData.indexOf('base64,');
-    if (base64Index !== -1) {
-      const rawBase64 = audioData.slice(base64Index + 7);
-      const buffer = Buffer.from(rawBase64, 'base64');
-      fs.writeFileSync(AUDIO_STREAM_FILE, buffer);
-    }
+    const rawBase64 = base64Index !== -1 ? audioData.slice(base64Index + 7) : audioData;
+    const buffer = Buffer.from(rawBase64, 'base64');
+    savedBytes = buffer.length;
+    fs.writeFileSync(AUDIO_STREAM_FILE, buffer);
   } catch (err) {
     console.error('Error saving audio stream file:', err);
+    return res.status(500).json({ error: 'Failed to save audio stream file on server.' });
   }
 
+  const streamUrl = `/api/broadcast/audio.mp3?t=${uploadTs}`;
   currentBroadcastTrack = {
+    trackId: cleanTrackId,
     title: String(title || 'Owner Custom Soundtrack').trim(),
-    audioData: `/api/broadcast/audio.mp3?t=${uploadTs}`,
+    mimeType: 'audio/mpeg',
+    sizeBytes: savedBytes,
+    audioData: streamUrl,
     uploadedBy: ownerCheck.usernameLower || 'chiboy_52',
     uploadedAt: uploadTs,
   };
@@ -1099,7 +1237,8 @@ app.post('/api/broadcast/music', async (req, res) => {
   return res.json({
     success: true,
     active: true,
-    streamUrl: `/api/broadcast/audio.mp3?t=${uploadTs}`,
+    trackId: cleanTrackId,
+    streamUrl,
     track: currentBroadcastTrack,
   });
 });

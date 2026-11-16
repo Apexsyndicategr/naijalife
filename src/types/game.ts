@@ -88,7 +88,7 @@ export interface UserProfile {
   cashEUR?: number;
   bankCAD?: number;
   savingsCAD?: number;
-  currentCountry?: 'nigeria' | 'canada';
+  currentCountry?: 'nigeria' | 'canada' | 'uk' | 'usa' | 'germany' | 'uae' | 'ghana' | string;
   ownedDocuments?: UserDocument[];
   energy: number;
   hunger: number;

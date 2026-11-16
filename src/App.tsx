@@ -82,16 +82,19 @@ import {
 } from './components/DeviceOptimizationLoader';
 import { ServerSyncLoader } from './components/ServerSyncLoader';
 import { auth, db } from './firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { isStrictOwnerIdentity } from './utils/authValidation';
 import {
   CloudGameSaveDoc,
+  fetchGlobalBroadcastBlobUrl,
+  GlobalBroadcastMeta,
   loadAuthenticatedCitizenSession,
   logoutFirebaseUser,
   subscribeToAuthState,
   syncGameSaveToCloud,
   syncProfileToCloud,
 } from './services/firebaseAccountService';
+import { MapReworkAnnouncementModal } from './components/MapReworkAnnouncementModal';
 
 /* =========================================================================
    1. RANDOM NIGERIAN SPAWN ENGINE: ALL 36 STATES + FCT
@@ -1259,6 +1262,27 @@ function enforceOwnerFinances(profile: UserProfile): UserProfile {
   };
 }
 
+function resolveFullStateData(stateId: string | undefined | null, fallbackState?: any): any {
+  const cleanId = String(stateId || '').toLowerCase().trim();
+  if (cleanId === 'canada') {
+    return CANADA_STATE_DATA;
+  }
+  const fullState =
+    NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === cleanId) ||
+    NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === 'lagos') ||
+    NIGERIA_36_STATES_ALPHABETICAL[0];
+  const legacyMatch =
+    ALL_36_NIGERIAN_STATES.find((s) => s.id === cleanId) ||
+    fallbackState ||
+    ALL_36_NIGERIAN_STATES[0];
+  return {
+    ...legacyMatch,
+    ...fullState,
+    id: fullState?.id || cleanId || 'lagos',
+    locations: fullState?.locations || [],
+  };
+}
+
 export default function App() {
   // Navigation Tabs: Map & Travel, Home, Careers, Immigration, Forex, Airport
   const [activeTab, setActiveTab] = useState<'map' | 'home' | 'career' | 'immigration' | 'forex' | 'airport'>('map');
@@ -1272,6 +1296,8 @@ export default function App() {
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [pendingGoogleCompletionEmail, setPendingGoogleCompletionEmail] = useState<string | null>(null);
   const [suspendedNoticeReason, setSuspendedNoticeReason] = useState<string | null>(null);
+  const [showMapReworkModal, setShowMapReworkModal] = useState<boolean>(false);
+  const shownMapReworkForUidRef = useRef<string | null>(null);
 
   // Device hardware profile & optimization state (unskippable authentic scan before login)
   const [deviceOptimizationProfile, setDeviceOptimizationProfile] = useState<DeviceOptimizationProfile | null>(null);
@@ -1330,9 +1356,72 @@ export default function App() {
   // Owner Broadcast Radio Player (Synchronized across all servers & players)
   const broadcastAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentAudioSrcRef = useRef<string>('');
+  const currentBroadcastTrackIdRef = useRef<string>('');
+  const broadcastObjectUrlRef = useRef<string>('');
   const lastGlobalCounterRef = useRef<number>(1);
   const [isMusicMuted, setIsMusicMuted] = useState<boolean>(false);
   const [isBroadcastPlaying, setIsBroadcastPlaying] = useState<boolean>(false);
+  const [activeBroadcastTitle, setActiveBroadcastTitle] = useState<string>('');
+  const [needsAudioUnlock, setNeedsAudioUnlock] = useState<boolean>(false);
+
+  const applyBroadcastSource = useCallback(
+    (srcUrl: string, trackId: string, title?: string, isBlobUrl = false) => {
+      const audio = broadcastAudioRef.current;
+      if (!audio || !srcUrl) return;
+
+      if (broadcastObjectUrlRef.current && broadcastObjectUrlRef.current !== srcUrl) {
+        try {
+          URL.revokeObjectURL(broadcastObjectUrlRef.current);
+        } catch {}
+        broadcastObjectUrlRef.current = '';
+      }
+      if (isBlobUrl) {
+        broadcastObjectUrlRef.current = srcUrl;
+      }
+
+      if (currentAudioSrcRef.current !== srcUrl || currentBroadcastTrackIdRef.current !== trackId) {
+        currentAudioSrcRef.current = srcUrl;
+        currentBroadcastTrackIdRef.current = trackId;
+        if (title) setActiveBroadcastTitle(title);
+        audio.src = srcUrl;
+        audio.loop = true;
+        audio.load();
+      }
+
+      if (!isMusicMuted) {
+        audio
+          .play()
+          .then(() => {
+            setIsBroadcastPlaying(true);
+            setNeedsAudioUnlock(false);
+          })
+          .catch(() => {
+            setNeedsAudioUnlock(true);
+          });
+      }
+    },
+    [isMusicMuted]
+  );
+
+  const stopBroadcastPlayback = useCallback(() => {
+    const audio = broadcastAudioRef.current;
+    currentAudioSrcRef.current = '';
+    currentBroadcastTrackIdRef.current = '';
+    setActiveBroadcastTitle('');
+    setNeedsAudioUnlock(false);
+    setIsBroadcastPlaying(false);
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+    if (broadcastObjectUrlRef.current) {
+      try {
+        URL.revokeObjectURL(broadcastObjectUrlRef.current);
+      } catch {}
+      broadcastObjectUrlRef.current = '';
+    }
+  }, []);
 
   useEffect(() => {
     const audio = broadcastAudioRef.current;
@@ -1348,8 +1437,7 @@ export default function App() {
         }
       };
       audio.onerror = () => {
-        // Stream glitch or network reconnect: reload audio and resume
-        if (!isMusicMuted && currentAudioSrcRef.current) {
+        if (!isMusicMuted && currentAudioSrcRef.current && !currentAudioSrcRef.current.startsWith('blob:')) {
           setTimeout(() => {
             if (audio && currentAudioSrcRef.current && !isMusicMuted) {
               audio.src = currentAudioSrcRef.current;
@@ -1362,12 +1450,18 @@ export default function App() {
     }
   }, [isMusicMuted]);
 
-  // Keep audio playing indefinitely on user interaction if browser tried to suspend it
+  // Keep audio playing indefinitely on user interaction if browser suspended autoplay
   useEffect(() => {
     const resumeAudioIfIdle = () => {
       const audio = broadcastAudioRef.current;
       if (audio && currentAudioSrcRef.current && !isMusicMuted && audio.paused) {
-        audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
+        audio
+          .play()
+          .then(() => {
+            setIsBroadcastPlaying(true);
+            setNeedsAudioUnlock(false);
+          })
+          .catch(() => {});
       }
     };
     window.addEventListener('click', resumeAudioIfIdle, { passive: true });
@@ -1380,45 +1474,113 @@ export default function App() {
     };
   }, [isMusicMuted]);
 
+  // Immediate local event listener when Owner uploads or removes a track on this device
+  useEffect(() => {
+    const handleLocalBroadcastEvent = (evt: Event) => {
+      const customEvt = evt as CustomEvent<{
+        active: boolean;
+        trackId?: string;
+        title?: string;
+        audioUrl?: string;
+        localBlobUrl?: string;
+      }>;
+      const detail = customEvt.detail;
+      if (!detail) return;
+      if (!detail.active) {
+        stopBroadcastPlayback();
+      } else if (detail.localBlobUrl || detail.audioUrl) {
+        const chosenUrl = detail.localBlobUrl || detail.audioUrl || '';
+        applyBroadcastSource(
+          chosenUrl,
+          detail.trackId || `trk_${Date.now()}`,
+          detail.title || 'Owner Custom Soundtrack',
+          chosenUrl.startsWith('blob:')
+        );
+      }
+    };
+    window.addEventListener('naija-broadcast-updated', handleLocalBroadcastEvent);
+    return () => window.removeEventListener('naija-broadcast-updated', handleLocalBroadcastEvent);
+  }, [applyBroadcastSource, stopBroadcastPlayback]);
+
+  // Real-time Firestore cross-server radio listener (plays instantly across ALL devices)
+  useEffect(() => {
+    if (!currentUser || !auth.currentUser) return;
+    let isMounted = true;
+    const unsubBroadcast = onSnapshot(
+      doc(db, 'global_state', 'broadcast'),
+      async (snap) => {
+        if (!isMounted) return;
+        if (!snap.exists()) {
+          // Check Express server fallback if Firestore doc hasn't been created yet
+          try {
+            const res = await fetch('/api/broadcast/music', { cache: 'no-store' });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.active && (data.streamUrl || data.audioData)) {
+                applyBroadcastSource(
+                  data.streamUrl || data.audioData,
+                  data.trackId || 'server_track',
+                  data.title || 'Owner Custom Soundtrack',
+                  false
+                );
+              }
+            }
+          } catch {}
+          return;
+        }
+        const meta = snap.data() as GlobalBroadcastMeta;
+        if (!meta.active || !meta.trackId) {
+          stopBroadcastPlayback();
+          return;
+        }
+        if (currentBroadcastTrackIdRef.current === meta.trackId && currentAudioSrcRef.current) {
+          return;
+        }
+        try {
+          const resolvedUrl = await fetchGlobalBroadcastBlobUrl(meta);
+          if (!isMounted) return;
+          if (resolvedUrl) {
+            applyBroadcastSource(resolvedUrl, meta.trackId, meta.title, resolvedUrl.startsWith('blob:'));
+          }
+        } catch {}
+      },
+      () => {}
+    );
+    return () => {
+      isMounted = false;
+      unsubBroadcast();
+    };
+  }, [currentUser?.uid, applyBroadcastSource, stopBroadcastPlayback]);
+
   useEffect(() => {
     const syncServerMusicAndGlobalState = async () => {
       try {
-        // 1. Sync broadcast soundtrack (Server first, localStorage fallback)
-        let activeAudioData = '';
+        // 1. Poll Express server broadcast as secondary fallback when Firestore hasn't pushed yet
         try {
-          const res = await fetch('/api/broadcast/music');
+          const res = await fetch('/api/broadcast/music', { cache: 'no-store' });
           if (res.ok) {
             const data = await res.json();
-            if (data.active) {
-              // Prefer audioData (self-contained data URL immune to socket timeout), with streamUrl fallback
-              activeAudioData = data.audioData || data.streamUrl || '';
+            if (data.active && (data.streamUrl || data.audioData)) {
+              const srvTrackId = data.trackId || 'server_track';
+              if (currentBroadcastTrackIdRef.current !== srvTrackId || !currentAudioSrcRef.current) {
+                applyBroadcastSource(
+                  data.streamUrl || data.audioData,
+                  srvTrackId,
+                  data.title || 'Owner Custom Soundtrack',
+                  false
+                );
+              } else {
+                const audio = broadcastAudioRef.current;
+                if (audio && !isMusicMuted && audio.paused) {
+                  audio.play().then(() => {
+                    setIsBroadcastPlaying(true);
+                    setNeedsAudioUnlock(false);
+                  }).catch(() => {});
+                }
+              }
             }
           }
         } catch {}
-
-        if (!activeAudioData && typeof window !== 'undefined') {
-          const localTrack = localStorage.getItem('naija_life_broadcast_track');
-          if (localTrack) activeAudioData = localTrack;
-        }
-
-        const audio = broadcastAudioRef.current;
-        if (activeAudioData && audio) {
-          if (currentAudioSrcRef.current !== activeAudioData) {
-            currentAudioSrcRef.current = activeAudioData;
-            audio.src = activeAudioData;
-            audio.loop = true;
-            if (!isMusicMuted) {
-              audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
-            }
-          } else if (!isMusicMuted && audio.paused) {
-            audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
-          }
-        } else if (!activeAudioData && audio && currentAudioSrcRef.current) {
-          currentAudioSrcRef.current = '';
-          audio.pause();
-          audio.src = '';
-          setIsBroadcastPlaying(false);
-        }
 
         // 2. Poll global status to trigger server-wide state refresh if owner bumped globalRefreshCounter
         const statusRes = await fetch('/api/global/status');
@@ -1500,7 +1662,7 @@ export default function App() {
         globalChannel?.close();
       } catch {}
     };
-  }, [isMusicMuted, currentUser]);
+  }, [isMusicMuted, currentUser, applyBroadcastSource, showToast]);
 
   const handleToggleMusicMute = () => {
     setIsMusicMuted((prev) => {
@@ -1511,7 +1673,10 @@ export default function App() {
           audio.pause();
           setIsBroadcastPlaying(false);
         } else if (audio.src) {
-          audio.play().then(() => setIsBroadcastPlaying(true)).catch(() => {});
+          audio.play().then(() => {
+            setIsBroadcastPlaying(true);
+            setNeedsAudioUnlock(false);
+          }).catch(() => {});
         }
       }
       return next;
@@ -2082,6 +2247,12 @@ export default function App() {
     setCurrentState(birthState);
     setInternationalCountry(null);
     setLegalStatus('CITIZEN_NIGERIA');
+    persistTravelLocationRef.current?.({
+      nextStateId: birthState.id,
+      nextLocationMode: 'NIGERIA',
+      nextInternationalCountry: null,
+      nextLegalStatus: 'CITIZEN_NIGERIA',
+    });
 
     // 2. Clear visas & reduce happiness and energy
     setVisas({
@@ -2142,11 +2313,21 @@ export default function App() {
 
     if (isSuccess) {
       // SUCCESSFUL TRANSIT AS UNDOCUMENTED RESIDENT
+      const nextStateId = targetCountry.id === 'canada' ? 'canada' : currentState.id;
+      if (targetCountry.id === 'canada') {
+        setCurrentState(CANADA_STATE_DATA as any);
+      }
       setLocationMode('INTERNATIONAL');
       setInternationalCountry(targetCountry);
       setLegalStatus('UNDOCUMENTED');
       setHappiness((h) => Math.min(100, h + 30));
       setEnergy((e) => Math.max(20, e - 35));
+      persistTravelLocationRef.current?.({
+        nextStateId,
+        nextLocationMode: 'INTERNATIONAL',
+        nextInternationalCountry: targetCountry,
+        nextLegalStatus: 'UNDOCUMENTED',
+      });
 
       const tripRecord = `${targetCountry.name} (${targetCountry.city}) - Undocumented`;
       if (!travelHistory.includes(tripRecord)) {
@@ -2694,10 +2875,20 @@ export default function App() {
       setWallet((w) => ({ ...w, NGN: w.NGN - ticketCostNGN }));
     }
 
+    const nextStateId = country.id === 'canada' ? 'canada' : currentState.id;
+    if (country.id === 'canada') {
+      setCurrentState(CANADA_STATE_DATA as any);
+    }
     setLocationMode('INTERNATIONAL');
     setInternationalCountry(country);
     setLegalStatus('LEGAL_RESIDENT');
     setHappiness((h) => Math.min(100, h + 35));
+    persistTravelLocationRef.current?.({
+      nextStateId,
+      nextLocationMode: 'INTERNATIONAL',
+      nextInternationalCountry: country,
+      nextLegalStatus: 'LEGAL_RESIDENT',
+    });
 
     const tripEntry = `${country.name} (${country.city}) - Lawful Visa`;
     if (!travelHistory.includes(tripEntry)) {
@@ -2724,10 +2915,18 @@ export default function App() {
       setWallet((w) => ({ ...w, NGN: w.NGN - returnCostNGN }));
     }
 
+    const lagosHome = resolveFullStateData('lagos');
+    setCurrentState(lagosHome);
     setLocationMode('NIGERIA');
     setInternationalCountry(null);
     setLegalStatus('CITIZEN_NIGERIA');
     setHappiness((h) => Math.min(100, h + 10));
+    persistTravelLocationRef.current?.({
+      nextStateId: lagosHome.id,
+      nextLocationMode: 'NIGERIA',
+      nextInternationalCountry: null,
+      nextLegalStatus: 'CITIZEN_NIGERIA',
+    });
 
     addLog('travel', 'Landed back at Murtala Muhammed International Airport Lagos (LOS). Welcome back home to Nigeria!');
     triggerSound('plane');
@@ -2745,10 +2944,19 @@ export default function App() {
       showToast(`Insufficient balance for ticket to ${targetState.name} (₦${fare.toLocaleString()}).`);
       return;
     }
+    const resolvedTarget = resolveFullStateData(targetState.id, targetState);
     setWallet((w) => ({ ...w, NGN: w.NGN - fare }));
     setEnergy((e) => Math.max(10, e - 10));
-    setCurrentState(targetState);
+    setCurrentState(resolvedTarget);
+    setLocationMode('NIGERIA');
+    setInternationalCountry(null);
     setShowInterstateModal(false);
+    persistTravelLocationRef.current?.({
+      nextStateId: resolvedTarget.id,
+      nextLocationMode: 'NIGERIA',
+      nextInternationalCountry: null,
+      nextLegalStatus: 'CITIZEN_NIGERIA',
+    });
     addLog(
       'travel',
       `Interstate Coach (${trip.busOperator}): Traveled from ${currentState.name} to ${targetState.name} (${trip.distanceKm} km, ~${trip.travelTimeFormatted}) — "${targetState.slogan}". (-₦${fare.toLocaleString()}).`
@@ -2788,7 +2996,16 @@ export default function App() {
       return next;
     });
 
-    setCurrentState(targetState);
+    const resolvedTarget = resolveFullStateData(targetState.id, targetState);
+    setCurrentState(resolvedTarget);
+    setLocationMode('NIGERIA');
+    setInternationalCountry(null);
+    persistTravelLocationRef.current?.({
+      nextStateId: resolvedTarget.id,
+      nextLocationMode: 'NIGERIA',
+      nextInternationalCountry: null,
+      nextLegalStatus: 'CITIZEN_NIGERIA',
+    });
     const tripEntry = `Interstate Bus: ${currentState.name} → ${targetState.name}`;
     setTravelHistory((prev) => [...prev, tripEntry]);
     addLog(
@@ -2825,7 +3042,16 @@ export default function App() {
       return next;
     });
 
-    setCurrentState(targetState);
+    const resolvedTarget = resolveFullStateData(targetState.id, targetState);
+    setCurrentState(resolvedTarget);
+    setLocationMode('NIGERIA');
+    setInternationalCountry(null);
+    persistTravelLocationRef.current?.({
+      nextStateId: resolvedTarget.id,
+      nextLocationMode: 'NIGERIA',
+      nextInternationalCountry: null,
+      nextLegalStatus: 'CITIZEN_NIGERIA',
+    });
     const tripEntry = `Domestic Flight: ${currentState.name} → ${targetState.name}`;
     setTravelHistory((prev) => [...prev, tripEntry]);
     addLog(
@@ -2908,18 +3134,20 @@ export default function App() {
     activeVehicle?: VehicleAsset | null;
     investments?: InvestmentAsset[];
   }) => {
-    const bState = ALL_36_NIGERIAN_STATES.find((s) => s.id === saved.birthStateId) || ALL_36_NIGERIAN_STATES[0];
-    const cState = ALL_36_NIGERIAN_STATES.find((s) => s.id === saved.currentStateId) || bState;
+    const bState = resolveFullStateData(saved.birthStateId);
+    const cState = resolveFullStateData(saved.currentStateId || saved.birthStateId, bState);
     const intlCountry = saved.internationalCountryId
       ? DESTINATION_COUNTRIES.find((c) => c.id === saved.internationalCountryId) || null
-      : null;
+      : (cState.id === 'canada' ? DESTINATION_COUNTRIES.find((c) => c.id === 'canada') || null : null);
+    const resolvedMode: 'NIGERIA' | 'INTERNATIONAL' =
+      cState.id === 'canada' || !!intlCountry ? 'INTERNATIONAL' : (saved.locationMode || 'NIGERIA');
 
     setPlayerName(saved.playerName || 'Citizen');
     setBirthState(bState);
     setCurrentState(cState);
-    setLocationMode(saved.locationMode || 'NIGERIA');
+    setLocationMode(resolvedMode);
     setInternationalCountry(intlCountry);
-    setLegalStatus(saved.legalStatus || 'CITIZEN_NIGERIA');
+    setLegalStatus(saved.legalStatus || (resolvedMode === 'INTERNATIONAL' ? 'LEGAL_RESIDENT' : 'CITIZEN_NIGERIA'));
     setUndocumentedDaysAbroad(saved.undocumentedDaysAbroad || 0);
     setGameDay(saved.gameDay || 1);
     setGameHour(saved.gameHour || 8);
@@ -2966,6 +3194,73 @@ export default function App() {
       investments,
     };
   }, [buildCurrentSaveState, ownedProperties, activeHome, ownedVehicles, activeVehicle, investments]);
+
+  const persistTravelLocationRef = useRef<
+    ((params: {
+      nextStateId: string;
+      nextLocationMode: 'NIGERIA' | 'INTERNATIONAL';
+      nextInternationalCountry: CountryData | null;
+      nextLegalStatus?: LegalStatus;
+    }) => void) | null
+  >(null);
+
+  persistTravelLocationRef.current = ({
+    nextStateId,
+    nextLocationMode,
+    nextInternationalCountry,
+    nextLegalStatus,
+  }) => {
+    const cleanCountry =
+      nextLocationMode === 'INTERNATIONAL'
+        ? nextInternationalCountry?.id || (nextStateId === 'canada' ? 'canada' : 'nigeria')
+        : nextStateId === 'canada'
+        ? 'canada'
+        : 'nigeria';
+
+    const baseSnapshot = buildCloudSaveSnapshot();
+    const updatedSnapshot: CloudGameSaveDoc['saveData'] = {
+      ...baseSnapshot,
+      savedAt: new Date().toISOString(),
+      savedAtFormatted: new Date().toLocaleString(),
+      currentStateId: nextStateId,
+      locationMode: nextLocationMode,
+      internationalCountryId: nextInternationalCountry?.id || (nextStateId === 'canada' ? 'canada' : null),
+      legalStatus: nextLegalStatus || baseSnapshot.legalStatus,
+    };
+    saveGameState(updatedSnapshot);
+
+    if (currentUser) {
+      const nextProfile: UserProfile = {
+        ...currentUser,
+        lastLocationStateId: nextStateId,
+        currentCountry: cleanCountry,
+      };
+      setCurrentUser(nextProfile);
+      saveSession(nextProfile);
+
+      const uid = auth.currentUser?.uid || nextProfile.uid;
+      if (uid && auth.currentUser && auth.currentUser.emailVerified) {
+        syncProfileToCloud(uid, {
+          lastLocationStateId: nextStateId,
+          currentCountry: cleanCountry,
+        }).catch(() => {});
+
+        syncGameSaveToCloud({
+          uid,
+          saveState: updatedSnapshot,
+          knownVersion: cloudSaveVersionRef.current,
+          clientUpdatedAtMs: Date.now(),
+        })
+          .then((res) => {
+            if (res.status === 'SYNCED') {
+              cloudSaveVersionRef.current = res.version;
+              setCloudSyncStatus('synced');
+            }
+          })
+          .catch(() => {});
+      }
+    }
+  };
 
   const performCloudSaveSync = useCallback(async (profileToSync?: UserProfile | null, forceOverwrite = false) => {
     const uid = auth.currentUser?.uid || profileToSync?.uid || currentUser?.uid;
@@ -3160,7 +3455,13 @@ export default function App() {
 
       if (cloudSave && cloudSave.saveData) {
         cloudSaveVersionRef.current = cloudSave.version || 1;
-        restoreSavedState(cloudSave.saveData);
+        const resolvedSaveStateId =
+          cloudSave.saveData.currentStateId || hydratedProfile.lastLocationStateId || hydratedProfile.spawnStateId || 'lagos';
+        const mergedSaveData = {
+          ...cloudSave.saveData,
+          currentStateId: resolvedSaveStateId,
+        };
+        restoreSavedState(mergedSaveData);
         if (isOwner) {
           setWallet({
             NGN: SEXTILLION_999,
@@ -3181,32 +3482,31 @@ export default function App() {
             saveSession(withCad);
           }
         }
-        saveGameState(cloudSave.saveData);
+        saveGameState(mergedSaveData);
         setCloudSyncStatus('synced');
       } else {
         cloudSaveVersionRef.current = 0;
         const targetLocId = (hydratedProfile?.lastLocationStateId || spawnState?.id || hydratedProfile?.spawnStateId || 'lagos').toLowerCase().trim();
-        const isCanada = targetLocId === 'canada';
-        if (isCanada) {
+        const targetCountry = String(hydratedProfile?.currentCountry || (targetLocId === 'canada' ? 'canada' : 'nigeria')).toLowerCase().trim();
+        const birthResolved = resolveFullStateData(hydratedProfile?.spawnStateId || spawnState?.id || 'lagos');
+        setBirthState(birthResolved);
+
+        if (targetLocId === 'canada' || targetCountry === 'canada') {
           setLocationMode('INTERNATIONAL');
           setCurrentState(CANADA_STATE_DATA as any);
-          setBirthState(CANADA_STATE_DATA as any);
+          setInternationalCountry(DESTINATION_COUNTRIES.find((c) => c.id === 'canada') || null);
+          setLegalStatus('LEGAL_RESIDENT');
+        } else if (targetCountry !== 'nigeria') {
+          const intl = DESTINATION_COUNTRIES.find((c) => c.id === targetCountry) || null;
+          setLocationMode(intl ? 'INTERNATIONAL' : 'NIGERIA');
+          setInternationalCountry(intl);
+          setCurrentState(resolveFullStateData(targetLocId));
+          setLegalStatus(intl ? 'LEGAL_RESIDENT' : 'CITIZEN_NIGERIA');
         } else {
           setLocationMode('NIGERIA');
-          const fullState =
-            NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === targetLocId) ||
-            NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === 'lagos') ||
-            NIGERIA_36_STATES_ALPHABETICAL[0];
-          const legacyMatch =
-            ALL_36_NIGERIAN_STATES.find((s) => s.id === targetLocId) || ALL_36_NIGERIAN_STATES[0];
-          const match = {
-            ...legacyMatch,
-            ...fullState,
-            id: targetLocId,
-            locations: fullState.locations || [],
-          };
-          setBirthState(match as any);
-          setCurrentState(match as any);
+          setInternationalCountry(null);
+          setCurrentState(resolveFullStateData(targetLocId));
+          setLegalStatus('CITIZEN_NIGERIA');
         }
 
         setWallet({
@@ -3312,12 +3612,24 @@ export default function App() {
         }
       }
 
-      const activeStateId = (hydratedProfile?.lastLocationStateId || spawnState?.id || hydratedProfile?.spawnStateId || 'lagos').toLowerCase();
+      const activeStateId = (
+        cloudSave?.saveData?.currentStateId ||
+        hydratedProfile?.lastLocationStateId ||
+        spawnState?.id ||
+        hydratedProfile?.spawnStateId ||
+        'lagos'
+      ).toLowerCase();
       addLog(
         'immigration',
         `Cloud Session Authenticated: Welcome @${hydratedProfile.username} to Naija Life! Active Region: ${activeStateId === 'canada' ? 'Canada' : activeStateId.toUpperCase()}.`
       );
       showToast(`Welcome, ${hydratedProfile.firstName}! Cloud profile synchronized.`);
+
+      const sessionKey = hydratedProfile.uid || hydratedProfile.username;
+      if (shownMapReworkForUidRef.current !== sessionKey) {
+        shownMapReworkForUidRef.current = sessionKey;
+        setShowMapReworkModal(true);
+      }
     },
     [restoreSavedState, addLog, showToast]
   );
@@ -3396,6 +3708,12 @@ export default function App() {
         happiness,
         spawnStateId: currentUser.spawnStateId || 'lagos',
         lastLocationStateId: currentState?.id || currentUser.lastLocationStateId || currentUser.spawnStateId || 'lagos',
+        currentCountry:
+          locationMode === 'INTERNATIONAL'
+            ? internationalCountry?.id || (currentState?.id === 'canada' ? 'canada' : 'nigeria')
+            : currentState?.id === 'canada'
+            ? 'canada'
+            : 'nigeria',
         furnitureBought: currentUser.furnitureBought || [],
         inventory: currentUser.inventory || [],
         completedCourses: currentUser.completedCourses || [],
@@ -3406,7 +3724,7 @@ export default function App() {
       await performCloudSaveSync(updatedProfile);
       return updatedProfile;
     } catch {}
-  }, [currentUser, wallet, energy, hunger, health, happiness, currentState, performCloudSaveSync]);
+  }, [currentUser, wallet, energy, hunger, health, happiness, currentState, locationMode, internationalCountry, performCloudSaveSync]);
 
   // Periodic automatic cloud sync + real-time suspension enforcement every 25 seconds
   useEffect(() => {
@@ -3436,6 +3754,8 @@ export default function App() {
     await logoutFirebaseUser().catch(() => {});
     clearSession();
     cloudSaveVersionRef.current = 0;
+    shownMapReworkForUidRef.current = null;
+    setShowMapReworkModal(false);
     setSaveConflictData(null);
     setPendingVerificationEmail(null);
     setPendingGoogleCompletionEmail(null);
@@ -3655,26 +3975,22 @@ export default function App() {
             }));
           }
           const isCanada = targetState.id === 'canada';
-          const fullTarget = isCanada ? targetState : (NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === targetState.id) || targetState);
-          const legacyMatch = isCanada ? targetState : (ALL_36_NIGERIAN_STATES.find((s) => s.id === targetState.id) || currentState);
-          const match = {
-            ...legacyMatch,
-            ...fullTarget,
-            id: targetState.id,
-            locations: fullTarget.locations || [],
-          };
-          setCurrentState(match as any);
-          if (isCanada) setLocationMode('INTERNATIONAL');
-          else setLocationMode('NIGERIA');
+          const match = resolveFullStateData(targetState.id, targetState);
+          const nextMode: 'NIGERIA' | 'INTERNATIONAL' = isCanada ? 'INTERNATIONAL' : 'NIGERIA';
+          const nextIntlCountry = isCanada ? DESTINATION_COUNTRIES.find((c) => c.id === 'canada') || null : null;
+          const nextLegal: LegalStatus = isCanada ? 'LEGAL_RESIDENT' : 'CITIZEN_NIGERIA';
 
-          if (currentUser) {
-            const nextProfile = { ...currentUser, lastLocationStateId: targetState.id };
-            setCurrentUser(nextProfile);
-            saveSession(nextProfile);
-            if (nextProfile.uid) {
-              syncProfileToCloud(nextProfile.uid, { lastLocationStateId: targetState.id }).catch(() => {});
-            }
-          }
+          setCurrentState(match as any);
+          setLocationMode(nextMode);
+          setInternationalCountry(nextIntlCountry);
+          setLegalStatus(nextLegal);
+
+          persistTravelLocationRef.current?.({
+            nextStateId: targetState.id,
+            nextLocationMode: nextMode,
+            nextInternationalCountry: nextIntlCountry,
+            nextLegalStatus: nextLegal,
+          });
 
           setEnergy((e) => Math.max(10, e - 15));
           setHunger((h) => Math.max(10, h - 12));
@@ -3726,7 +4042,43 @@ export default function App() {
       />
 
       {/* Synchronized Server Background Broadcast Audio */}
-      <audio ref={broadcastAudioRef} loop className="hidden" />
+      <audio ref={broadcastAudioRef} loop playsInline className="hidden" />
+
+      {/* One-Tap Audio Unlock Prompt (only shown if browser blocks autoplay on server track) */}
+      {needsAudioUnlock && !isMusicMuted && activeBroadcastTitle && (
+        <button
+          type="button"
+          onClick={() => {
+            const audio = broadcastAudioRef.current;
+            if (audio && currentAudioSrcRef.current) {
+              audio.play().then(() => {
+                setIsBroadcastPlaying(true);
+                setNeedsAudioUnlock(false);
+              }).catch(() => {});
+            }
+          }}
+          className="fixed bottom-20 left-4 z-[90] px-4 py-2.5 rounded-2xl bg-zinc-950/95 border border-amber-500/60 text-amber-200 text-xs font-bold shadow-2xl flex items-center gap-2 cursor-pointer hover:bg-zinc-900 active:scale-95 transition-all"
+        >
+          <Volume2 className="w-4 h-4 text-amber-400" />
+          <span>Play Server Radio: {activeBroadcastTitle}</span>
+        </button>
+      )}
+
+      {/* POST-LOGIN 3D MAP REWORK ANNOUNCEMENT MODAL */}
+      <MapReworkAnnouncementModal
+        isOpen={showMapReworkModal}
+        onContinue={() => {
+          setShowMapReworkModal(false);
+          triggerSound('coin');
+          const audio = broadcastAudioRef.current;
+          if (audio && currentAudioSrcRef.current && !isMusicMuted && audio.paused) {
+            audio.play().then(() => {
+              setIsBroadcastPlaying(true);
+              setNeedsAudioUnlock(false);
+            }).catch(() => {});
+          }
+        }}
+      />
 
       {/* CLOUD SAVE CONFLICT RESOLUTION MODAL */}
       {saveConflictData && (

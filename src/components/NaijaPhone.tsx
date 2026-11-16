@@ -85,6 +85,7 @@ import {
   UserCheck,
   Cloud,
   ChevronRight,
+  Heart,
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -99,12 +100,14 @@ import {
   OwnerAuditLogEntry,
   purgeNonOwnerCitizenAccountsAsOwner,
   RegistryCitizenEntry,
+  removeOwnerBroadcastTrack,
   repairAndActivateOwnerAccount,
   requestCitizenEmailUpdate,
   sendPasswordReset,
   setCitizenSuspensionStatus,
   syncProfileToCloud,
   updateCitizenPassword,
+  uploadOwnerBroadcastTrack,
   wipeAllAccountProgressAsOwner,
 } from '../services/firebaseAccountService';
 import {
@@ -308,6 +311,7 @@ export type PhoneAppType =
   | 'documents'
   | 'immigration'
   | 'suggestions'
+  | 'family'
   | 'settings';
 
 export interface CommunityFeedbackTicket {
@@ -1771,6 +1775,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 ? 'LUXURY CLUB'
                 : currentApp === 'pets'
                 ? 'KENNELS & PETS'
+                : currentApp === 'family'
+                ? 'FAMILY'
                 : currentApp.toUpperCase()}
             </span>
 
@@ -2046,7 +2052,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <span className="text-[10px] font-bold text-zinc-200 group-hover:text-sky-300 transition-colors">Immigration</span>
                     </div>
 
-                    {/* APP 23: SUGGESTIONS & COMPLAINTS */}
+                    {/* APP 23: FAMILY (COMING SOON) */}
+                    <div onClick={() => setCurrentApp('family')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                      <div className={`${appIconShape} bg-gradient-to-br from-rose-500 via-pink-600 to-rose-900 flex items-center justify-center group-hover:scale-108 transition-transform border border-rose-300/40 shadow-[0_6px_18px_rgba(244,63,94,0.35)]`}>
+                        <div className="absolute inset-0 bg-gradient-to-tr from-white/25 via-transparent to-transparent pointer-events-none" />
+                        <Heart className="w-6 h-6 text-white fill-white/90 drop-shadow" />
+                      </div>
+                      <span className="text-[10px] font-bold text-rose-200 group-hover:text-rose-100 transition-colors">Family</span>
+                    </div>
+
+                    {/* APP 24: SUGGESTIONS & COMPLAINTS */}
                     <div onClick={() => setCurrentApp('suggestions')} className="flex flex-col items-center gap-1 cursor-pointer group">
                       <div className={`${appIconShape} bg-gradient-to-br from-violet-600 via-purple-700 to-fuchsia-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
                         <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
@@ -2055,7 +2070,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <span className="text-[10px] font-bold text-zinc-200 group-hover:text-purple-300 transition-colors">Suggestions</span>
                     </div>
 
-                    {/* APP 24: SETTINGS */}
+                    {/* APP 25: SETTINGS */}
                     <div onClick={() => setCurrentApp('settings')} className="flex flex-col items-center gap-1 cursor-pointer group">
                       <div className={`${appIconShape} bg-gradient-to-br from-zinc-700 via-stone-800 to-zinc-950 flex items-center justify-center group-hover:scale-108 transition-transform border border-zinc-600`}>
                         <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
@@ -8645,60 +8660,69 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         </span>
                       </div>
 
+                      {isBroadcastingSyncing && (
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[9px] font-mono text-amber-300">
+                            <span>Syncing across Naija Life servers...</span>
+                            <span>{broadcastSyncProgress}%</span>
+                          </div>
+                          <div className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-150"
+                              style={{ width: `${broadcastSyncProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
                       <input
                         type="file"
                         accept=".mp3,audio/mpeg,audio/mp3"
                         id="owner-mp3-upload"
                         className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
+                        onChange={async (e) => {
+                          const inputEl = e.target;
+                          const file = inputEl.files?.[0];
                           if (!file) return;
-                          if (!file.name.toLowerCase().endsWith('.mp3') && !file.type.includes('mpeg') && !file.type.includes('mp3')) {
+                          const isMp3 =
+                            file.name.toLowerCase().endsWith('.mp3') ||
+                            file.type.includes('mpeg') ||
+                            file.type.includes('mp3');
+                          if (!isMp3) {
                             onShowToast('Only .mp3 audio files are accepted!');
                             triggerSound?.('alert');
+                            inputEl.value = '';
                             return;
                           }
                           setOwnerBroadcastTrack(file.name);
                           setIsBroadcastingSyncing(true);
-                          setBroadcastSyncProgress(10);
+                          setBroadcastSyncProgress(5);
 
-                          const syncStartTime = Date.now();
-                          const syncTimer = setInterval(() => {
-                            const elapsed = Date.now() - syncStartTime;
-                            const pct = Math.min(100, Math.round((elapsed / 2500) * 100));
-                            setBroadcastSyncProgress(pct);
-
-                            if (elapsed >= 2500) {
-                              clearInterval(syncTimer);
-                              const reader = new FileReader();
-                              reader.onload = async (evt) => {
-                                const base64 = evt.target?.result as string;
-                                try {
-                                  const headers = await getAuthBearerHeaders();
-                                  const res = await fetch('/api/broadcast/music', {
-                                    method: 'POST',
-                                    headers,
-                                    body: JSON.stringify({
-                                      title: file.name.replace(/\.mp3$/i, ''),
-                                      audioData: base64,
-                                    }),
-                                  });
-                                  const data = await res.json();
-                                  setIsBroadcastingSyncing(false);
-                                  if (res.ok) {
-                                    onShowToast(`Broadcast Synced! "${file.name}" is now playing for all players!`);
-                                    triggerSound?.('success');
-                                  } else {
-                                    onShowToast(`Failed: ${data.error || 'Could not broadcast'}`);
-                                  }
-                                } catch {
-                                  setIsBroadcastingSyncing(false);
-                                  onShowToast('Failed to upload audio broadcast to server.');
-                                }
-                              };
-                              reader.readAsDataURL(file);
-                            }
-                          }, 80);
+                          try {
+                            const result = await uploadOwnerBroadcastTrack(file, (pct) => {
+                              setBroadcastSyncProgress(pct);
+                            });
+                            window.dispatchEvent(
+                              new CustomEvent('naija-broadcast-updated', {
+                                detail: {
+                                  active: true,
+                                  trackId: result.trackId,
+                                  title: result.title,
+                                  audioUrl: result.serverStreamUrl || result.localBlobUrl,
+                                  localBlobUrl: result.localBlobUrl,
+                                },
+                              })
+                            );
+                            onShowToast(`Broadcast Live! "${result.title}" is now playing across all Naija Life devices!`);
+                            triggerSound?.('success');
+                          } catch (err) {
+                            const msg = err instanceof Error ? err.message : 'Could not upload MP3 broadcast.';
+                            onShowToast(`Upload failed: ${msg}`);
+                            triggerSound?.('alert');
+                          } finally {
+                            setIsBroadcastingSyncing(false);
+                            inputEl.value = '';
+                          }
                         }}
                       />
 
@@ -8708,27 +8732,24 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black font-black text-xs text-center cursor-pointer shadow-md flex items-center justify-center gap-1.5 active:scale-95 transition-all"
                         >
                           <Volume2 className="w-3.5 h-3.5 fill-black" />
-                          <span>{isBroadcastingSyncing ? 'Syncing...' : 'Upload MP3'}</span>
+                          <span>{isBroadcastingSyncing ? `Uploading ${broadcastSyncProgress}%` : 'Upload MP3'}</span>
                         </label>
 
                         <button
                           type="button"
                           onClick={async () => {
                             try {
-                              const headers = await getAuthBearerHeaders();
-                              const res = await fetch('/api/broadcast/music', {
-                                method: 'DELETE',
-                                headers,
-                              });
-                              if (res.ok) {
-                                setOwnerBroadcastTrack('');
-                                onShowToast('Server broadcast removed. Background music stopped.');
-                                triggerSound?.('coin');
-                              } else {
-                                onShowToast('Unauthorized to remove server broadcast.');
-                              }
-                            } catch {
-                              onShowToast('Failed to remove server broadcast.');
+                              await removeOwnerBroadcastTrack();
+                              setOwnerBroadcastTrack('');
+                              window.dispatchEvent(
+                                new CustomEvent('naija-broadcast-updated', {
+                                  detail: { active: false },
+                                })
+                              );
+                              onShowToast('Server broadcast removed. Music stopped on all devices.');
+                              triggerSound?.('coin');
+                            } catch (err) {
+                              onShowToast(err instanceof Error ? err.message : 'Failed to remove server broadcast.');
                             }
                           }}
                           className="py-2.5 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold text-xs cursor-pointer border border-zinc-700 flex items-center justify-center gap-1.5"
@@ -10805,6 +10826,42 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                   type="button"
                   onClick={() => setCurrentApp('home')}
                   className="mt-6 py-3 px-8 rounded-2xl bg-yellow-400 hover:bg-yellow-300 text-black font-black text-xs cursor-pointer shadow-xl transition-all active:scale-95"
+                >
+                  Back to Home Screen
+                </button>
+              </div>
+            )}
+
+            {/* =============================================================
+                FAMILY APP: COMING SOON (HEART LOGO)
+                ============================================================= */}
+            {currentApp === 'family' && (
+              <div className="h-full -m-4 min-h-[480px] bg-gradient-to-b from-rose-600/80 via-zinc-950 to-black text-white p-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
+                <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-rose-500 to-pink-600 border-4 border-rose-200/70 flex items-center justify-center shadow-[0_10px_30px_rgba(244,63,94,0.45)] mb-4">
+                  <Heart className="w-10 h-10 text-white fill-white" />
+                </div>
+                <p className="text-[11px] font-black uppercase tracking-widest text-rose-300 mb-1.5">
+                  Naija Life Family
+                </p>
+                <h2 className="text-2xl font-black text-white tracking-tight drop-shadow-md">
+                  COMING SOON!
+                </h2>
+                <p className="text-xs text-zinc-300 mt-2 max-w-xs leading-relaxed font-sans">
+                  Build your family legacy across Nigeria and Canada. Marriage, households, and generational wealth are on the way.
+                </p>
+                <div className="mt-4 p-3.5 bg-zinc-900/90 border border-rose-500/30 rounded-2xl text-[11px] text-zinc-300 space-y-1.5 text-left max-w-xs">
+                  <p className="text-rose-300 font-bold">
+                    Coming in the Family Update:
+                  </p>
+                  <p>• Marriage proposals, traditional weddings &amp; shared homes</p>
+                  <p>• Raise children, school fees &amp; household allowances</p>
+                  <p>• Family tree, inheritance wills &amp; clan remittances</p>
+                  <p>• Joint household accounts &amp; anniversaries</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCurrentApp('home')}
+                  className="mt-6 py-3 px-8 rounded-2xl bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-400 hover:to-pink-400 text-white font-black text-xs cursor-pointer shadow-xl transition-all active:scale-95"
                 >
                   Back to Home Screen
                 </button>

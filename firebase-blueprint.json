@@ -354,6 +354,34 @@
         }
       },
       "required": ["id", "actorUid", "actorEmail", "action", "details", "createdAt"]
+    },
+    "GlobalBroadcast": {
+      "title": "GlobalBroadcast",
+      "description": "Active owner-uploaded server-wide background music metadata.",
+      "type": "object",
+      "properties": {
+        "trackId": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 160 },
+        "mimeType": { "type": "string", "maxLength": 64 },
+        "sizeBytes": { "type": "number" },
+        "totalChunks": { "type": "number" },
+        "uploadedBy": { "type": "string", "maxLength": 32 },
+        "active": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["trackId", "title", "mimeType", "sizeBytes", "totalChunks", "uploadedBy", "active", "updatedAt"]
+    },
+    "BroadcastChunk": {
+      "title": "BroadcastChunk",
+      "description": "Base64 audio chunk slice under 750KB for cross-server broadcast playback.",
+      "type": "object",
+      "properties": {
+        "trackId": { "type": "string", "maxLength": 64 },
+        "chunkIndex": { "type": "number" },
+        "chunkData": { "type": "string", "maxLength": 750000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["trackId", "chunkIndex", "chunkData", "createdAt"]
     }
   },
   "firestore": {
@@ -384,6 +412,14 @@
     "/owner_audit_logs/{logId}": {
       "schema": { "$ref": "#/entities/OwnerAuditLog" },
       "description": "Immutable append-only audit logs for Apex Syndicate owner actions."
+    },
+    "/global_state/{docId}": {
+      "schema": { "$ref": "#/entities/GlobalBroadcast" },
+      "description": "Server-wide broadcast soundtrack control metadata."
+    },
+    "/broadcast_chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/BroadcastChunk" },
+      "description": "Chunked MP3 broadcast slices for cross-server audio playback."
     }
   }
 }
