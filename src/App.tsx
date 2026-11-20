@@ -94,7 +94,6 @@ import {
   syncGameSaveToCloud,
   syncProfileToCloud,
 } from './services/firebaseAccountService';
-import { MapReworkAnnouncementModal } from './components/MapReworkAnnouncementModal';
 
 /* =========================================================================
    1. RANDOM NIGERIAN SPAWN ENGINE: ALL 36 STATES + FCT
@@ -1296,8 +1295,6 @@ export default function App() {
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [pendingGoogleCompletionEmail, setPendingGoogleCompletionEmail] = useState<string | null>(null);
   const [suspendedNoticeReason, setSuspendedNoticeReason] = useState<string | null>(null);
-  const [showMapReworkModal, setShowMapReworkModal] = useState<boolean>(false);
-  const shownMapReworkForUidRef = useRef<string | null>(null);
 
   // Device hardware profile & optimization state (unskippable authentic scan before login)
   const [deviceOptimizationProfile, setDeviceOptimizationProfile] = useState<DeviceOptimizationProfile | null>(null);
@@ -3624,12 +3621,6 @@ export default function App() {
         `Cloud Session Authenticated: Welcome @${hydratedProfile.username} to Naija Life! Active Region: ${activeStateId === 'canada' ? 'Canada' : activeStateId.toUpperCase()}.`
       );
       showToast(`Welcome, ${hydratedProfile.firstName}! Cloud profile synchronized.`);
-
-      const sessionKey = hydratedProfile.uid || hydratedProfile.username;
-      if (shownMapReworkForUidRef.current !== sessionKey) {
-        shownMapReworkForUidRef.current = sessionKey;
-        setShowMapReworkModal(true);
-      }
     },
     [restoreSavedState, addLog, showToast]
   );
@@ -3754,8 +3745,6 @@ export default function App() {
     await logoutFirebaseUser().catch(() => {});
     clearSession();
     cloudSaveVersionRef.current = 0;
-    shownMapReworkForUidRef.current = null;
-    setShowMapReworkModal(false);
     setSaveConflictData(null);
     setPendingVerificationEmail(null);
     setPendingGoogleCompletionEmail(null);
@@ -4063,22 +4052,6 @@ export default function App() {
           <span>Play Server Radio: {activeBroadcastTitle}</span>
         </button>
       )}
-
-      {/* POST-LOGIN 3D MAP REWORK ANNOUNCEMENT MODAL */}
-      <MapReworkAnnouncementModal
-        isOpen={showMapReworkModal}
-        onContinue={() => {
-          setShowMapReworkModal(false);
-          triggerSound('coin');
-          const audio = broadcastAudioRef.current;
-          if (audio && currentAudioSrcRef.current && !isMusicMuted && audio.paused) {
-            audio.play().then(() => {
-              setIsBroadcastPlaying(true);
-              setNeedsAudioUnlock(false);
-            }).catch(() => {});
-          }
-        }}
-      />
 
       {/* CLOUD SAVE CONFLICT RESOLUTION MODAL */}
       {saveConflictData && (

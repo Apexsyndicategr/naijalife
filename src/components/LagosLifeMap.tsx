@@ -80,7 +80,8 @@ import { UserProfile } from '../types/game';
 import { NaijaPhone, PhoneAppType } from './NaijaPhone';
 import { InteriorView } from './InteriorView';
 import { BuyModeModal } from './BuyModeModal';
-import { LagosLifeBuilding, getLocationLogo } from './LagosLifeBuilding';
+import { getLocationLogo } from './LagosLifeBuilding';
+import { NaijaCity3DCanvas, NaijaCity3DHandle, HomePOIEntry } from './map3d/NaijaCity3DCanvas';
 import { getStateLocations, getStateLandmarks } from '../data/multiStateLocations';
 import {
   calculateInterstateTrip,
@@ -211,26 +212,15 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
   );
   const effectiveNGN = isStrictOwner ? 9.99e23 : moneyNGN;
   const effectiveCAD = isStrictOwner ? 9.99e23 : (userProfile?.bankCAD || 0);
-  // Map pan drag state (Zero-Lag Direct Hardware GPU Composited Transform)
-  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: -750, y: -500 });
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const touchStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const currentPanRef = useRef<{ x: number; y: number }>({ x: -750, y: -500 });
-  const currentZoomRef = useRef<number>(0.85);
-
-  const applyTransform = (x: number, y: number, currentZoom: number) => {
-    if (mapContainerRef.current) {
-      mapContainerRef.current.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${currentZoom}) rotateX(38deg) rotateZ(-12deg)`;
-    }
-  };
+  // Three.js Top-Down 3D Aerial Map Controller Ref & HUD Zoom Percentage
+  const map3dRef = useRef<NaijaCity3DHandle | null>(null);
+  const [zoomPercent, setZoomPercent] = useState<number>(100);
 
   // Map settings - naturally OFF by default per user request
   const [showLocationNames, setShowLocationNames] = useState<boolean>(false);
   const [soundMuted, setSoundMuted] = useState<boolean>(false);
 
-  // Device detection state (Mobile, Tablet, Desktop) & Responsive Auto-Fit
+  // Device detection state (Mobile, Tablet, Desktop)
   const [deviceType, setDeviceType] = useState<'mobile' | 'tablet' | 'desktop'>(
     deviceOptimizationProfile?.deviceCategory === 'phone'
       ? 'mobile'
@@ -239,29 +229,13 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       : 'desktop'
   );
 
-  // Map Zoom state (auto-scaled for mobile/tablet via device profile)
-  const [zoom, setZoom] = useState<number>(
-    deviceOptimizationProfile?.viewportScale ||
-      (typeof window !== 'undefined' && window.innerWidth < 640 ? 0.68 : 0.85)
-  );
-  const touchDistRef = useRef<number | null>(null);
-
-  // Keep DOM hardware transform smoothly synchronized whenever state updates
-  useEffect(() => {
-    currentPanRef.current = panOffset;
-    currentZoomRef.current = zoom;
-    applyTransform(panOffset.x, panOffset.y, zoom);
-  }, [panOffset, zoom]);
-
   useEffect(() => {
     const handleDeviceCheck = () => {
       const w = window.innerWidth;
       if (w < 640) {
         setDeviceType('mobile');
-        setZoom((prev) => (prev > 0.72 ? 0.68 : prev));
       } else if (w < 1024) {
         setDeviceType('tablet');
-        setZoom((prev) => (prev > 0.85 ? 0.8 : prev));
       } else {
         setDeviceType('desktop');
       }
@@ -516,95 +490,6 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
     return () => clearInterval(interval);
   }, [activeStateId]);
 
-  // Map Dragging / Panning handlers (Hardware Accelerated Zero-Lag with direct GPU transform)
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (isPhoneOpen || isBuyModeOpen || isAirportModalOpen) return;
-    if ((e.target as HTMLElement).closest('button, .interactive-pin, .hud-overlay, input, select')) return;
-    setIsDragging(true);
-    dragStartRef.current = { x: e.clientX - currentPanRef.current.x, y: e.clientY - currentPanRef.current.y };
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch {}
-  };
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (isPhoneOpen || isBuyModeOpen || isAirportModalOpen) return;
-    if (!isDragging) return;
-    const newX = Math.max(-2900, Math.min(400, e.clientX - dragStartRef.current.x));
-    const newY = Math.max(-2000, Math.min(400, e.clientY - dragStartRef.current.y));
-    currentPanRef.current = { x: newX, y: newY };
-    applyTransform(newX, newY, currentZoomRef.current);
-  };
-
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (!isDragging) return;
-    setIsDragging(false);
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {}
-    setPanOffset(currentPanRef.current);
-  };
-
-  // PC Mouse Wheel Zoom (Locked when phone is open)
-  const handleWheel = (e: React.WheelEvent) => {
-    if (isPhoneOpen || isBuyModeOpen || isAirportModalOpen) return;
-    e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.08 : -0.08;
-    const newZoom = Math.max(0.6, Math.min(2.0, Number((zoom + delta).toFixed(2))));
-    setZoom(newZoom);
-    currentZoomRef.current = newZoom;
-    applyTransform(currentPanRef.current.x, currentPanRef.current.y, newZoom);
-  };
-
-  // Mobile Touch 1-Finger Zero-Lag Dragging & 2-Finger Pinch-to-Zoom
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (isPhoneOpen || isBuyModeOpen || isAirportModalOpen) return;
-    if ((e.target as HTMLElement).closest('button, .interactive-pin, .hud-overlay, input, select')) return;
-    if (e.touches.length === 1) {
-      touchStartRef.current = {
-        x: e.touches[0].clientX - currentPanRef.current.x,
-        y: e.touches[0].clientY - currentPanRef.current.y,
-      };
-    } else if (e.touches.length === 2) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      touchDistRef.current = dist;
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (isPhoneOpen || isBuyModeOpen || isAirportModalOpen) return;
-    if (e.touches.length === 1) {
-      const newX = Math.max(-2900, Math.min(400, e.touches[0].clientX - touchStartRef.current.x));
-      const newY = Math.max(-2000, Math.min(400, e.touches[0].clientY - touchStartRef.current.y));
-      currentPanRef.current = { x: newX, y: newY };
-      applyTransform(newX, newY, currentZoomRef.current);
-    } else if (e.touches.length === 2 && touchDistRef.current !== null) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      const diff = dist - touchDistRef.current;
-      if (Math.abs(diff) > 2) {
-        const factor = diff > 0 ? 0.02 : -0.02;
-        const newZoom = Math.max(0.6, Math.min(2.0, Number((currentZoomRef.current + factor).toFixed(2))));
-        setZoom(newZoom);
-        currentZoomRef.current = newZoom;
-        applyTransform(currentPanRef.current.x, currentPanRef.current.y, newZoom);
-        touchDistRef.current = dist;
-      }
-    }
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    touchDistRef.current = null;
-    if (e.touches.length === 0) {
-      setPanOffset(currentPanRef.current);
-    }
-  };
-
   // Player's Dynamic Mood Calculation (dynamically reacts to health, hunger, energy & happiness)
   const playerMood = useMemo(() => {
     if (health < 25) return { label: 'Sick / Unwell', emoji: '🤒' };
@@ -620,33 +505,30 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
     return { label: 'Struggling', emoji: '😫' };
   }, [energy, hunger, happiness, health]);
 
-  // Handle Home Button Click -> Smoothly center map directly on player's house
+  // Handle Home Button Click -> Smoothly glide 3D aerial camera directly over player's house
   const handleGoToMyHouse = () => {
     if (previewState) {
       onShowToast(`You are currently previewing ${previewState.name}. Travel back to your home state to view your house!`);
       return;
     }
 
-    let targetX = 0;
-    let targetY = 0;
+    let xPct = 50;
+    let yPct = 72;
     let houseId = 'player_home';
 
     if (activeHome) {
-      targetX = activeHome.x ? (activeHome.x / 100) * 3500 + 150 : 2000;
-      targetY = activeHome.y ? (activeHome.y / 100) * 2500 + 150 : 2200;
+      xPct = activeHome.x || 54;
+      yPct = activeHome.y || 76;
       houseId = activeHome.id;
     } else {
-      targetX = (userProfile?.socialClass === 'nepo' ? 74 : userProfile?.socialClass === 'mapo' ? 52 : 36) * 35;
-      targetY = (userProfile?.socialClass === 'nepo' ? 32 : userProfile?.socialClass === 'mapo' ? 48 : 70) * 25;
+      xPct = userProfile?.socialClass === 'nepo' ? 74 : userProfile?.socialClass === 'mapo' ? 52 : 36;
+      yPct = userProfile?.socialClass === 'nepo' ? 32 : userProfile?.socialClass === 'mapo' ? 48 : 70;
     }
 
-    const targetPanX = Math.max(-2900, Math.min(400, Math.round(window.innerWidth / 2 - targetX)));
-    const targetPanY = Math.max(-2000, Math.min(400, Math.round(window.innerHeight / 2 - targetY)));
-
-    setPanOffset({ x: targetPanX, y: targetPanY });
+    map3dRef.current?.flyToPercent(xPct, yPct, 74);
     setHighlightedLocationId(houseId);
     triggerSound?.('stamp');
-    onShowToast("📍 Centered on your residence! Click your house to choose your transport means and enter.");
+    onShowToast("📍 Centered on your residence! Click your house to enter.");
   };
 
   // State selection logic: opens the travel booking modal showing current state, destination and real prices
@@ -912,22 +794,65 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
     });
   }, [activeStateLocations, locationsCategoryFilter, locationsSearchQuery]);
 
-  // Jump to location and close dropdown automatically
+  // Compute Player Residences placed on the active state's 3D map
+  const activeHomeLocations = useMemo<HomePOIEntry[]>(() => {
+    const displayedId = (previewState ? previewState.id : currentState.id).toLowerCase();
+    const stateProperties = [...(ownedProperties || [])].filter(
+      (p) => !p.stateId || p.stateId.toLowerCase() === displayedId
+    );
+
+    if (activeHome && (!activeHome.stateId || activeHome.stateId.toLowerCase() === displayedId)) {
+      if (!stateProperties.some((p) => p.id === activeHome.id)) {
+        stateProperties.push(activeHome);
+      }
+    }
+
+    if (
+      stateProperties.length === 0 &&
+      !previewState &&
+      (!userProfile?.spawnStateId || userProfile.spawnStateId.toLowerCase() === currentState.id.toLowerCase())
+    ) {
+      const defX = userProfile?.socialClass === 'nepo' ? 74 : userProfile?.socialClass === 'mapo' ? 52 : 36;
+      const defY = userProfile?.socialClass === 'nepo' ? 32 : userProfile?.socialClass === 'mapo' ? 48 : 70;
+      return [
+        {
+          id: 'player_home',
+          name: `${userProfile?.firstName || 'Citizen'}'s Residence`,
+          type: 'home',
+          tagLabel: 'MY RESIDENCE',
+          x: defX,
+          y: defY,
+          desc: 'Personal private residence',
+          floorsCount: userProfile?.socialClass === 'nepo' ? 3 : 1,
+          isPrimaryHome: true,
+        },
+      ];
+    }
+
+    return stateProperties.map((prop) => {
+      const isPrimary = !activeHome || activeHome?.id === prop.id;
+      return {
+        id: prop.id,
+        name: prop.title,
+        type: 'home',
+        tagLabel: isPrimary ? 'PRIMARY HOME' : 'RESIDENCE',
+        x: prop.x || 54,
+        y: prop.y || 76,
+        desc: prop.desc || 'Personal residence',
+        floorsCount: prop.floorsCount || 2,
+        isPrimaryHome: isPrimary,
+        propertyRef: prop,
+      };
+    });
+  }, [ownedProperties, activeHome, currentState.id, previewState, userProfile?.spawnStateId, userProfile?.socialClass, userProfile?.firstName]);
+
+  // Jump to location with smooth 3D aerial glide and close dropdown automatically
   const handleFlyToLocation = (loc: LocationPOI) => {
     setIsLocationsDropdownOpen(false);
-    const targetCanvasX = (loc.x / 100) * 3500 + 150;
-    const targetCanvasY = (loc.y / 100) * 2500 + 150;
-    const viewW = typeof window !== 'undefined' ? window.innerWidth : 1200;
-    const viewH = typeof window !== 'undefined' ? window.innerHeight : 800;
-    const newPanX = -targetCanvasX * zoom + viewW / 2;
-    const newPanY = -targetCanvasY * zoom + viewH / 2;
-    setPanOffset({
-      x: Math.max(-2900, Math.min(400, newPanX)),
-      y: Math.max(-2000, Math.min(400, newPanY)),
-    });
+    map3dRef.current?.flyToPercent(loc.x, loc.y, 76);
     setHighlightedLocationId(loc.id);
     triggerSound?.('coin');
-    onShowToast(`📍 Moved map to ${loc.name}!`);
+    onShowToast(`📍 Moved camera to ${loc.name}!`);
   };
 
   // Realistic NEPA Power Grid State (Abuja ~92% light ON, Lagos ~68%, varying across Nigeria; completely hidden & 100% in Canada)
@@ -1014,29 +939,27 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
 
   return (
     <div
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onWheel={handleWheel}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      className={`fixed inset-0 w-screen h-screen overflow-hidden bg-[#0a1610] select-none text-white touch-none ${
-        isDragging ? 'cursor-grabbing' : 'cursor-grab'
-      }`}
+      className="fixed inset-0 w-screen h-screen overflow-hidden bg-[#0a1610] select-none text-white"
     >
       {/* =========================================================================
           TOP FLOATING CAPSULES (HUD STATUS BAR)
           ========================================================================= */}
       <div className="absolute top-1.5 sm:top-2.5 inset-x-0 z-30 flex flex-col items-center gap-1 sm:gap-1.5 pointer-events-none px-1 sm:px-2 select-none">
         {/* ROW 1: FLOATING STATUS CAPSULE */}
-        <div className="pointer-events-auto bg-[#101b14]/95 border border-zinc-700/70 rounded-full px-2.5 sm:px-5 py-1 sm:py-1.5 flex items-center gap-2 sm:gap-4 text-[10px] sm:text-xs shadow-2xl backdrop-blur-md max-w-[98vw] overflow-x-auto no-scrollbar">
+        <div className="pointer-events-auto bg-[#101b14]/95 border border-zinc-700/70 rounded-full px-2.5 sm:px-5 py-1 sm:py-1.5 flex items-center gap-2 sm:gap-4 text-[10px] sm:text-xs shadow-2xl max-w-[98vw] overflow-x-auto no-scrollbar">
           {/* Weather & Time */}
           <div
             className="flex items-center gap-1 sm:gap-1.5 text-zinc-100 font-bold shrink-0"
-            title={`Live Weather in ${displayedStateName}: ${liveWeather?.temperatureC ?? 28}°C · ${liveWeather?.conditionLabel ?? 'Humid'}`}
+            title={`Live Weather in ${displayedStateName}: ${liveWeather?.temperatureC ?? 28}°C · ${liveWeather?.conditionLabel ?? 'Clear'} · Wind ${liveWeather?.windSpeedKmh ?? 10} km/h`}
           >
             <span>{liveWeather?.conditionEmoji || '☀️'}</span>
+            <span className="font-mono text-[10px] sm:text-xs text-amber-300">
+              {liveWeather?.temperatureC ?? 28}°C
+            </span>
+            <span className="hidden md:inline text-[10px] text-emerald-300/90 font-semibold">
+              {liveWeather?.conditionLabel || 'Clear'}
+            </span>
+            <span className="text-zinc-500">·</span>
             <span className="font-mono text-[10px] sm:text-xs">
               {realDate} · {realClock}
             </span>
@@ -1437,555 +1360,78 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       )}
 
       {/* =========================================================================
-          ISOMETRIC 3D MAP VIEWPORT (ANGLED FROM THE SIDE MATCHING LAGOS LIFE)
+          TRUE 3D TOP-DOWN AERIAL CITY MAP VIEWPORT (THREE.JS WEBGL)
           ========================================================================= */}
-      <div
-        className="absolute inset-0 overflow-hidden pointer-events-auto"
-        style={{
-          perspective: '1350px',
-          perspectiveOrigin: '50% 50%',
+      <NaijaCity3DCanvas
+        ref={map3dRef}
+        activeStateId={activeStateId}
+        locations={activeStateLocations}
+        homeLocations={activeHomeLocations}
+        stateLandmarks={stateLandmarks}
+        userProfile={userProfile}
+        showLocationNames={showLocationNames}
+        highlightedLocationId={highlightedLocationId}
+        liveWeather={liveWeather}
+        nepaLightOn={nepaLightOn}
+        trafficLevelId={TRAFFIC_CONDITIONS[trafficIndex].id}
+        reduceShadows={deviceOptimizationProfile?.reducedShadows || deviceType === 'mobile'}
+        isModalBlocking={
+          isPhoneOpen ||
+          isBuyModeOpen ||
+          isAirportModalOpen ||
+          Boolean(pendingCommuteTarget) ||
+          Boolean(travelBookingModalState) ||
+          Boolean(activeInteriorLocation) ||
+          Boolean(activeFlightSimulation) ||
+          Boolean(activeBusSimulation)
+        }
+        onLocationClick={(loc, homeProp) => {
+          if (homeProp && onSelectActiveHome) {
+            onSelectActiveHome(homeProp);
+          }
+          handleLocationClick(loc);
         }}
-      >
-        <div
-          ref={mapContainerRef}
-          style={{
-            width: '4000px',
-            height: '3000px',
-            transform: `translate3d(${panOffset.x}px, ${panOffset.y}px, 0) scale(${zoom}) rotateX(38deg) rotateZ(-12deg)`,
-            transformOrigin: '2000px 1500px',
-            transformStyle: deviceType === 'mobile' ? 'flat' : 'preserve-3d',
-            willChange: 'transform',
-            transition: 'none',
-          }}
-          className="relative bg-[#0d2215] select-none"
-        >
-          {/* VIBRANT TERRAIN TEXTURE GRID WITH LUSH MEADOWS */}
-          <div className="absolute inset-0 bg-gradient-to-br from-[#123121] via-[#0f281b] to-[#0a1b11]" />
-          <div className="absolute inset-0 opacity-25 bg-[radial-gradient(#22c55e_1.5px,transparent_1.5px)] [background-size:40px_40px]" />
-
-          {/* PERIMETER FOREST OF LOW-POLY TROPICAL & EVERGREEN TREES */}
-          {Array.from({ length: deviceType === 'mobile' ? 16 : 48 }).map((_, i) => {
-            const total = deviceType === 'mobile' ? 16 : 48;
-            const third = Math.floor(total / 3);
-            const isLeft = i < third;
-            const isRight = i >= third && i < third * 2;
-            const posX = isLeft
-              ? 50 + (i % 3) * 45
-              : isRight
-              ? 3680 + (i % 3) * 50
-              : 250 + (i - third * 2) * 220;
-            const posY = isLeft
-              ? 200 + i * (deviceType === 'mobile' ? 360 : 160)
-              : isRight
-              ? 200 + (i - third) * (deviceType === 'mobile' ? 360 : 160)
-              : 60 + ((i % 3) * 40);
-            return (
-              <div
-                key={`perimeter-tree-${i}`}
-                style={{ left: `${posX}px`, top: `${posY}px` }}
-                className="absolute pointer-events-none z-10 flex flex-col items-center"
-              >
-                <div
-                  className={`w-12 h-14 bg-gradient-to-t from-emerald-950 via-emerald-800 to-green-700 rounded-full ${
-                    deviceType === 'mobile' ? 'border border-emerald-700/30' : 'shadow-lg border border-emerald-600/40'
-                  } opacity-90`}
-                />
-                <div className="w-2.5 h-3.5 bg-amber-950 rounded-b" />
-              </div>
-            );
-          })}
-
-          {/* =====================================================================
-              1. NATURAL LANDMARKS (ZUMA ROCK ON LEFT, ASO ROCK ON RIGHT)
-              ===================================================================== */}
-          {/* LEFT MONOLITH: ZUMA ROCK (MASSIVE DARK BASALT PILLAR WITH MOUNTAIN BADGE) */}
-          <div
-            style={{ left: '160px', top: '780px' }}
-            className="absolute w-72 h-[420px] pointer-events-none z-20 flex flex-col items-center"
-          >
-            {/* Mountain badge icon matching reference photo */}
-            <div className="px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-700 shadow-xl flex items-center gap-1.5 text-xs text-amber-300 font-bold mb-2 backdrop-blur-md">
-              <span>⛰️</span>
-              <span className="text-[10px] uppercase tracking-wider font-mono">Zuma Monolith</span>
-            </div>
-            {/* Rock Column */}
-            <div className="w-64 h-80 bg-gradient-to-b from-[#2a3036] via-[#1a2024] to-[#0d1114] rounded-t-[100px] rounded-b-[40px] border-4 border-zinc-700/80 shadow-[0_35px_70px_rgba(0,0,0,0.9)] relative overflow-hidden flex flex-col items-center justify-end pb-6">
-              {/* Vertical basalt striations */}
-              <div className="absolute inset-0 opacity-30 bg-[repeating-linear-gradient(90deg,transparent,transparent_12px,#000_12px,#000_16px)]" />
-              <div className="w-52 h-64 bg-gradient-to-t from-zinc-950 via-zinc-900 to-zinc-750 rounded-t-[80px] opacity-70 border-t-2 border-zinc-500/80" />
-              <span className="text-xs font-mono font-black text-amber-300 uppercase tracking-widest relative z-10 drop-shadow">
-                {stateLandmarks.primaryLandmarkName}
-              </span>
-              <span className="text-[9px] text-zinc-400 font-mono relative z-10">
-                {stateLandmarks.primaryLandmarkSubtitle}
-              </span>
-            </div>
-            {/* Surrounding Boulders at Base */}
-            <div className="flex gap-2 -mt-4">
-              <div className="w-14 h-10 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-md" />
-              <div className="w-18 h-12 rounded-3xl bg-zinc-850 border border-zinc-700 shadow-lg" />
-              <div className="w-14 h-10 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-md" />
-            </div>
-          </div>
-
-          {/* RIGHT MONOLITH: ASO ROCK (MASSIVE DARK FACETED GRANITE MONOLITH) */}
-          <div
-            style={{ left: '3320px', top: '920px' }}
-            className="absolute w-88 h-[440px] pointer-events-none z-20 flex flex-col items-center"
-          >
-            {/* Mountain badge icon */}
-            <div className="px-2.5 py-1 rounded-full bg-zinc-900/90 border border-zinc-700 shadow-xl flex items-center gap-1.5 text-xs text-amber-300 font-bold mb-2 backdrop-blur-md">
-              <span>⛰️</span>
-              <span className="text-[10px] uppercase tracking-wider font-mono">Aso Monolith</span>
-            </div>
-            {/* Faceted Boulder */}
-            <div className="w-80 h-80 bg-gradient-to-bl from-[#2a3036] via-[#161c20] to-[#090d10] rounded-[70px] border-4 border-zinc-700/80 shadow-[0_35px_70px_rgba(0,0,0,0.9)] relative overflow-hidden flex flex-col items-center justify-center p-4">
-              {/* Angular facet overlays */}
-              <div className="absolute top-2 left-6 w-32 h-32 bg-zinc-700/20 rotate-45 border-r border-zinc-500/30" />
-              <div className="absolute bottom-4 right-8 w-40 h-40 bg-zinc-950/60 rotate-12 border-l border-zinc-700/40" />
-              <span className="text-sm font-mono font-black text-amber-300 uppercase tracking-widest relative z-10 drop-shadow">
-                {stateLandmarks.secondaryLandmarkName}
-              </span>
-              <span className="text-[9px] text-zinc-400 font-mono relative z-10">
-                {stateLandmarks.secondaryLandmarkSubtitle}
-              </span>
-            </div>
-            {/* Base Foothills */}
-            <div className="flex gap-2 -mt-4">
-              <div className="w-20 h-12 rounded-3xl bg-zinc-850 border border-zinc-700 shadow-md" />
-              <div className="w-24 h-14 rounded-3xl bg-zinc-900 border border-zinc-700 shadow-lg" />
-              <div className="w-18 h-10 rounded-2xl bg-zinc-850 border border-zinc-700 shadow-md" />
-            </div>
-          </div>
-
-          {/* NORTH-WEST: JABI LAKE (DEEP SAPPHIRE WATER WITH SHORELINE & SPEEDBOAT) */}
-          <div
-            style={{ left: '600px', top: '720px' }}
-            className="absolute w-[560px] h-[300px] bg-gradient-to-b from-[#0f4068] via-[#092a48] to-[#041624] rounded-[180px] border-4 border-[#38bdf8]/70 shadow-[0_20px_50px_rgba(0,0,0,0.8)] flex flex-col items-center justify-center pointer-events-none overflow-hidden z-15"
-          >
-            {/* Animated water shimmer rings */}
-            <div className="absolute inset-0 opacity-40 bg-[radial-gradient(#38bdf8_2px,transparent_2px)] [background-size:20px_20px] animate-pulse" />
-            {/* Lakeside Boardwalk Pier */}
-            <div className="absolute bottom-4 left-20 w-32 h-6 bg-amber-900/80 border-t border-amber-600/60 rounded" />
-            {/* White Speedboat with Water Ripple */}
-            <div className="absolute top-12 right-24 flex flex-col items-center animate-bounce duration-1000">
-              <span className="text-4xl drop-shadow-lg">🚤</span>
-              <span className="text-[8px] font-mono font-bold text-sky-200 bg-black/75 px-1.5 py-0.5 rounded border border-sky-400/40">
-                Speedboat Dock
-              </span>
-            </div>
-            {/* Lake Typography */}
-            <span className="text-2xl font-black tracking-[0.25em] text-white uppercase drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
-              JABI LAKE
-            </span>
-            <span className="text-xs text-sky-300 font-bold tracking-wider font-mono">
-              Federal Waterfront & Promenade
-            </span>
-          </div>
-
-          {/* =====================================================================
-              2. AIRPORT RUNWAY 27 & HUB (BOTTOM-LEFT MATCHING REFERENCE PHOTO)
-              ===================================================================== */}
-          <div
-            onClick={() => setIsAirportModalOpen(true)}
-            style={{ left: '260px', top: '2280px' }}
-            className="interactive-pin absolute w-[880px] h-[300px] bg-zinc-950 border-4 border-sky-500/70 shadow-[0_0_40px_rgba(14,165,233,0.35)] rounded-3xl flex flex-col justify-between p-5 cursor-pointer group hover:scale-[1.01] transition-all z-20"
-          >
-            {/* Floating Airport Logo Badge with Hover Glow */}
-            <div className="absolute -top-5 left-10 flex flex-col items-center pointer-events-none z-30">
-              <div className="w-10 h-10 rounded-full bg-zinc-950 border-2 border-sky-400 shadow-[0_0_20px_rgba(14,165,233,0.8)] flex items-center justify-center group-hover:scale-125 transition-transform">
-                <span className="text-lg leading-none drop-shadow">✈️</span>
-              </div>
-            </div>
-
-            {/* Runway Header */}
-            <div className="flex items-center justify-between text-xs font-mono font-bold text-zinc-300 pl-10">
-              <div className="flex items-center gap-2.5">
-                <Plane className="w-5 h-5 text-sky-400 animate-pulse" />
-                <span className="text-base font-black text-white uppercase tracking-wider">
-                  {stateLandmarks.airportName}
-                </span>
-                <span className="px-2 py-0.5 rounded bg-sky-950 border border-sky-400/60 text-[10px] text-sky-300 font-mono">
-                  ACTIVE AIRFIELD
-                </span>
-              </div>
-              <span className="px-3.5 py-1.5 bg-sky-500 hover:bg-sky-400 text-black font-black text-xs rounded-xl shadow-lg transition-transform group-hover:scale-105">
-                CLICK TO FLY ✈️
-              </span>
-            </div>
-
-            {/* Runway Asphalt Surface with "27" Number & Dashed Markings */}
-            <div className="relative w-full h-24 bg-[#141a22] border-y-2 border-zinc-600 rounded-xl flex items-center px-6 overflow-hidden">
-              {/* Runway threshold lines */}
-              <div className="flex flex-col gap-1 mr-4">
-                <div className="w-12 h-1.5 bg-white" />
-                <div className="w-12 h-1.5 bg-white" />
-                <div className="w-12 h-1.5 bg-white" />
-                <div className="w-12 h-1.5 bg-white" />
-              </div>
-
-              {/* BOLD RUNWAY NUMERAL "27" MATCHING REFERENCE PHOTO */}
-              <div className="text-5xl font-black font-mono tracking-tighter text-white/95 mr-6 drop-shadow select-none">
-                27
-              </div>
-
-              {/* Center dashed runway striping */}
-              <div className="flex-1 border-b-4 border-dashed border-amber-400/90 h-0 my-auto" />
-
-              {/* Taxiway turnoff lines */}
-              <div className="w-20 border-b-2 border-dashed border-sky-400/70 rotate-12 ml-4" />
-            </div>
-
-            {/* Parked Aircrafts at Gates */}
-            <div className="flex justify-around items-center pt-1 border-t border-zinc-800">
-              {[
-                { airline: 'Air Peace', gate: 'Gate 1', emoji: '✈️' },
-                { airline: 'Ibom Air', gate: 'Gate 2', emoji: '🛫' },
-                { airline: 'Green Africa', gate: 'Gate 3', emoji: '🛬' },
-                { airline: 'Max Air', gate: 'Gate 4', emoji: '✈️' },
-              ].map((f, idx) => (
-                <div key={idx} className="flex items-center gap-2 bg-zinc-900/80 px-3 py-1.5 rounded-xl border border-zinc-800">
-                  <span className="text-2xl drop-shadow group-hover:scale-110 transition-transform">{f.emoji}</span>
-                  <div>
-                    <div className="text-[11px] font-mono text-sky-300 font-bold">{f.airline}</div>
-                    <div className="text-[9px] text-zinc-400">{f.gate} · Terminal Concourse</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* =====================================================================
-              3. ASPHALT ROADWAY NETWORK (EXPRESSWAYS, BOULEVARDS & ROUNDABOUTS)
-              ===================================================================== */}
-          {/* East-West Primary Expressway 1 */}
-          <div className="absolute top-[1200px] left-0 w-full h-20 bg-[#151d26] border-y-2 border-zinc-650 pointer-events-none flex items-center shadow-lg">
-            <div className="w-full border-b-2 border-dashed border-amber-400/80 h-0.5" />
-          </div>
-
-          {/* East-West Primary Expressway 2 */}
-          <div className="absolute top-[2100px] left-0 w-full h-20 bg-[#151d26] border-y-2 border-zinc-650 pointer-events-none flex items-center shadow-lg">
-            <div className="w-full border-b-2 border-dashed border-amber-400/80 h-0.5" />
-          </div>
-
-          {/* North-South Primary Boulevard 1 */}
-          <div className="absolute top-0 left-[1300px] w-20 h-full bg-[#151d26] border-x-2 border-zinc-650 pointer-events-none flex justify-center shadow-lg">
-            <div className="h-full border-r-2 border-dashed border-amber-400/80 w-0.5" />
-          </div>
-
-          {/* North-South Primary Boulevard 2 */}
-          <div className="absolute top-0 left-[2550px] w-20 h-full bg-[#151d26] border-x-2 border-zinc-650 pointer-events-none flex justify-center shadow-lg">
-            <div className="h-full border-r-2 border-dashed border-amber-400/80 w-0.5" />
-          </div>
-
-          {/* Secondary Cross-Avenues */}
-          <div className="absolute top-[680px] left-0 w-full h-14 bg-[#18222c] border-y border-zinc-700/60 pointer-events-none flex items-center opacity-85">
-            <div className="w-full border-b border-dashed border-white/40 h-0.5" />
-          </div>
-          <div className="absolute top-0 left-[680px] w-14 h-full bg-[#18222c] border-x border-zinc-700/60 pointer-events-none flex justify-center opacity-85">
-            <div className="h-full border-r border-dashed border-white/40 w-0.5" />
-          </div>
-
-          {/* Roundabouts with central palm tree medians */}
-          {[
-            { x: 1260, y: 1160 },
-            { x: 2510, y: 1160 },
-            { x: 1260, y: 2060 },
-            { x: 2510, y: 2060 },
-          ].map((rb, idx) => (
-            <div
-              key={`roundabout-${idx}`}
-              style={{ left: `${rb.x}px`, top: `${rb.y}px` }}
-              className="absolute w-32 h-32 rounded-full bg-[#151d26] border-4 border-zinc-600 flex items-center justify-center pointer-events-none shadow-2xl z-15"
-            >
-              <div className="w-16 h-16 rounded-full bg-emerald-900 border-2 border-emerald-400 shadow-md flex items-center justify-center text-xl">
-                🌴
-              </div>
-            </div>
-          ))}
-
-          {/* Zebra Pedestrian Crossings at Intersections */}
-          {[
-            { x: 1265, y: 1120, w: 70, h: 16, horizontal: true },
-            { x: 1265, y: 1285, w: 70, h: 16, horizontal: true },
-            { x: 1215, y: 1165, w: 16, h: 70, horizontal: false },
-            { x: 1385, y: 1165, w: 16, h: 70, horizontal: false },
-            { x: 2515, y: 1120, w: 70, h: 16, horizontal: true },
-            { x: 2515, y: 1285, w: 70, h: 16, horizontal: true },
-            { x: 2515, y: 2020, w: 70, h: 16, horizontal: true },
-            { x: 2515, y: 2185, w: 70, h: 16, horizontal: true },
-          ].map((zb, i) => (
-            <div
-              key={`zebra-${i}`}
-              style={{ left: `${zb.x}px`, top: `${zb.y}px`, width: `${zb.w}px`, height: `${zb.h}px` }}
-              className="absolute pointer-events-none z-10 flex gap-1 opacity-70"
-            >
-              <div className="w-full h-full bg-[repeating-linear-gradient(90deg,#fff,#fff_4px,transparent_4px,transparent_8px)]" />
-            </div>
-          ))}
-
-          {/* Roadside Streetlamps with Warm Cones of Light */}
-          {[
-            { x: 1240, y: 1140 },
-            { x: 2490, y: 1140 },
-            { x: 1240, y: 2040 },
-            { x: 2490, y: 2040 },
-            { x: 700, y: 1200 },
-            { x: 1900, y: 1200 },
-            { x: 3100, y: 1200 },
-            { x: 700, y: 2100 },
-            { x: 1900, y: 2100 },
-            { x: 3100, y: 2100 },
-          ].map((lamp, i) => (
-            <div
-              key={`streetlamp-${i}`}
-              style={{ left: `${lamp.x}px`, top: `${lamp.y}px` }}
-              className="absolute pointer-events-none flex items-center justify-center z-15"
-            >
-              <div className="w-24 h-24 rounded-full bg-amber-400/15 blur-lg" />
-              <div className="w-3 h-3 rounded-full bg-amber-200 shadow" />
-            </div>
-          ))}
-
-          {/* =====================================================================
-              4. 3D ROADSIDE BILLBOARDS (CHOWDECK, AIR PEACE, GIGM, NAIJA PAY, NAIJABET)
-              ===================================================================== */}
-          {[
-            {
-              x: 520,
-              y: 1120,
-              title: 'CHOWDECK FOODS',
-              subtitle: '🍔 24/7 Fast Naija Delivery',
-              bg: 'from-pink-600 via-rose-700 to-amber-600',
-              border: 'border-pink-400',
-            },
-            {
-              x: 820,
-              y: 1480,
-              title: 'AIR PEACE NIGERIA',
-              subtitle: '✈️ Your Safety, Our Priority',
-              bg: 'from-sky-600 via-blue-700 to-indigo-800',
-              border: 'border-sky-400',
-            },
-            {
-              x: 1540,
-              y: 1100,
-              title: 'GIGM LOGISTICS',
-              subtitle: '🚌 Interstate Luxury Coach',
-              bg: 'from-amber-500 via-orange-600 to-red-700',
-              border: 'border-amber-400',
-            },
-            {
-              x: 2100,
-              y: 1280,
-              title: 'NAIJA PAY APP',
-              subtitle: '💳 0% Fees · Instant Alerts',
-              bg: 'from-emerald-600 via-teal-700 to-green-900',
-              border: 'border-emerald-400',
-            },
-            {
-              x: 2750,
-              y: 1120,
-              title: 'NAIJABET SPORTS',
-              subtitle: '⚽ 1000% Welcome Payout',
-              bg: 'from-purple-600 via-violet-700 to-indigo-900',
-              border: 'border-purple-400',
-            },
-            {
-              x: 2850,
-              y: 2020,
-              title: 'FRASER SUITES',
-              subtitle: '🏨 5-Star Executive Towers',
-              bg: 'from-yellow-600 via-amber-700 to-stone-900',
-              border: 'border-yellow-400',
-            },
-          ].map((bb, idx) => (
-            <div
-              key={`billboard-${idx}`}
-              style={{ left: `${bb.x}px`, top: `${bb.y}px` }}
-              className="absolute pointer-events-none z-20 flex flex-col items-center"
-            >
-              {/* Dual floodlights at top */}
-              <div className="flex justify-between w-36 px-2 mb-0.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_8px_#fff]" />
-                <div className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_8px_#fff]" />
-              </div>
-              {/* Billboard Screen */}
-              <div className={`w-40 h-20 rounded-xl bg-gradient-to-r ${bb.bg} border-2 ${bb.border} p-2 shadow-2xl flex flex-col justify-between text-center overflow-hidden`}>
-                <span className="text-[10px] font-black uppercase text-white tracking-wider drop-shadow">
-                  {bb.title}
-                </span>
-                <span className="text-[9px] font-bold text-amber-200 drop-shadow">
-                  {bb.subtitle}
-                </span>
-                <div className="w-full h-1 bg-white/40 rounded-full" />
-              </div>
-              {/* Dual steel support posts */}
-              <div className="flex justify-between w-28 px-4">
-                <div className="w-2 h-7 bg-zinc-700 border-x border-zinc-900" />
-                <div className="w-2 h-7 bg-zinc-700 border-x border-zinc-900" />
-              </div>
-            </div>
-          ))}
-
-
-
-          {/* =====================================================================
-              6. DISTRICT TYPOGRAPHY ON THE TURF (MATCHING REFERENCE PHOTO)
-              ===================================================================== */}
-          <div
-            style={{ left: '1720px', top: '1580px' }}
-            className="absolute pointer-events-none text-xl font-black tracking-[0.35em] text-emerald-950/60 font-mono uppercase z-10 select-none"
-          >
-            CENTRAL BUSINESS DISTRICT
-          </div>
-          <div
-            style={{ left: '2650px', top: '1480px' }}
-            className="absolute pointer-events-none text-lg font-black tracking-[0.35em] text-emerald-950/60 font-mono uppercase z-10 select-none"
-          >
-            THREE ARMS ZONE
-          </div>
-          <div
-            style={{ left: '1750px', top: '2280px' }}
-            className="absolute pointer-events-none text-lg font-black tracking-[0.35em] text-emerald-950/60 font-mono uppercase z-10 select-none"
-          >
-            GARKI DISTRICT
-          </div>
-          <div
-            style={{ left: '3000px', top: '2240px' }}
-            className="absolute pointer-events-none text-base font-black tracking-[0.35em] text-emerald-950/60 font-mono uppercase z-10 select-none"
-          >
-            ASOKORO
-          </div>
-
-          {/* =====================================================================
-              7. PLAYER'S PERSONAL HOUSE(S)
-              ===================================================================== */}
-          {(() => {
-            const stateProperties = (ownedProperties || []).filter(
-              (p) => !p.stateId || p.stateId.toLowerCase() === currentState.id.toLowerCase()
-            );
-
-            if (activeHome && (!activeHome.stateId || activeHome.stateId.toLowerCase() === currentState.id.toLowerCase())) {
-              if (!stateProperties.some((p) => p.id === activeHome.id)) {
-                stateProperties.push(activeHome);
-              }
-            }
-
-            if (stateProperties.length === 0 && (!userProfile?.spawnStateId || userProfile.spawnStateId === currentState.id)) {
-              const defaultX = (userProfile?.socialClass === 'nepo' ? 74 : userProfile?.socialClass === 'mapo' ? 52 : 36) * 35;
-              const defaultY = (userProfile?.socialClass === 'nepo' ? 32 : userProfile?.socialClass === 'mapo' ? 48 : 70) * 25;
-              const starterHomeLoc: LocationPOI = {
-                id: 'player_home',
-                name: `${userProfile?.firstName || 'Citizen'}'s Residence`,
-                type: 'home',
-                tagLabel: 'MY RESIDENCE',
-                x: 50,
-                y: 80,
-                desc: 'Personal private residence',
-                floorsCount: userProfile?.socialClass === 'nepo' ? 3 : 1,
-              };
-              return (
-                <LagosLifeBuilding
-                  key="player-personal-house-starter"
-                  location={starterHomeLoc}
-                  isHome={true}
-                  homeOwnerName={userProfile?.firstName}
-                  showName={showLocationNames}
-                  reducedShadows={deviceOptimizationProfile?.reducedShadows || deviceType === 'mobile'}
-                  isHighlighted={highlightedLocationId === 'player_home'}
-                  style={{ left: `${defaultX}px`, top: `${defaultY}px` }}
-                  onClick={() => handleLocationClick(starterHomeLoc)}
-                />
-              );
-            }
-
-            return stateProperties.map((prop) => {
-              const isPrimary = !activeHome || activeHome?.id === prop.id;
-              const homeX = prop.x ? (prop.x / 100) * 3500 + 150 : 2000;
-              const homeY = prop.y ? (prop.y / 100) * 2500 + 150 : 2200;
-              const propHomeLoc: LocationPOI = {
-                id: prop.id,
-                name: prop.title,
-                type: 'home',
-                tagLabel: isPrimary ? 'PRIMARY HOME' : 'RESIDENCE',
-                x: prop.x,
-                y: prop.y,
-                desc: prop.desc || 'Personal residence',
-                floorsCount: prop.floorsCount || 2,
-              };
-
-              return (
-                <LagosLifeBuilding
-                  key={`player-home-${prop.id}`}
-                  location={propHomeLoc}
-                  isHome={true}
-                  homeOwnerName={userProfile?.firstName}
-                  showName={showLocationNames}
-                  reducedShadows={deviceOptimizationProfile?.reducedShadows || deviceType === 'mobile'}
-                  isHighlighted={highlightedLocationId === prop.id}
-                  style={{ left: `${homeX}px`, top: `${homeY}px` }}
-                  onClick={() => {
-                    if (onSelectActiveHome) onSelectActiveHome(prop);
-                    handleLocationClick(propHomeLoc);
-                  }}
-                />
-              );
-            });
-          })()}
-
-          {/* =====================================================================
-              8. STATE-SPECIFIC REALISTIC BUILDINGS WITH FLOATING CATEGORY LOGOS
-              ===================================================================== */}
-          {(() => {
-            const isMobile = deviceType === 'mobile' || !!deviceOptimizationProfile?.reducedShadows;
-
-            return activeStateLocations.map((loc) => {
-              const posX = (loc.x / 100) * 3500 + 150;
-              const posY = (loc.y / 100) * 2500 + 150;
-              const isHighlighted = loc.id === highlightedLocationId;
-
-              return (
-                <LagosLifeBuilding
-                  key={loc.id}
-                  location={loc}
-                  showName={showLocationNames}
-                  reducedShadows={isMobile}
-                  isHighlighted={isHighlighted}
-                  style={{
-                    left: `${posX}px`,
-                    top: `${posY}px`,
-                  }}
-                  onClick={() => handleLocationClick(loc)}
-                />
-              );
-            });
-          })()}
-        </div>
-      </div>
+        onAirportClick={() => {
+          if (previewState) {
+            onShowToast(`You are currently previewing ${previewState.name}! Travel here by Bus or Plane to use this airport.`);
+            return;
+          }
+          setIsAirportModalOpen(true);
+          triggerSound?.('stamp');
+        }}
+        onZoomPercentChange={setZoomPercent}
+      />
 
       {/* =========================================================================
-          ZOOM IN / OUT FLOATING CONTROLS
+          ZOOM IN / OUT / AERIAL RESET FLOATING CONTROLS
           ========================================================================= */}
-      <div className="absolute right-5 bottom-24 z-35 pointer-events-auto flex flex-col gap-2 bg-[#101b14]/90 border border-zinc-700/80 p-1.5 rounded-2xl shadow-2xl backdrop-blur-md">
+      <div className="absolute right-5 bottom-24 z-35 pointer-events-auto flex flex-col gap-1.5 bg-[#101b14]/95 border border-zinc-700/80 p-1.5 rounded-2xl shadow-2xl">
         <button
           type="button"
-          onClick={() => setZoom((z) => Math.min(2.0, Number((z + 0.15).toFixed(2))))}
+          onClick={() => map3dRef.current?.zoomByFactor(0.8)}
           className="w-8 h-8 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-black text-base flex items-center justify-center transition-colors cursor-pointer border border-zinc-700"
           title="Zoom In"
         >
           +
         </button>
         <div className="text-[9px] font-mono font-bold text-center text-zinc-400 select-none">
-          {Math.round(zoom * 100)}%
+          {zoomPercent}%
         </div>
         <button
           type="button"
-          onClick={() => setZoom((z) => Math.max(0.6, Number((z - 0.15).toFixed(2))))}
+          onClick={() => map3dRef.current?.zoomByFactor(1.24)}
           className="w-8 h-8 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-black text-base flex items-center justify-center transition-colors cursor-pointer border border-zinc-700"
           title="Zoom Out"
         >
           −
+        </button>
+        <button
+          type="button"
+          onClick={() => map3dRef.current?.resetAerialView()}
+          className="w-8 h-8 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 flex items-center justify-center transition-colors cursor-pointer border border-emerald-700/60"
+          title="Reset Top-Down Aerial Camera"
+        >
+          <Compass className="w-4 h-4" />
         </button>
       </div>
 

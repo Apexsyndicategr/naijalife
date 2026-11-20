@@ -1402,6 +1402,94 @@ app.post('/api/snapchat/plus', (req, res) => {
   return res.json({ success: true, message: 'Snapchat+ Activated! ⭐️ Gold Star Badge & VIP Features Unlocked!' });
 });
 
+// Real-time meteorological cache (keyed by lat/lon, 10-min TTL)
+const serverWeatherCache = new Map<string, { payload: any; expiresAt: number }>();
+
+const WEATHER_STATE_COORDS: Record<string, { lat: number; lon: number; name: string; tz: string }> = {
+  lagos: { lat: 6.5244, lon: 3.3792, name: 'Lagos', tz: 'Africa/Lagos' },
+  fct: { lat: 9.0765, lon: 7.3986, name: 'Abuja FCT', tz: 'Africa/Lagos' },
+  fct_abuja: { lat: 9.0765, lon: 7.3986, name: 'Abuja FCT', tz: 'Africa/Lagos' },
+  abuja: { lat: 9.0765, lon: 7.3986, name: 'Abuja FCT', tz: 'Africa/Lagos' },
+  canada: { lat: 43.6532, lon: -79.3832, name: 'Toronto, Canada', tz: 'America/Toronto' },
+  imo: { lat: 5.485, lon: 7.035, name: 'Imo (Owerri)', tz: 'Africa/Lagos' },
+  rivers: { lat: 4.8156, lon: 7.0498, name: 'Rivers (Port Harcourt)', tz: 'Africa/Lagos' },
+  kano: { lat: 12.0022, lon: 8.592, name: 'Kano', tz: 'Africa/Lagos' },
+  oyo: { lat: 7.3775, lon: 3.947, name: 'Oyo (Ibadan)', tz: 'Africa/Lagos' },
+  enugu: { lat: 6.4584, lon: 7.5464, name: 'Enugu', tz: 'Africa/Lagos' },
+  delta: { lat: 6.1982, lon: 6.7329, name: 'Delta (Asaba)', tz: 'Africa/Lagos' },
+  kaduna: { lat: 10.5105, lon: 7.4165, name: 'Kaduna', tz: 'Africa/Lagos' },
+  plateau: { lat: 9.8965, lon: 8.8583, name: 'Plateau (Jos)', tz: 'Africa/Lagos' },
+  akwa_ibom: { lat: 5.0377, lon: 7.9128, name: 'Akwa Ibom (Uyo)', tz: 'Africa/Lagos' },
+  anambra: { lat: 6.2209, lon: 7.0723, name: 'Anambra (Awka)', tz: 'Africa/Lagos' },
+  ogun: { lat: 7.1557, lon: 3.3451, name: 'Ogun (Abeokuta)', tz: 'Africa/Lagos' },
+  edo: { lat: 6.335, lon: 5.6037, name: 'Edo (Benin City)', tz: 'Africa/Lagos' },
+  borno: { lat: 11.8333, lon: 13.15, name: 'Borno (Maiduguri)', tz: 'Africa/Lagos' },
+  sokoto: { lat: 13.0609, lon: 5.2476, name: 'Sokoto', tz: 'Africa/Lagos' },
+  cross_river: { lat: 4.9757, lon: 8.3417, name: 'Cross River (Calabar)', tz: 'Africa/Lagos' },
+  benue: { lat: 7.7321, lon: 8.5391, name: 'Benue (Makurdi)', tz: 'Africa/Lagos' },
+  kwara: { lat: 8.4966, lon: 4.5421, name: 'Kwara (Ilorin)', tz: 'Africa/Lagos' },
+  ondo: { lat: 7.2571, lon: 5.2058, name: 'Ondo (Akure)', tz: 'Africa/Lagos' },
+  osun: { lat: 7.7827, lon: 4.5418, name: 'Osun (Osogbo)', tz: 'Africa/Lagos' },
+  ekiti: { lat: 7.6214, lon: 5.2215, name: 'Ekiti (Ado-Ekiti)', tz: 'Africa/Lagos' },
+  abia: { lat: 5.526, lon: 7.4896, name: 'Abia (Umuahia)', tz: 'Africa/Lagos' },
+  ebonyi: { lat: 6.3249, lon: 8.1137, name: 'Ebonyi (Abakaliki)', tz: 'Africa/Lagos' },
+  kogi: { lat: 7.8023, lon: 6.7333, name: 'Kogi (Lokoja)', tz: 'Africa/Lagos' },
+  nasarawa: { lat: 8.4932, lon: 8.5153, name: 'Nasarawa (Lafia)', tz: 'Africa/Lagos' },
+  niger: { lat: 9.6139, lon: 6.5569, name: 'Niger (Minna)', tz: 'Africa/Lagos' },
+  adamawa: { lat: 9.2094, lon: 12.4818, name: 'Adamawa (Yola)', tz: 'Africa/Lagos' },
+  bauchi: { lat: 10.3158, lon: 9.8442, name: 'Bauchi', tz: 'Africa/Lagos' },
+  gombe: { lat: 10.2897, lon: 11.1673, name: 'Gombe', tz: 'Africa/Lagos' },
+  taraba: { lat: 8.8937, lon: 11.3614, name: 'Taraba (Jalingo)', tz: 'Africa/Lagos' },
+  yobe: { lat: 11.747, lon: 11.9608, name: 'Yobe (Damaturu)', tz: 'Africa/Lagos' },
+  jigawa: { lat: 11.7583, lon: 9.3389, name: 'Jigawa (Dutse)', tz: 'Africa/Lagos' },
+  katsina: { lat: 12.9908, lon: 7.6018, name: 'Katsina', tz: 'Africa/Lagos' },
+  kebbi: { lat: 12.4539, lon: 4.1975, name: 'Kebbi (Birnin Kebbi)', tz: 'Africa/Lagos' },
+  zamfara: { lat: 12.1628, lon: 6.6614, name: 'Zamfara (Gusau)', tz: 'Africa/Lagos' },
+  bayelsa: { lat: 4.9267, lon: 6.2676, name: 'Bayelsa (Yenagoa)', tz: 'Africa/Lagos' },
+};
+
+app.get('/api/weather', async (req, res) => {
+  const stateId = String(req.query.stateId || 'lagos').toLowerCase().trim();
+  const coords = WEATHER_STATE_COORDS[stateId] || WEATHER_STATE_COORDS.lagos;
+  const now = Date.now();
+  const cached = serverWeatherCache.get(stateId);
+  if (cached && cached.expiresAt > now) {
+    return res.json(cached.payload);
+  }
+
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current=temperature_2m,relative_humidity_2m,is_day,precipitation,rain,showers,snowfall,weather_code,cloud_cover,wind_speed_10m&timezone=${encodeURIComponent(coords.tz)}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      throw new Error(`Open-Meteo HTTP ${resp.status}`);
+    }
+    const json = await resp.json();
+    const cur = json.current || {};
+    const payload = {
+      ok: true,
+      stateId,
+      locationName: coords.name,
+      timezone: coords.tz,
+      temperatureC: Math.round(Number(cur.temperature_2m ?? 26)),
+      humidityPct: Math.round(Number(cur.relative_humidity_2m ?? 70)),
+      isDay: Number(cur.is_day ?? 1) === 1,
+      precipitationMm: Number(cur.precipitation ?? 0),
+      rainMm: Number(cur.rain ?? 0),
+      snowfallCm: Number(cur.snowfall ?? 0),
+      weatherCode: Number(cur.weather_code ?? 0),
+      cloudCoverPct: Math.round(Number(cur.cloud_cover ?? 25)),
+      windSpeedKmh: Math.round(Number(cur.wind_speed_10m ?? 10)),
+      source: 'live_open_meteo',
+      fetchedAt: new Date().toISOString(),
+    };
+    serverWeatherCache.set(stateId, { payload, expiresAt: now + 10 * 60 * 1000 });
+    return res.json(payload);
+  } catch (err) {
+    console.warn('Weather API upstream failed:', err);
+    return res.status(502).json({ ok: false, error: 'Weather service unavailable' });
+  }
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', citizensCount: Object.keys(citizensDB).length, time: new Date().toISOString() });
