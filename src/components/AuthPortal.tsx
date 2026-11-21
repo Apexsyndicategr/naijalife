@@ -39,6 +39,11 @@ import { NIGERIA_36_STATES_ALPHABETICAL } from '../data/stateLocationsData';
 import { CANADA_STATE_DATA } from '../data/canadaLocations150';
 import { formatNaira } from '../utils/formatNaira';
 import {
+  generateWalletAccountNumber,
+  getStarterClothingForGender,
+  getStarterHairstylesForGender,
+} from '../config/economyConfig';
+import {
   OWNER_EMAIL,
   OWNER_USERNAME,
   validateBirthdayInput,
@@ -207,9 +212,13 @@ function buildStarterProfile(params: {
     isOwner: false,
     isOwnerAccount: false,
     isVerified: false,
+    walletAccountNumber: generateWalletAccountNumber(`${username}_${email}`),
     avatar,
     spawnStateId,
     lastLocationStateId: spawnStateId,
+    currentCountry: 'nigeria',
+    migratedToNigeriaOriginalStateV1: true,
+    immigrationStatus: 'NIGERIA_RESIDENT',
     socialClass,
     phoneModel,
     cashNaira: startingCash,
@@ -221,6 +230,7 @@ function buildStarterProfile(params: {
     cashUSD: socialClass === 'nepo' ? 5000 : socialClass === 'mapo' ? 200 : 0,
     energy: 100,
     hunger: 95,
+    thirst: 95,
     health: 100,
     happiness: socialClass === 'nepo' ? 95 : 85,
     inventory: [
@@ -236,6 +246,10 @@ function buildStarterProfile(params: {
     fatherRentSubsidyPct: fatherSubsidy,
     completedCourses: [],
     furnitureBought: [],
+    ownedClothing: getStarterClothingForGender(avatar.gender),
+    ownedHairstyles: getStarterHairstylesForGender(avatar.gender),
+    houseLayouts: {},
+    storedItems: [],
     receipts: [
       {
         id: 'rcpt_welcome',
@@ -328,11 +342,18 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [avatar, setAvatar] = useState<CharacterAvatar>({
     gender: 'male',
     skinTone: '#8d5524',
+    bodyBuild: 'average',
+    faceShape: 'oval',
+    eyeStyle: 'classic',
+    eyebrowStyle: 'natural',
+    noseStyle: 'balanced',
+    mouthStyle: 'neutral',
     hairstyle: 'fade',
     hairColor: '#18181b',
     outfit: 'streetwear',
     pants: 'jeans',
     shoes: 'sneakers',
+    height: 'average',
     accessory: 'designer_shades',
   });
   const [signupStateId, setSignupStateId] = useState('lagos');

@@ -3,40 +3,64 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   X,
-  Footprints,
-  Sparkles,
-  ArrowRight,
-  Layers,
-  ChevronUp,
-  Volume2,
-  CheckCircle2,
-  Zap,
-  Utensils,
-  Smile,
   LogOut,
+  Lightbulb,
+  LightbulbOff,
+  Paintbrush,
+  RotateCw,
+  Trash2,
+  Package,
+  Shirt,
+  Utensils,
+  Droplets,
+  HeartPulse,
+  Landmark,
+  Scissors,
+  Sparkles,
+  CheckCircle2,
+  ArrowUp,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   Bed,
   Tv,
-  Bath,
-  Coffee,
-  Laptop,
   Briefcase,
-  Building,
-  Plane,
-  Shield,
+  Building2,
   ShoppingBag,
-  HeartPulse,
-  Church,
-  Landmark,
-  Coins,
-  Music,
-  Users,
-  GraduationCap
+  ArrowRightLeft,
 } from 'lucide-react';
-import { UserProfile, PropertyAsset, LocationPOI, FurnitureItem } from '../types/game';
-import { CharacterRenderer } from './CharacterRenderer';
+import {
+  BankReceipt,
+  CharacterAvatar,
+  HouseLayoutData,
+  PlacedFurnitureItem,
+  PropertyAsset,
+  UserProfile,
+} from '../types/game';
+import { Interior3DCanvas } from './interior3d/Interior3DCanvas';
+import {
+  buildInteriorBlueprint,
+  InteractivePropSpec,
+  mapPoiTypeToInteriorCategory,
+} from './interior3d/interiorLayouts';
+import { CharacterCustomizer } from './CharacterCustomizer';
+import { BUY_MODE_FURNITURE_CATALOG } from '../data/assetsData';
+import { EXPANDED_CHOWDECK } from '../data/expandedLifeData';
+import {
+  CLOTHING_SHOP_CATALOG,
+  ECONOMY_CONFIG,
+  inferDrinkStats,
+  SALON_HAIRSTYLES_CATALOG,
+} from '../config/economyConfig';
+import {
+  executeServerFxExchange,
+  executeServerPurchase,
+  executeServerTransfer,
+} from '../services/economyService';
+import { formatNaira } from '../utils/formatNaira';
 
 export interface InteriorViewProps {
   location: {
@@ -49,11 +73,81 @@ export interface InteriorViewProps {
   userProfile: UserProfile;
   activeHome: PropertyAsset | null;
   onExit: () => void;
-  onUpdateStats: (effects: { energy?: number; hunger?: number; happiness?: number }) => void;
-  onUpdateMoney?: (deltaNGN: number) => void;
+  onUpdateStats: (effects: {
+    energy?: number;
+    hunger?: number;
+    thirst?: number;
+    health?: number;
+    happiness?: number;
+  }) => void;
+  onUpdateMoney?: (deltaNGN: number, deltaUSD?: number) => void;
+  onUpdateUserProfile?: (updatedProfile: UserProfile) => void;
+  onOpenPhoneApp?: (app: 'bank' | 'jobs' | 'properties' | 'immigration') => void;
   onShowToast: (message: string) => void;
   triggerSound?: (type: 'coin' | 'stamp' | 'alert' | 'success') => void;
 }
+
+type ActiveModalType =
+  | null
+  | 'kitchen'
+  | 'wardrobe'
+  | 'storage'
+  | 'food_menu'
+  | 'boutique'
+  | 'salon'
+  | 'bank';
+
+const DEFAULT_AVATAR: CharacterAvatar = {
+  gender: 'male',
+  skinTone: '#8d5524',
+  bodyBuild: 'average',
+  faceShape: 'oval',
+  eyeStyle: 'classic',
+  eyebrowStyle: 'natural',
+  noseStyle: 'balanced',
+  mouthStyle: 'neutral',
+  hairstyle: 'fade',
+  hairColor: '#18181b',
+  outfit: 'casual',
+  height: 'average',
+  accessory: 'none',
+};
+
+const COLD_DRINKS_AND_WATER = [
+  {
+    id: 'drink_eva_water',
+    name: 'Chilled Eva Bottled Water (75cl)',
+    category: 'Chilled Drinks',
+    cost: 500,
+    hunger: 2,
+    thirst: 65,
+    joy: 8,
+    icon: '💧',
+    desc: 'Crisp chilled table water that quenches thirst fast.',
+  },
+  {
+    id: 'drink_zobo_iced',
+    name: 'Spiced Iced Zobo & Pineapple',
+    category: 'Chilled Drinks',
+    cost: 1200,
+    hunger: 6,
+    thirst: 55,
+    joy: 16,
+    icon: '🍹',
+    desc: 'Fresh hibiscus blend infused with ginger and pineapple.',
+  },
+  {
+    id: 'drink_chapman_vip',
+    name: 'Lagos VIP Chapman Pitcher',
+    category: 'Chilled Drinks',
+    cost: 3500,
+    hunger: 8,
+    thirst: 62,
+    joy: 24,
+    icon: '🥂',
+    desc: 'Fruity cucumber-citrus mocktail served frost cold.',
+  },
+];
 
 export const InteriorView: React.FC<InteriorViewProps> = ({
   location,
@@ -62,667 +156,1180 @@ export const InteriorView: React.FC<InteriorViewProps> = ({
   onExit,
   onUpdateStats,
   onUpdateMoney,
+  onUpdateUserProfile,
+  onOpenPhoneApp,
   onShowToast,
   triggerSound,
 }) => {
-  // Avatar walking position (% coordinates on room floor)
-  const [avatarPos, setAvatarPos] = useState<{ x: number; y: number }>({ x: 50, y: 72 });
-  const [isWalking, setIsWalking] = useState<boolean>(false);
-  const [facingLeft, setFacingLeft] = useState<boolean>(false);
-  const [currentFloor, setCurrentFloor] = useState<number>(1);
-  const [showFloorsModal, setShowFloorsModal] = useState<boolean>(false);
-  const [activeInteraction, setActiveInteraction] = useState<string | null>(null);
+  const category = useMemo(
+    () => mapPoiTypeToInteriorCategory(location.type, location.name),
+    [location.type, location.name]
+  );
+  const isHome = category === 'house';
+  const propertyKey = useMemo(() => {
+    if (isHome) return activeHome?.id || location.id || 'player_home';
+    return location.id;
+  }, [isHome, activeHome?.id, location.id]);
 
-  const isHome = location.type === 'home' || location.id.startsWith('prop_') || location.id === 'starter_home';
-  const totalFloors = location.floorsCount || (isHome ? (activeHome?.floorsCount || 2) : 2);
+  const savedLayout: HouseLayoutData = useMemo(() => {
+    const existing = userProfile?.houseLayouts?.[propertyKey];
+    if (existing) return existing;
+    return {
+      propertyId: propertyKey,
+      wallTheme: 'cream',
+      floorTheme: 'oak',
+      lightsOn: true,
+      placedFurniture: [],
+    };
+  }, [userProfile?.houseLayouts, propertyKey]);
 
-  const walkTimerRef = useRef<any>(null);
+  const [lightsOn, setLightsOn] = useState<boolean>(savedLayout.lightsOn !== false);
+  const [isDecorateMode, setIsDecorateMode] = useState<boolean>(false);
+  const [selectedCustomId, setSelectedCustomId] = useState<string | null>(null);
+  const [activeModal, setActiveModal] = useState<ActiveModalType>(null);
+  const [statusBanner, setStatusBanner] = useState<string | null>(null);
 
-  // Handle floor click -> walk avatar to clicked coordinate with stepping animation
-  const handleFloorClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = ((e.clientX - rect.left) / rect.width) * 100;
-    const clickY = ((e.clientY - rect.top) / rect.height) * 100;
+  // Bank inside-building state
+  const [bankRecipient, setBankRecipient] = useState('');
+  const [bankAmount, setBankAmount] = useState('10000');
+  const [bankCurrency, setBankCurrency] = useState<'NGN' | 'CAD'>('NGN');
+  const [fxDirection, setFxDirection] = useState<'NGN_TO_CAD' | 'CAD_TO_NGN'>('NGN_TO_CAD');
+  const [fxAmount, setFxAmount] = useState('50000');
+  const [isBankBusy, setIsBankBusy] = useState(false);
 
-    // Constrain walking area within room walkable floor (Y between 42% and 86%)
-    const clampedX = Math.max(12, Math.min(88, clickX));
-    const clampedY = Math.max(45, Math.min(86, clickY));
+  const blueprint = useMemo(
+    () =>
+      buildInteriorBlueprint({
+        id: location.id,
+        name: location.name,
+        type: location.type,
+        houseLayout: savedLayout,
+      }),
+    [location.id, location.name, location.type, savedLayout]
+  );
 
-    // Turn avatar towards walking direction
-    setFacingLeft(clampedX < avatarPos.x);
-
-    // Calculate distance to adjust walk animation duration
-    const dist = Math.hypot(clampedX - avatarPos.x, clampedY - avatarPos.y);
-    const duration = Math.max(500, Math.min(1200, dist * 22));
-
-    setIsWalking(true);
-    setAvatarPos({ x: clampedX, y: clampedY });
-
-    clearTimeout(walkTimerRef.current);
-    walkTimerRef.current = setTimeout(() => {
-      setIsWalking(false);
-    }, duration);
+  const updateHouseLayout = (updater: (prev: HouseLayoutData) => HouseLayoutData) => {
+    if (!onUpdateUserProfile || !userProfile) return;
+    const nextLayout = updater(savedLayout);
+    onUpdateUserProfile({
+      ...userProfile,
+      houseLayouts: {
+        ...(userProfile.houseLayouts || {}),
+        [propertyKey]: nextLayout,
+      },
+    });
   };
 
-  // Perform object interactions
-  const handleInteractObject = (action: {
-    title: string;
-    energyEffect?: number;
-    hungerEffect?: number;
-    joyEffect?: number;
-    cost?: number;
-    message: string;
-    sound?: 'coin' | 'stamp' | 'success';
-  }) => {
-    setActiveInteraction(action.title);
-    setTimeout(() => setActiveInteraction(null), 2500);
+  const showActionBanner = (msg: string) => {
+    setStatusBanner(msg);
+    onShowToast(msg);
+    setTimeout(() => {
+      setStatusBanner((cur) => (cur === msg ? null : cur));
+    }, 3200);
+  };
 
-    if (action.cost && onUpdateMoney) {
-      const totalAvailable = (userProfile?.cashNaira || 0) + (userProfile?.bankNaira || 0);
-      if (totalAvailable < action.cost) {
-        onShowToast(`Insufficient funds! Need ₦${action.cost.toLocaleString()}`);
-        triggerSound?.('alert');
-        return;
-      }
-      onUpdateMoney(-action.cost);
+  const applyDebitWithReceipt = async (params: {
+    itemId: string;
+    title: string;
+    category: BankReceipt['category'];
+    costNGN: number;
+    unlockType?: 'clothing' | 'hairstyle' | 'furniture';
+    unlockKey?: string;
+    profilePatch?: Partial<UserProfile>;
+  }): Promise<boolean> => {
+    const totalAvail = (userProfile.cashNaira || 0) + (userProfile.bankNaira || 0);
+    if (!userProfile.isOwner && totalAvail < params.costNGN) {
+      onShowToast(`Insufficient funds! Need ${formatNaira(params.costNGN)}`);
+      triggerSound?.('alert');
+      return false;
     }
 
-    onUpdateStats({
-      energy: action.energyEffect || 0,
-      hunger: action.hungerEffect || 0,
-      happiness: action.joyEffect || 0,
+    const res = await executeServerPurchase({
+      itemId: params.itemId,
+      title: params.title,
+      category: params.category,
+      amountNGN: params.costNGN,
+      unlockType: params.unlockType,
+      unlockKey: params.unlockKey,
     });
 
-    onShowToast(action.message);
-    triggerSound?.(action.sound || 'coin');
+    if (res.success && res.account) {
+      onUpdateUserProfile?.({
+        ...userProfile,
+        ...(params.profilePatch || {}),
+        bankNaira: res.account.bankNaira,
+        cashNaira: res.account.cashNaira,
+        bankCAD: res.account.bankCAD,
+        ownedClothing: res.account.ownedClothing,
+        ownedHairstyles: res.account.ownedHairstyles,
+        furnitureBought: res.account.furnitureBought,
+        receipts: res.account.receipts,
+      });
+      return true;
+    }
+
+    // Fallback when running guest/local offline profile
+    if (res.error && !res.error.includes('Auth required') && !res.error.includes('Offline')) {
+      onShowToast(res.error);
+      triggerSound?.('alert');
+      return false;
+    }
+
+    if (params.costNGN > 0) {
+      onUpdateMoney?.(-params.costNGN);
+    }
+    const receipt: BankReceipt = {
+      id: `rcp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      title: params.title,
+      amount: params.costNGN,
+      date: new Date().toLocaleDateString('en-GB'),
+      type: 'debit',
+      category: params.category,
+      currency: 'NGN',
+    };
+    if (onUpdateUserProfile) {
+      onUpdateUserProfile({
+        ...userProfile,
+        ...(params.profilePatch || {}),
+        bankNaira: Math.max(0, (userProfile.bankNaira || 0) - params.costNGN),
+        receipts: [receipt, ...(userProfile.receipts || [])].slice(0, 60),
+      });
+    }
+    return true;
   };
 
-  const locType = location.type.toLowerCase();
+  const handleTriggerInteraction = async (prop: InteractivePropSpec) => {
+    switch (prop.actionType) {
+      case 'exit_door': {
+        triggerSound?.('stamp');
+        onExit();
+        return;
+      }
+      case 'toggle_lights': {
+        const next = !lightsOn;
+        setLightsOn(next);
+        updateHouseLayout((prev) => ({ ...prev, lightsOn: next }));
+        showActionBanner(next ? '💡 Interior lights switched ON' : '🌙 Interior lights dimmed OFF');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'sleep_bed': {
+        onUpdateStats({ energy: 55, health: 12, happiness: 18 });
+        showActionBanner('🛏️ Rested comfortably on your king bed (+55 Energy, +12 Health, +18 Joy)!');
+        triggerSound?.('success');
+        return;
+      }
+      case 'watch_tv': {
+        onUpdateStats({ happiness: 22, energy: 8 });
+        showActionBanner('📺 Watched Africa Magic & Afrobeats Live on OLED TV (+22 Joy, +8 Energy)!');
+        triggerSound?.('coin');
+        return;
+      }
+      case 'sit_sofa': {
+        onUpdateStats({ energy: 12, happiness: 12 });
+        showActionBanner('🛋️ Relaxed on the plush lounge seating (+12 Energy, +12 Joy).');
+        triggerSound?.('coin');
+        return;
+      }
+      case 'use_shower': {
+        onUpdateStats({ energy: 18, health: 14, happiness: 15 });
+        showActionBanner('🚿 Fresh shower & grooming routine complete (+18 Energy, +14 Health, +15 Joy)!');
+        triggerSound?.('success');
+        return;
+      }
+      case 'use_fridge':
+      case 'use_stove': {
+        setActiveModal('kitchen');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'open_wardrobe': {
+        setActiveModal('wardrobe');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'open_storage': {
+        setActiveModal('storage');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'order_food':
+      case 'buy_groceries': {
+        setActiveModal('food_menu');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'shop_clothing': {
+        setActiveModal('boutique');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'salon_chair': {
+        setActiveModal('salon');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'bank_teller':
+      case 'use_atm': {
+        setActiveModal('bank');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'hospital_heal': {
+        const fee = ECONOMY_CONFIG.hospitalHealFeeNGN;
+        const ok = await applyDebitWithReceipt({
+          itemId: `heal_${Date.now()}`,
+          title: `${location.name} Medical Treatment`,
+          category: 'medical',
+          costNGN: fee,
+        });
+        if (ok) {
+          onUpdateStats({ health: 100, energy: 35, thirst: 20, happiness: 15 });
+          showActionBanner(`🩺 Treated by resident physician (-${formatNaira(fee)}, Health 100%)!`);
+          triggerSound?.('success');
+        }
+        return;
+      }
+      case 'hotel_rest': {
+        const fee = ECONOMY_CONFIG.hotelNightFeeNGN;
+        const ok = await applyDebitWithReceipt({
+          itemId: `hotel_${Date.now()}`,
+          title: `${location.name} Suite Stay`,
+          category: 'lifestyle',
+          costNGN: fee,
+        });
+        if (ok) {
+          onUpdateStats({ energy: 100, health: 25, happiness: 35, thirst: 15 });
+          showActionBanner(`🛎️ Checked into luxury suite (-${formatNaira(fee)}, Energy 100%, +35 Joy)!`);
+          triggerSound?.('success');
+        }
+        return;
+      }
+      case 'gym_workout': {
+        const fee = ECONOMY_CONFIG.gymSessionFeeNGN;
+        const ok = await applyDebitWithReceipt({
+          itemId: `gym_${Date.now()}`,
+          title: `${location.name} Fitness Session`,
+          category: 'lifestyle',
+          costNGN: fee,
+        });
+        if (ok) {
+          onUpdateStats({ energy: -18, thirst: -18, hunger: -10, health: 24, happiness: 22 });
+          showActionBanner(`🏋️ Completed high-intensity workout (-${formatNaira(fee)}, +24 Health, +22 Joy)!`);
+          triggerSound?.('success');
+        }
+        return;
+      }
+      case 'work_desk': {
+        const pay = 18500;
+        onUpdateMoney?.(pay);
+        onUpdateStats({ energy: -14, hunger: -8, thirst: -12, happiness: 10 });
+        showActionBanner(`💼 Completed on-site contract task (+${formatNaira(pay)} earned)!`);
+        triggerSound?.('coin');
+        return;
+      }
+      case 'warehouse_shift': {
+        const pay = 12000;
+        onUpdateMoney?.(pay);
+        onUpdateStats({ energy: -18, hunger: -10, thirst: -15, happiness: 8 });
+        showActionBanner(`📦 Completed warehouse logistics dispatch shift (+${formatNaira(pay)})!`);
+        triggerSound?.('coin');
+        return;
+      }
+      case 'study_desk': {
+        onUpdateStats({ energy: -10, happiness: 20 });
+        showActionBanner('📚 Studied research journals & lecture notes (+20 Joy, Sharp Mind)!');
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'worship': {
+        onUpdateStats({ energy: 15, happiness: 30, health: 8 });
+        showActionBanner('🙏 Peaceful prayer & community fellowship (+30 Joy, +15 Energy).');
+        triggerSound?.('success');
+        return;
+      }
+      case 'club_bar': {
+        const drinkCost = 6500;
+        const ok = await applyDebitWithReceipt({
+          itemId: `club_drink_${Date.now()}`,
+          title: `${location.name} VIP Lounge Drinks`,
+          category: 'lifestyle',
+          costNGN: drinkCost,
+        });
+        if (ok) {
+          onUpdateStats({ thirst: 50, happiness: 35, energy: -6 });
+          showActionBanner(`🍸 Served VIP chilled cocktail (-${formatNaira(drinkCost)}, +50 Thirst, +35 Joy)!`);
+          triggerSound?.('coin');
+        }
+        return;
+      }
+      case 'fuel_counter': {
+        const voucherCost = 8500;
+        const ok = await applyDebitWithReceipt({
+          itemId: `fuel_${Date.now()}`,
+          title: `${location.name} Fuel Voucher`,
+          category: 'car',
+          costNGN: voucherCost,
+        });
+        if (ok) {
+          onUpdateStats({ happiness: 12 });
+          showActionBanner(`⛽ Purchased verified fuel voucher (-${formatNaira(voucherCost)}).`);
+          triggerSound?.('coin');
+        }
+        return;
+      }
+      case 'police_service': {
+        onUpdateStats({ happiness: 10 });
+        showActionBanner(`🛡️ Met duty officer at ${location.name}. Civic clearance verified.`);
+        triggerSound?.('stamp');
+        return;
+      }
+      case 'showroom_car': {
+        onUpdateStats({ happiness: 15 });
+        showActionBanner('🚘 Inspected showroom vehicle! Open Auto Mart on your phone to finance or purchase.');
+        triggerSound?.('coin');
+        return;
+      }
+    }
+  };
+
+  // Place furniture into the active home layout
+  const handlePlaceFurniture = (catalogId: string, name: string, categoryTag: string) => {
+    const newItem: PlacedFurnitureItem = {
+      instanceId: `pf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      furnitureId: catalogId,
+      name,
+      category: categoryTag as PlacedFurnitureItem['category'],
+      x: 0,
+      z: 0,
+      rotationY: 0,
+    };
+    updateHouseLayout((prev) => ({
+      ...prev,
+      placedFurniture: [...(prev.placedFurniture || []), newItem],
+    }));
+    setSelectedCustomId(`custom_${newItem.instanceId}`);
+    showActionBanner(`🛋️ Placed ${name} in your house! Drag or use arrows to position.`);
+    triggerSound?.('success');
+  };
+
+  const selectedPlacedItem = useMemo(() => {
+    if (!selectedCustomId?.startsWith('custom_')) return null;
+    const rawId = selectedCustomId.replace('custom_', '');
+    return (savedLayout.placedFurniture || []).find((f) => f.instanceId === rawId) || null;
+  }, [selectedCustomId, savedLayout.placedFurniture]);
+
+  const moveSelectedCustom = (dx: number, dz: number) => {
+    if (!selectedPlacedItem) return;
+    updateHouseLayout((prev) => ({
+      ...prev,
+      placedFurniture: prev.placedFurniture.map((f) =>
+        f.instanceId === selectedPlacedItem.instanceId
+          ? { ...f, x: Math.max(-7.5, Math.min(7.5, f.x + dx)), z: Math.max(-5.5, Math.min(5.2, f.z + dz)) }
+          : f
+      ),
+    }));
+  };
+
+  const rotateSelectedCustom = () => {
+    if (!selectedPlacedItem) return;
+    updateHouseLayout((prev) => ({
+      ...prev,
+      placedFurniture: prev.placedFurniture.map((f) =>
+        f.instanceId === selectedPlacedItem.instanceId ? { ...f, rotationY: (f.rotationY + Math.PI / 2) % (Math.PI * 2) } : f
+      ),
+    }));
+  };
+
+  const removeSelectedCustom = () => {
+    if (!selectedPlacedItem) return;
+    updateHouseLayout((prev) => ({
+      ...prev,
+      placedFurniture: prev.placedFurniture.filter((f) => f.instanceId !== selectedPlacedItem.instanceId),
+    }));
+    setSelectedCustomId(null);
+    showActionBanner(`Stored ${selectedPlacedItem.name} back into house furniture inventory.`);
+  };
+
+  const moveItemToStorage = (itemName: string, idx: number) => {
+    if (!onUpdateUserProfile) return;
+    const nextInv = [...(userProfile.inventory || [])];
+    nextInv.splice(idx, 1);
+    const nextStored = [...(userProfile.storedItems || []), itemName];
+    onUpdateUserProfile({ ...userProfile, inventory: nextInv, storedItems: nextStored });
+    triggerSound?.('stamp');
+  };
+
+  const retrieveItemFromStorage = (itemName: string, idx: number) => {
+    if (!onUpdateUserProfile) return;
+    const nextStored = [...(userProfile.storedItems || [])];
+    nextStored.splice(idx, 1);
+    const nextInv = [...(userProfile.inventory || []), itemName];
+    onUpdateUserProfile({ ...userProfile, inventory: nextInv, storedItems: nextStored });
+    triggerSound?.('coin');
+  };
+
+  const foodMenuItems = useMemo(() => {
+    const sample = EXPANDED_CHOWDECK.slice(0, 14).map((f) => ({
+      ...f,
+      thirst: inferDrinkStats(f.name, f.category).thirstGain,
+    }));
+    return [...COLD_DRINKS_AND_WATER, ...sample];
+  }, []);
+
+  const ownedFurnitureList = useMemo(() => {
+    const ownedIds = userProfile?.furnitureBought || [];
+    return BUY_MODE_FURNITURE_CATALOG.filter((item) => ownedIds.includes(item.id));
+  }, [userProfile?.furnitureBought]);
+
+  const avatar = userProfile?.avatar || DEFAULT_AVATAR;
 
   return (
     <div className="fixed inset-0 z-40 bg-zinc-950 flex flex-col select-none overflow-hidden">
-      {/* =========================================================================
-          TOP INTERIOR HUD BAR
-          ========================================================================= */}
-      <header className="h-14 bg-zinc-900/90 border-b border-zinc-800 px-4 flex items-center justify-between shrink-0 z-30">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-black">
-            {isHome ? '🏠' : locType === 'church' ? '⛪' : locType === 'mosque' ? '🕌' : locType === 'bank' ? '🏦' : locType === 'airport' ? '✈️' : locType === 'hospital' ? '🏥' : '🏢'}
+      {/* TOP BAR */}
+      <header className="h-14 bg-zinc-950/95 border-b border-zinc-800 px-3 sm:px-5 flex items-center justify-between shrink-0 z-30">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+            <Building2 className="w-4 h-4" />
           </div>
-          <div>
-            <h2 className="text-sm font-black text-white flex items-center gap-2">
+          <div className="min-w-0">
+            <h2 className="text-xs sm:text-sm font-black text-white truncate flex items-center gap-2">
               <span>{location.name}</span>
-              <span className="px-2 py-0.5 rounded-full bg-zinc-800 text-[10px] text-zinc-400 font-mono font-normal">
-                Floor {currentFloor} of {totalFloors}
+              <span className="px-2 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-500/30 text-[10px] font-mono text-emerald-300 uppercase">
+                {category.replace('_', ' ')}
               </span>
             </h2>
-            <p className="text-[11px] text-zinc-400">
+            <p className="text-[10px] sm:text-[11px] text-zinc-400 truncate">
               {isHome
-                ? `Private Residence • ${userProfile.socialClass.toUpperCase()} Class Home`
-                : `${location.desc || 'Public building interior in Nigeria'}`}
+                ? 'Private 3D Residence · Decorate, Store Items, Change Outfits & Rest'
+                : location.desc || 'Explorable 3D Nigerian Building Interior'}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {totalFloors > 1 && (
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono">
+            <span className="text-zinc-400">Cash/Bank:</span>
+            <span className="text-emerald-400 font-black">
+              {formatNaira((userProfile?.cashNaira || 0) + (userProfile?.bankNaira || 0))}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const next = !lightsOn;
+              setLightsOn(next);
+              if (isHome) updateHouseLayout((prev) => ({ ...prev, lightsOn: next }));
+            }}
+            className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+              lightsOn
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                : 'bg-zinc-900 border-zinc-700 text-zinc-400'
+            }`}
+            title="Toggle Interior Lighting"
+          >
+            {lightsOn ? <Lightbulb className="w-3.5 h-3.5" /> : <LightbulbOff className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{lightsOn ? 'Lights ON' : 'Lights OFF'}</span>
+          </button>
+
+          {isHome && (
             <button
               type="button"
-              onClick={() => setShowFloorsModal(!showFloorsModal)}
-              className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-bold text-white flex items-center gap-1.5 border border-zinc-700 transition-colors cursor-pointer"
+              onClick={() => {
+                setIsDecorateMode((v) => !v);
+                setSelectedCustomId(null);
+              }}
+              className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                isDecorateMode
+                  ? 'bg-emerald-500 text-zinc-950 border-emerald-400'
+                  : 'bg-zinc-900 border-zinc-700 text-zinc-200 hover:bg-zinc-800'
+              }`}
             >
-              <Layers className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Change Floor</span>
+              <Paintbrush className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{isDecorateMode ? 'Done Editing' : 'Decorate'}</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={onExit}
-            className="px-3.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-black flex items-center gap-1.5 cursor-pointer"
           >
-            <LogOut className="w-4 h-4" />
-            <span>Exit to Map</span>
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Exit</span>
           </button>
         </div>
       </header>
 
-      {/* =========================================================================
-          MAIN ROOM PERSPECTIVE VIEWPORT (Click to walk anywhere!)
-          ========================================================================= */}
-      <div
-        onClick={handleFloorClick}
-        className="relative flex-1 bg-gradient-to-b from-[#11161d] via-[#151c24] to-[#0c1015] overflow-hidden cursor-crosshair"
-      >
-        {/* ROOM CEILING ARCHITECTURE */}
-        <div className="absolute top-0 inset-x-0 h-16 bg-gradient-to-b from-black/80 to-transparent pointer-events-none z-10">
-          <div className="flex justify-around items-center pt-3 opacity-60">
-            <div className="w-32 h-1 bg-zinc-700 rounded-full shadow-[0_0_12px_#38bdf8]" />
-            <div className="w-32 h-1 bg-zinc-700 rounded-full shadow-[0_0_12px_#38bdf8]" />
-            <div className="w-32 h-1 bg-zinc-700 rounded-full shadow-[0_0_12px_#38bdf8]" />
-          </div>
-        </div>
-
-        {/* REAR WALL PERSPECTIVE */}
-        <div className="absolute top-0 inset-x-0 h-[48%] bg-gradient-to-b from-zinc-900 to-zinc-850 border-b-4 border-zinc-950 pointer-events-none flex flex-col justify-end px-12">
-          {/* Wall Paneling & Baseboard */}
-          <div className="w-full h-8 bg-zinc-950/80 border-t border-zinc-800" />
-        </div>
-
-        {/* FLOOR PERSPECTIVE (Isometric Wood/Tile Grid) */}
-        <div className="absolute top-[48%] inset-x-0 bottom-0 bg-gradient-to-b from-[#1a1c23] via-[#14151b] to-[#0a0a0f] pointer-events-none shadow-inner">
-          <div className="absolute inset-0 opacity-20 bg-[linear-gradient(to_right,#ffffff0a_1px,transparent_1px),linear-gradient(to_bottom,#ffffff0a_1px,transparent_1px)] bg-[size:48px_24px]" />
-        </div>
-
-        {/* =====================================================================
-            1. CHURCH SANCTUARY INTERIOR
-            ===================================================================== */}
-        {locType === 'church' && (
-          <>
-            {/* Center Golden Cross & Stained Glass */}
-            <div className="absolute top-[8%] left-1/2 -translate-x-1/2 w-48 h-60 bg-gradient-to-b from-amber-500/10 to-transparent border-2 border-amber-400/40 rounded-t-full flex flex-col items-center justify-center p-3 pointer-events-none shadow-[0_0_40px_rgba(245,158,11,0.2)]">
-              <span className="text-5xl drop-shadow-[0_0_15px_#f59e0b]">✝️</span>
-              <span className="text-[10px] font-mono text-amber-300 font-bold tracking-widest mt-2 uppercase">Holy Altar</span>
-            </div>
-
-            {/* Pulpit / Podium */}
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Altar Prayer',
-                  energyEffect: 15,
-                  joyEffect: 25,
-                  message: '🙏 Prayed at the holy sanctuary altar (+25 Joy, +15 Energy). God bless you!',
-                  sound: 'success',
-                });
-              }}
-              className="absolute top-[32%] left-1/2 -translate-x-1/2 w-48 h-28 bg-amber-950/80 border-2 border-amber-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all text-center z-20"
-            >
-              <div className="text-xs font-black text-amber-300 flex items-center justify-center gap-1.5">
-                <Church className="w-4 h-4" />
-                <span>PULPIT & BIBLE</span>
-              </div>
-              <p className="text-[10px] text-zinc-300 mt-1">Tap to pray and receive spiritual peace.</p>
-            </div>
-
-            {/* Pews (Left and Right) */}
-            <div className="absolute top-[48%] left-10 w-64 h-16 bg-amber-900/60 border border-amber-700/80 rounded-xl flex items-center justify-center text-xs text-amber-200 font-bold pointer-events-none shadow-lg">
-              🪑 Wooden Church Pews (Left Wing)
-            </div>
-            <div className="absolute top-[48%] right-10 w-64 h-16 bg-amber-900/60 border border-amber-700/80 rounded-xl flex items-center justify-center text-xs text-amber-200 font-bold pointer-events-none shadow-lg">
-              🪑 Wooden Church Pews (Right Wing)
-            </div>
-
-            {/* Donation / Tithe Box */}
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Church Tithe Offering',
-                  cost: 2000,
-                  joyEffect: 30,
-                  message: '💰 Gave ₦2,000 Church Tithe & Offering. Joy & prosperity restored (+30 Joy)!',
-                  sound: 'coin',
-                });
-              }}
-              className="absolute top-[40%] right-20 w-40 h-24 bg-zinc-900 border-2 border-amber-400 rounded-2xl p-2.5 shadow-2xl cursor-pointer hover:scale-105 transition-all text-center z-20"
-            >
-              <span className="text-xl">🕊️</span>
-              <div className="text-xs font-bold text-amber-300">Tithe & Offering Box</div>
-              <p className="text-[10px] text-zinc-400">Give ₦2,000 Tithe</p>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            2. MOSQUE PRAYER HALL INTERIOR
-            ===================================================================== */}
-        {locType === 'mosque' && (
-          <>
-            {/* Mihrab Arch pointing to Qibla */}
-            <div className="absolute top-[6%] left-1/2 -translate-x-1/2 w-56 h-64 bg-emerald-950/40 border-2 border-emerald-400/50 rounded-t-full flex flex-col items-center justify-center p-3 pointer-events-none shadow-[0_0_45px_rgba(16,185,129,0.25)]">
-              <span className="text-5xl drop-shadow-[0_0_15px_#10b981]">🕌</span>
-              <span className="text-xs font-mono text-emerald-300 font-bold tracking-widest mt-2 uppercase">Holy Mihrab (Qibla)</span>
-            </div>
-
-            {/* Minbar Pulpit */}
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Solat Prayer',
-                  energyEffect: 15,
-                  joyEffect: 25,
-                  message: '🤲 Performed Solat Prayer on the sacred prayer carpets (+25 Joy, Peace of Mind).',
-                  sound: 'success',
-                });
-              }}
-              className="absolute top-[34%] left-1/2 -translate-x-1/2 w-52 h-26 bg-zinc-900 border-2 border-emerald-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all text-center z-20"
-            >
-              <div className="text-xs font-black text-emerald-300">MINBAR & KHUTBAH PODIUM</div>
-              <p className="text-[10px] text-zinc-300 mt-1">Tap to pray Solat on the carpet.</p>
-            </div>
-
-            {/* Green Islamic Geometric Carpet Floor Overlay */}
-            <div className="absolute top-[52%] inset-x-8 h-28 bg-emerald-900/30 border-y border-emerald-500/40 rounded-2xl flex items-center justify-around text-xs text-emerald-300 font-mono pointer-events-none">
-              <span>🟩 Sajjada Prayer Line 1</span>
-              <span>🟩 Sajjada Prayer Line 2</span>
-              <span>🟩 Sajjada Prayer Line 3</span>
-            </div>
-
-            {/* Sadaqah Charity Box */}
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Sadaqah Charity',
-                  cost: 2000,
-                  joyEffect: 30,
-                  message: '💚 Donated ₦2,000 Sadaqah for community care. Barka da Sallah (+30 Joy)!',
-                  sound: 'coin',
-                });
-              }}
-              className="absolute top-[40%] left-16 w-44 h-24 bg-zinc-900 border-2 border-emerald-400 rounded-2xl p-2.5 shadow-2xl cursor-pointer hover:scale-105 transition-all text-center z-20"
-            >
-              <span className="text-xl">🌙</span>
-              <div className="text-xs font-bold text-emerald-300">Sadaqah Charity Box</div>
-              <p className="text-[10px] text-zinc-400">Give ₦2,000 Sadaqah</p>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            3. HOSPITAL INTERIOR (FMC)
-            ===================================================================== */}
-        {locType === 'hospital' && (
-          <>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Doctor Medical Checkup',
-                  cost: 15000,
-                  energyEffect: 40,
-                  joyEffect: 20,
-                  message: '🩺 Full Medical Checkup by Consultant Physician (+40 Energy, Health Restored)!',
-                  sound: 'success',
-                });
-              }}
-              className="absolute top-[28%] left-12 w-64 h-32 bg-zinc-900 border-2 border-emerald-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-emerald-400 flex items-center gap-1.5">
-                <HeartPulse className="w-4 h-4" />
-                <span>CONSULTANT DOCTOR CLINIC</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Full Health Diagnostics & Prescription.</p>
-              <span className="text-[10px] text-emerald-300 font-mono">Fee: ₦15,000</span>
-            </div>
-
-            {/* Hospital Beds with monitors */}
-            <div className="absolute top-[32%] right-16 w-60 h-28 bg-teal-950/60 border border-teal-500/50 rounded-2xl p-3 shadow-xl pointer-events-none">
-              <div className="text-xs font-bold text-teal-300">🛏️ Hospital Ward Beds</div>
-              <p className="text-[10px] text-zinc-400 mt-1">Cardiac telemetry monitors active. 72 BPM.</p>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            4. BANK INTERIOR (CBN / Commercial)
-            ===================================================================== */}
-        {locType === 'bank' && (
-          <>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Teller Cash Transaction',
-                  message: '💵 Visited Cashier Teller: Account balanced and verified.',
-                  sound: 'coin',
-                });
-              }}
-              className="absolute top-[28%] left-14 w-72 h-32 bg-zinc-900 border-2 border-amber-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-amber-400 flex items-center gap-1.5">
-                <Coins className="w-4 h-4" />
-                <span>COMMERCIAL BANK TELLER BOOTHS</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Bulletproof glass deposit counters & cash counting machines.</p>
-            </div>
-
-            {/* Armored Vault */}
-            <div className="absolute top-[30%] right-16 w-56 h-30 bg-zinc-950 border-4 border-amber-600 rounded-2xl p-3 shadow-2xl pointer-events-none flex flex-col items-center justify-center">
-              <span className="text-3xl">🏦</span>
-              <span className="text-xs font-black text-amber-400 mt-1">HEAVY STEEL VAULT</span>
-              <span className="text-[9px] text-zinc-500 font-mono">ARMED SECURITY GUARD ON DUTY</span>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            5. MALL & SUPERMARKET (Novare / Jabi)
-            ===================================================================== */}
-        {(locType === 'mall' || locType === 'supermarket') && (
-          <>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Supermarket Groceries',
-                  cost: 8500,
-                  hungerEffect: 40,
-                  joyEffect: 15,
-                  message: '🛒 Bought fresh groceries, beverages, and biscuits (+40 Hunger, +15 Joy)!',
-                  sound: 'coin',
-                });
-              }}
-              className="absolute top-[28%] left-14 w-72 h-32 bg-zinc-900 border-2 border-emerald-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-emerald-400 flex items-center gap-1.5">
-                <ShoppingBag className="w-4 h-4" />
-                <span>SUPERMARKET AISLE & CHECKOUT</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Shelves with provisions, dairy, cornflakes, and drinks.</p>
-              <span className="text-[10px] text-emerald-300 font-mono">Groceries: ₦8,500</span>
-            </div>
-
-            <div className="absolute top-[30%] right-16 w-60 h-28 bg-zinc-900 border border-purple-500/50 rounded-2xl p-3 shadow-xl pointer-events-none">
-              <div className="text-xs font-bold text-purple-300">👗 Designer Boutique Wing</div>
-              <p className="text-[10px] text-zinc-400 mt-1">Latest Ankara, Senator styles & perfumes on display.</p>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            6. FRASER 5-STAR HOTEL
-            ===================================================================== */}
-        {locType === 'hotel' && (
-          <>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: '5-Star Suite Stay',
-                  cost: 65000,
-                  energyEffect: 80,
-                  joyEffect: 40,
-                  message: '🛎️ Checked in to Luxury Presidential Suite (+80 Energy, +40 Joy)! Slept like royalty.',
-                  sound: 'success',
-                });
-              }}
-              className="absolute top-[28%] left-14 w-72 h-34 bg-zinc-900 border-2 border-amber-500 rounded-2xl p-3.5 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-amber-400 flex items-center gap-1.5">
-                <Building className="w-4 h-4" />
-                <span>FRASER SUITES GRAND CONCIERGE</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Marble check-in desk, crystal chandelier, and VIP service.</p>
-              <span className="text-[10px] text-amber-300 font-mono">Suite Stay: ₦65,000 / Night</span>
-            </div>
-
-            <div className="absolute top-[30%] right-16 w-56 h-28 bg-zinc-950 border border-amber-400/50 rounded-2xl p-3 shadow-xl pointer-events-none">
-              <span className="text-xl">🍸</span>
-              <div className="text-xs font-bold text-amber-300">Executive Cocktail Lounge</div>
-              <p className="text-[10px] text-zinc-400 mt-0.5">Live acoustic jazz & chill champagne.</p>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            7. RESTAURANT & CLUB (Club Cubana / Lounge)
-            ===================================================================== */}
-        {(locType === 'restaurant' || locType === 'club') && (
-          <>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Order Peppered Suya & Drinks',
-                  cost: 7500,
-                  hungerEffect: 45,
-                  joyEffect: 25,
-                  message: '🍢 Hot spicy Suya, roasted plantain, and chilled Chapman served (+45 Hunger, +25 Joy)!',
-                  sound: 'coin',
-                });
-              }}
-              className="absolute top-[28%] left-14 w-72 h-32 bg-zinc-900 border-2 border-orange-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-orange-400 flex items-center gap-1.5">
-                <Utensils className="w-4 h-4" />
-                <span>BAR & SUYA KITCHEN COUNTER</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Spicy grilled beef Suya, Asun, and cold drinks.</p>
-              <span className="text-[10px] text-orange-300 font-mono">Platter: ₦7,500</span>
-            </div>
-
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Dance Floor Vibes',
-                  energyEffect: -10,
-                  joyEffect: 35,
-                  message: '🎵 DJ playing Burna Boy & Asake on the dance floor (+35 Joy, energetic vibes)!',
-                  sound: 'success',
-                });
-              }}
-              className="absolute top-[30%] right-16 w-60 h-30 bg-purple-950/80 border-2 border-purple-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-bold text-purple-300 flex items-center gap-1">
-                <Music className="w-4 h-4" />
-                <span>DJ BOOTH & DANCE FLOOR</span>
-              </div>
-              <p className="text-[10px] text-zinc-300 mt-1">Strobe neon lights. Tap to dance to Afrobeats!</p>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            8. NILE UNIVERSITY CAMPUS
-            ===================================================================== */}
-        {(locType === 'school' || locType === 'university') && (
-          <>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Lecture Class',
-                  energyEffect: -12,
-                  joyEffect: 18,
-                  message: '📚 Attended University Lecture Hall session. Gained knowledge and networking (+18 Joy)!',
-                  sound: 'stamp',
-                });
-              }}
-              className="absolute top-[28%] left-14 w-72 h-32 bg-zinc-900 border-2 border-sky-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-sky-400 flex items-center gap-1.5">
-                <GraduationCap className="w-4 h-4" />
-                <span>TIERED LECTURE THEATRE</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Smart blackboard, projector screen, and study desks.</p>
-              <span className="text-[10px] text-sky-300 font-mono">Tap to attend class</span>
-            </div>
-
-            <div className="absolute top-[30%] right-16 w-60 h-28 bg-zinc-900 border border-sky-400/50 rounded-2xl p-3 shadow-xl pointer-events-none">
-              <span className="text-xl">📖</span>
-              <div className="text-xs font-bold text-sky-300">University Research Library</div>
-              <p className="text-[10px] text-zinc-400 mt-0.5">Quiet study carrels & fast WiFi.</p>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            9. AIRPORT TERMINAL
-            ===================================================================== */}
-        {locType === 'airport' && (
-          <>
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Boarding Gate 4',
-                  message: '✈️ Boarding Gate 4: Domestic flights to Lagos, Abuja, Port Harcourt, and Owerri are on schedule.',
-                  sound: 'stamp',
-                });
-              }}
-              className="absolute top-[28%] left-14 w-76 h-34 bg-zinc-900 border-2 border-sky-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-sky-400 flex items-center gap-1.5">
-                <Plane className="w-4 h-4" />
-                <span>DOMESTIC DEPARTURES BOARDING GATE 4</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Air Peace & Ibom Air boarding counters. Runway view outside.</p>
-              <span className="text-[10px] text-sky-300 font-mono">Flight Concourse Active</span>
-            </div>
-
-            <div className="absolute top-[30%] right-16 w-60 h-28 bg-zinc-950 border border-sky-400/50 rounded-2xl p-3 shadow-xl pointer-events-none flex flex-col items-center justify-center">
-              <span className="text-2xl">🛄</span>
-              <div className="text-xs font-bold text-sky-300 mt-1">Baggage Carousel & Security</div>
-              <span className="text-[9px] text-zinc-500 font-mono">FEDERAL AIRPORT AUTHORITY (FAAN)</span>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            10. HOME / RESIDENCE (My House)
-            ===================================================================== */}
-        {isHome && (
-          <>
-            {/* Living Room Smart TV & Sofa */}
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Watch Smart TV',
-                  energyEffect: 10,
-                  joyEffect: 20,
-                  message: '📺 Relaxed on the luxury sofa watching Africa Magic & Premier League (+20 Joy, +10 Energy)!',
-                  sound: 'coin',
-                });
-              }}
-              className="absolute top-[28%] left-14 w-68 h-32 bg-zinc-900 border-2 border-emerald-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-emerald-400 flex items-center gap-1.5">
-                <Tv className="w-4 h-4" />
-                <span>75" 4K OLED SMART TV & SOFA</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Plush leather couch. Tap to relax and watch cable TV.</p>
-            </div>
-
-            {/* Bedroom King Bed */}
-            <div
-              onClick={(e) => {
-                e.stopPropagation();
-                handleInteractObject({
-                  title: 'Rest on King Bed',
-                  energyEffect: 50,
-                  joyEffect: 20,
-                  message: '🛏️ Took a deep, peaceful sleep on orthopedic king mattress (+50 Energy, Restored)!',
-                  sound: 'success',
-                });
-              }}
-              className="absolute top-[28%] right-16 w-64 h-32 bg-zinc-900 border-2 border-emerald-500 rounded-2xl p-3 shadow-2xl cursor-pointer hover:scale-105 transition-all z-20"
-            >
-              <div className="text-xs font-black text-emerald-400 flex items-center gap-1.5">
-                <Bed className="w-4 h-4" />
-                <span>MASTER KING-SIZED BED</span>
-              </div>
-              <p className="text-[11px] text-zinc-300 mt-1">Silk duvets and air conditioning. Tap to sleep and recharge.</p>
-            </div>
-          </>
-        )}
-
-        {/* =====================================================================
-            DEFAULT PUBLIC BUILDING INTERIOR FIXTURE (Gov / Others)
-            ===================================================================== */}
-        {!isHome && !['church', 'mosque', 'hospital', 'bank', 'mall', 'supermarket', 'hotel', 'restaurant', 'club', 'school', 'university', 'airport'].includes(locType) && (
-          <div className="absolute top-[28%] left-1/2 -translate-x-1/2 w-80 h-32 bg-zinc-900 border-2 border-emerald-500 rounded-2xl p-4 shadow-2xl text-center z-20 pointer-events-none">
-            <span className="text-3xl">🏛️</span>
-            <div className="text-sm font-black text-white mt-1">{location.name}</div>
-            <p className="text-xs text-zinc-400 mt-1">Official Nigerian civic reception hall & administrative offices.</p>
-          </div>
-        )}
-
-        {/* =====================================================================
-            WALKING FULL-BODY AVATAR WITH REAL WALKING ANIMATION & DIRECTION FLIP
-            ===================================================================== */}
-        <div
-          style={{
-            left: `${avatarPos.x}%`,
-            top: `${avatarPos.y}%`,
-            transform: `translate(-50%, -85%) ${facingLeft ? 'scaleX(-1)' : 'scaleX(1)'}`,
-            transition: isWalking ? 'left 0.7s cubic-bezier(0.25, 1, 0.5, 1), top 0.7s cubic-bezier(0.25, 1, 0.5, 1)' : 'none',
+      {/* REAL 3D EXPLORABLE INTERIOR CANVAS */}
+      <div className="relative flex-1 overflow-hidden">
+        <Interior3DCanvas
+          blueprint={blueprint}
+          avatar={avatar}
+          lightsOn={lightsOn}
+          isDecorateMode={isDecorateMode}
+          selectedCustomId={selectedCustomId}
+          onSelectCustomProp={(id) => setSelectedCustomId(id)}
+          onMoveCustomProp={(rawId, nextX, nextZ) => {
+            updateHouseLayout((prev) => ({
+              ...prev,
+              placedFurniture: prev.placedFurniture.map((f) =>
+                f.instanceId === rawId ? { ...f, x: nextX, z: nextZ } : f
+              ),
+            }));
           }}
-          className="absolute z-30 pointer-events-none drop-shadow-2xl flex flex-col items-center"
-        >
-          {/* Overhead Player Name & Status Tag */}
-          <div
-            style={{ transform: facingLeft ? 'scaleX(-1)' : 'scaleX(1)' }}
-            className="mb-1 px-2.5 py-0.5 rounded-full bg-zinc-950/90 border border-emerald-500/60 text-[10px] font-black text-white whitespace-nowrap shadow-md flex items-center gap-1"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span>{userProfile?.firstName || 'Citizen'} {userProfile?.lastName || ''}</span>
-            <span className="text-emerald-400 font-mono">({(userProfile?.socialClass || 'citizen').toUpperCase()})</span>
+          onTriggerInteraction={handleTriggerInteraction}
+        />
+
+        {/* STATUS TOAST BANNER */}
+        {statusBanner && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 bg-emerald-950/95 border border-emerald-400/70 text-emerald-100 px-4 py-2 rounded-xl text-xs font-bold shadow-2xl flex items-center gap-2 pointer-events-none">
+            <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
+            <span>{statusBanner}</span>
           </div>
+        )}
 
-          {/* Full-Body Avatar Renderer with stepping animation */}
-          <CharacterRenderer
-            avatar={userProfile?.avatar}
-            size="md"
-            fullBody={true}
-            isWalking={isWalking}
-            showBackground={false}
-            className="w-24 h-40"
-          />
-        </div>
+        {/* HOUSE DECORATE SIDE PANEL */}
+        {isHome && isDecorateMode && (
+          <div className="absolute top-3 right-3 z-30 w-72 max-h-[82vh] bg-zinc-950/95 border border-emerald-500/40 rounded-2xl p-3.5 shadow-2xl overflow-y-auto space-y-3">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+              <span className="text-xs font-black text-emerald-300 uppercase tracking-wide">
+                House Customization
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsDecorateMode(false)}
+                className="text-zinc-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-        {/* WALK HINT AT BOTTOM */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-zinc-950/80 border border-zinc-800 rounded-full px-4 py-1.5 text-xs text-zinc-300 flex items-center gap-2 pointer-events-none shadow-xl">
-          <Footprints className="w-4 h-4 text-emerald-400 animate-bounce" />
-          <span>Tap anywhere on the floor to walk your avatar</span>
-        </div>
+            {/* Wall Colors */}
+            <div>
+              <span className="text-[10px] font-mono uppercase text-zinc-400 block mb-1">Wall Paint</span>
+              <div className="grid grid-cols-5 gap-1.5">
+                {(['cream', 'sage', 'charcoal', 'terracotta', 'ivory'] as HouseLayoutData['wallTheme'][]).map((theme) => (
+                  <button
+                    key={theme}
+                    type="button"
+                    onClick={() => updateHouseLayout((prev) => ({ ...prev, wallTheme: theme }))}
+                    className={`py-1.5 rounded-lg text-[10px] font-bold capitalize border cursor-pointer ${
+                      savedLayout.wallTheme === theme
+                        ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
+                        : 'border-zinc-800 bg-zinc-900 text-zinc-400'
+                    }`}
+                  >
+                    {theme}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-        {/* INTERACTION TOAST BUBBLE */}
-        {activeInteraction && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-40 bg-emerald-950/95 border-2 border-emerald-400 text-white rounded-2xl px-5 py-2.5 shadow-2xl text-xs font-bold animate-in fade-in flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-300" />
-            <span>Interacted with: {activeInteraction}</span>
+            {/* Floor Materials */}
+            <div>
+              <span className="text-[10px] font-mono uppercase text-zinc-400 block mb-1">Floor Finish</span>
+              <div className="grid grid-cols-4 gap-1.5">
+                {(['oak', 'marble', 'slate', 'terrazzo'] as HouseLayoutData['floorTheme'][]).map((fl) => (
+                  <button
+                    key={fl}
+                    type="button"
+                    onClick={() => updateHouseLayout((prev) => ({ ...prev, floorTheme: fl }))}
+                    className={`py-1.5 rounded-lg text-[10px] font-bold capitalize border cursor-pointer ${
+                      savedLayout.floorTheme === fl
+                        ? 'border-emerald-400 bg-emerald-500/20 text-emerald-200'
+                        : 'border-zinc-800 bg-zinc-900 text-zinc-400'
+                    }`}
+                  >
+                    {fl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Selected Furniture Controls */}
+            {selectedPlacedItem && (
+              <div className="p-2.5 rounded-xl bg-amber-950/40 border border-amber-500/40 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-amber-200 truncate">{selectedPlacedItem.name}</span>
+                  <button
+                    type="button"
+                    onClick={removeSelectedCustom}
+                    className="p-1 rounded-lg bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 cursor-pointer"
+                    title="Remove Furniture"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-5 gap-1">
+                  <button type="button" onClick={() => moveSelectedCustom(-0.6, 0)} className="p-1.5 rounded bg-zinc-900 hover:bg-zinc-800 flex justify-center cursor-pointer"><ArrowLeft className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => moveSelectedCustom(0, -0.6)} className="p-1.5 rounded bg-zinc-900 hover:bg-zinc-800 flex justify-center cursor-pointer"><ArrowUp className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => moveSelectedCustom(0, 0.6)} className="p-1.5 rounded bg-zinc-900 hover:bg-zinc-800 flex justify-center cursor-pointer"><ArrowDown className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => moveSelectedCustom(0.6, 0)} className="p-1.5 rounded bg-zinc-900 hover:bg-zinc-800 flex justify-center cursor-pointer"><ArrowRight className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={rotateSelectedCustom} className="p-1.5 rounded bg-emerald-600 text-zinc-950 flex justify-center cursor-pointer" title="Rotate 90°"><RotateCw className="w-3.5 h-3.5" /></button>
+                </div>
+              </div>
+            )}
+
+            {/* Owned Furniture Placement List */}
+            <div>
+              <span className="text-[10px] font-mono uppercase text-zinc-400 block mb-1">
+                Place Owned Furniture ({ownedFurnitureList.length})
+              </span>
+              {ownedFurnitureList.length === 0 ? (
+                <p className="text-[11px] text-zinc-500 p-2 rounded-xl bg-zinc-900 border border-zinc-800">
+                  Buy furniture from the Buy Shop on the map to place custom pieces inside your rooms.
+                </p>
+              ) : (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {ownedFurnitureList.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => handlePlaceFurniture(f.id, f.name, f.category)}
+                      className="w-full text-left px-2.5 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[11px] font-bold text-zinc-200 flex items-center justify-between cursor-pointer"
+                    >
+                      <span className="truncate">{f.icon} {f.name}</span>
+                      <span className="text-emerald-400 text-[10px] font-mono shrink-0 ml-2">+ Place</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
 
-      {/* FLOORS SWITCHER MODAL */}
-      {showFloorsModal && (
-        <div className="absolute top-16 right-4 z-50 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl w-60 animate-in fade-in">
-          <div className="flex items-center justify-between mb-3 pb-2 border-b border-zinc-800">
-            <span className="text-xs font-bold text-white">Select Floor</span>
-            <button
-              onClick={() => setShowFloorsModal(false)}
-              className="text-zinc-500 hover:text-white cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="space-y-1.5">
-            {Array.from({ length: totalFloors }, (_, idx) => idx + 1).map((fl) => (
+      {/* =====================================================================
+          INTERACTIVE STATION MODALS (REAL ACTIONS INSIDE BUILDINGS)
+          ===================================================================== */}
+
+      {/* 1. HOUSE KITCHEN & FRIDGE MODAL */}
+      {activeModal === 'kitchen' && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-zinc-950 border border-zinc-800 rounded-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Utensils className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-sm font-black text-white">Home Kitchen & Chilled Fridge</h3>
+              </div>
+              <button type="button" onClick={() => setActiveModal(null)} className="text-zinc-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-2.5">
               <button
-                key={fl}
+                type="button"
                 onClick={() => {
-                  setCurrentFloor(fl);
-                  setShowFloorsModal(false);
-                  onShowToast(`Moved to Floor ${fl}`);
-                  triggerSound?.('stamp');
+                  onUpdateStats({ thirst: 60, energy: 8, happiness: 10 });
+                  showActionBanner('💧 Drank cold sachet/bottled water from the fridge (+60 Thirst, +8 Energy)!');
+                  triggerSound?.('success');
+                  setActiveModal(null);
                 }}
-                className={`w-full py-2 px-3 rounded-xl text-xs font-bold text-left transition-all flex items-center justify-between cursor-pointer ${
-                  currentFloor === fl
-                    ? 'bg-emerald-500 text-zinc-950 shadow-md'
-                    : 'bg-zinc-950 text-zinc-300 hover:bg-zinc-800'
-                }`}
+                className="w-full p-3 rounded-xl bg-sky-950/50 hover:bg-sky-900/60 border border-sky-500/40 text-left flex items-center justify-between cursor-pointer"
               >
-                <span>Floor {fl}</span>
-                {currentFloor === fl && <CheckCircle2 className="w-4 h-4 text-zinc-950" />}
+                <div>
+                  <div className="text-xs font-black text-sky-200">💧 Cold Fridge Water</div>
+                  <div className="text-[11px] text-zinc-400">Hydrate immediately (+60 Thirst)</div>
+                </div>
+                <span className="text-xs font-mono font-bold text-emerald-400">Free at Home</span>
               </button>
-            ))}
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await applyDebitWithReceipt({
+                    itemId: `home_cook_${Date.now()}`,
+                    title: 'Home Jollof & Plantain Ingredients',
+                    category: 'supermarket',
+                    costNGN: 2500,
+                  });
+                  if (ok) {
+                    onUpdateStats({ hunger: 55, thirst: 10, energy: 15, happiness: 20 });
+                    showActionBanner('🍛 Cooked fresh Smoky Jollof & Plantain (-₦2,500, +55 Hunger, +20 Joy)!');
+                    triggerSound?.('success');
+                    setActiveModal(null);
+                  }
+                }}
+                className="w-full p-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-left flex items-center justify-between cursor-pointer"
+              >
+                <div>
+                  <div className="text-xs font-black text-white">🍛 Cook Home Jollof & Grilled Chicken</div>
+                  <div className="text-[11px] text-zinc-400">+55 Hunger · +15 Energy · +20 Joy</div>
+                </div>
+                <span className="text-xs font-mono font-bold text-amber-300">₦2,500</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await applyDebitWithReceipt({
+                    itemId: `home_indomie_${Date.now()}`,
+                    title: 'Quick Indomie & Two Fried Eggs',
+                    category: 'supermarket',
+                    costNGN: 1200,
+                  });
+                  if (ok) {
+                    onUpdateStats({ hunger: 38, energy: 10, happiness: 14 });
+                    showActionBanner('🍜 Prepared hot Indomie & fried eggs (-₦1,200, +38 Hunger)!');
+                    triggerSound?.('coin');
+                    setActiveModal(null);
+                  }
+                }}
+                className="w-full p-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-left flex items-center justify-between cursor-pointer"
+              >
+                <div>
+                  <div className="text-xs font-black text-white">🍜 Prepare Quick Noodles & Eggs</div>
+                  <div className="text-[11px] text-zinc-400">+38 Hunger · +10 Energy</div>
+                </div>
+                <span className="text-xs font-mono font-bold text-amber-300">₦1,200</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. HOUSE WARDROBE MODAL (LIVE 3D WARDROBE SYNC) */}
+      {activeModal === 'wardrobe' && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
+          <div className="w-full max-w-4xl max-h-[92vh] bg-zinc-950 border border-zinc-800 rounded-3xl overflow-y-auto p-4 sm:p-6">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Shirt className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-base font-black text-white">Home Wardrobe & Grooming Mirror</h3>
+              </div>
+              <button type="button" onClick={() => setActiveModal(null)} className="text-zinc-400 hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <CharacterCustomizer
+              avatar={avatar}
+              onChange={(nextAvatar) => {
+                if (onUpdateUserProfile) {
+                  onUpdateUserProfile({ ...userProfile, avatar: nextAvatar });
+                }
+              }}
+              onProceed={() => {
+                setActiveModal(null);
+                showActionBanner('✨ Outfit & 3D look updated on your character!');
+                triggerSound?.('success');
+              }}
+              playerName={userProfile.firstName || userProfile.username}
+              wardrobeMode={true}
+              ownedClothing={userProfile.ownedClothing || []}
+              ownedHairstyles={userProfile.ownedHairstyles || []}
+              buttonLabel="Wear This Look"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 3. HOUSE STORAGE TRUNK MODAL */}
+      {activeModal === 'storage' && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 rounded-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Package className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-black text-white">Home Storage Vault & Backpack</h3>
+              </div>
+              <button type="button" onClick={() => setActiveModal(null)} className="text-zinc-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-2">
+                <div className="text-xs font-bold text-emerald-300">🎒 Carrying ({userProfile.inventory?.length || 0})</div>
+                {(userProfile.inventory || []).length === 0 ? (
+                  <p className="text-xs text-zinc-500">Nothing in backpack.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                    {(userProfile.inventory || []).map((item, idx) => (
+                      <div key={`${item}_${idx}`} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-zinc-950 text-xs">
+                        <span className="truncate text-zinc-200">{item}</span>
+                        <button
+                          type="button"
+                          onClick={() => moveItemToStorage(item, idx)}
+                          className="text-[10px] font-bold text-amber-300 hover:underline ml-2 shrink-0 cursor-pointer"
+                        >
+                          Store →
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-2">
+                <div className="text-xs font-bold text-amber-300">📦 Stored at Home ({userProfile.storedItems?.length || 0})</div>
+                {(userProfile.storedItems || []).length === 0 ? (
+                  <p className="text-xs text-zinc-500">Storage chest is empty.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                    {(userProfile.storedItems || []).map((item, idx) => (
+                      <div key={`${item}_${idx}`} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-zinc-950 text-xs">
+                        <span className="truncate text-zinc-200">{item}</span>
+                        <button
+                          type="button"
+                          onClick={() => retrieveItemFromStorage(item, idx)}
+                          className="text-[10px] font-bold text-emerald-400 hover:underline ml-2 shrink-0 cursor-pointer"
+                        >
+                          ← Take
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. RESTAURANT / SUPERMARKET / CHILLED DRINKS MENU */}
+      {activeModal === 'food_menu' && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 rounded-2xl p-5 space-y-4 max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <Droplets className="w-5 h-5 text-sky-400" />
+                <h3 className="text-sm font-black text-white">{location.name} — Fresh Meals & Cold Drinks</h3>
+              </div>
+              <button type="button" onClick={() => setActiveModal(null)} className="text-zinc-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 overflow-y-auto pr-1">
+              {foodMenuItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={async () => {
+                    const ok = await applyDebitWithReceipt({
+                      itemId: item.id,
+                      title: `${location.name}: ${item.name}`,
+                      category: 'lifestyle',
+                      costNGN: item.cost,
+                    });
+                    if (ok) {
+                      onUpdateStats({
+                        hunger: item.hunger,
+                        thirst: item.thirst,
+                        happiness: item.joy,
+                      });
+                      showActionBanner(`${item.icon} Enjoyed ${item.name} (-${formatNaira(item.cost)}, +${item.hunger} Hunger, +${item.thirst} Thirst)!`);
+                      triggerSound?.('coin');
+                    }
+                  }}
+                  className="p-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-left flex items-center justify-between gap-2 cursor-pointer"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-black text-white truncate">{item.icon} {item.name}</div>
+                    <div className="text-[10px] text-zinc-400">
+                      +{item.hunger} Hunger · +{item.thirst} Thirst · +{item.joy} Joy
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-mono font-bold shrink-0">
+                    {formatNaira(item.cost)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. CLOTHING BOUTIQUE MODAL */}
+      {activeModal === 'boutique' && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 rounded-2xl p-5 space-y-4 max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <ShoppingBag className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-black text-white">{location.name} — Luxury 3D Boutique</h3>
+              </div>
+              <button type="button" onClick={() => setActiveModal(null)} className="text-zinc-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 overflow-y-auto pr-1">
+              {CLOTHING_SHOP_CATALOG.filter((c) => !c.isStarter).map((item) => {
+                const owned = (userProfile.ownedClothing || []).includes(item.outfitKey);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={async () => {
+                      if (owned) {
+                        onUpdateUserProfile?.({
+                          ...userProfile,
+                          avatar: { ...avatar, outfit: item.outfitKey as CharacterAvatar['outfit'] },
+                        });
+                        showActionBanner(`👔 Equipped ${item.name}!`);
+                        triggerSound?.('success');
+                        return;
+                      }
+                      const ok = await applyDebitWithReceipt({
+                        itemId: item.id,
+                        title: `Boutique: ${item.name}`,
+                        category: 'lifestyle',
+                        costNGN: item.priceNGN,
+                        unlockType: 'clothing',
+                        unlockKey: item.outfitKey,
+                        profilePatch: {
+                          ownedClothing: Array.from(new Set([...(userProfile.ownedClothing || []), item.outfitKey])),
+                          avatar: { ...avatar, outfit: item.outfitKey as CharacterAvatar['outfit'] },
+                        },
+                      });
+                      if (ok) {
+                        onUpdateStats({ happiness: 20 });
+                        showActionBanner(`🛍️ Purchased & equipped ${item.name} (-${formatNaira(item.priceNGN)})!`);
+                        triggerSound?.('success');
+                      }
+                    }}
+                    className={`p-3 rounded-xl border text-left flex items-center justify-between gap-2 cursor-pointer ${
+                      owned ? 'bg-emerald-950/30 border-emerald-500/40' : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-white truncate">{item.name}</div>
+                      <div className="text-[10px] text-zinc-400 truncate">{item.desc}</div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 text-xs font-mono font-bold shrink-0">
+                      {owned ? 'Wear' : formatNaira(item.priceNGN)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. HAIR SALON / BARBERSHOP MODAL */}
+      {activeModal === 'salon' && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl bg-zinc-950 border border-zinc-800 rounded-2xl p-5 space-y-4 max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <Scissors className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-sm font-black text-white">{location.name} — Hair Salon & Grooming</h3>
+              </div>
+              <button type="button" onClick={() => setActiveModal(null)} className="text-zinc-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 overflow-y-auto pr-1">
+              {SALON_HAIRSTYLES_CATALOG.filter(
+                (h) => h.gender === avatar.gender || h.gender === 'unisex'
+              ).map((style) => {
+                const owned = style.isStarter || (userProfile.ownedHairstyles || []).includes(style.id);
+                return (
+                  <button
+                    key={style.id}
+                    type="button"
+                    onClick={async () => {
+                      if (owned) {
+                        onUpdateUserProfile?.({
+                          ...userProfile,
+                          avatar: { ...avatar, hairstyle: style.id as CharacterAvatar['hairstyle'] },
+                        });
+                        showActionBanner(`💇 Styled hair into ${style.name}!`);
+                        triggerSound?.('success');
+                        return;
+                      }
+                      const ok = await applyDebitWithReceipt({
+                        itemId: style.id,
+                        title: `Salon Cut: ${style.name}`,
+                        category: 'lifestyle',
+                        costNGN: style.priceNGN,
+                        unlockType: 'hairstyle',
+                        unlockKey: style.id,
+                        profilePatch: {
+                          ownedHairstyles: Array.from(new Set([...(userProfile.ownedHairstyles || []), style.id])),
+                          avatar: { ...avatar, hairstyle: style.id as CharacterAvatar['hairstyle'] },
+                        },
+                      });
+                      if (ok) {
+                        onUpdateStats({ happiness: 18 });
+                        showActionBanner(`💇 New 3D Hairstyle: ${style.name} (-${formatNaira(style.priceNGN)})!`);
+                        triggerSound?.('success');
+                      }
+                    }}
+                    className={`p-3 rounded-xl border text-left flex items-center justify-between gap-2 cursor-pointer ${
+                      avatar.hairstyle === style.id
+                        ? 'bg-emerald-950/40 border-emerald-500'
+                        : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-white truncate">{style.name}</div>
+                      <div className="text-[10px] text-zinc-400 truncate">{style.desc}</div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-mono font-bold shrink-0">
+                      {avatar.hairstyle === style.id ? 'Active' : owned ? 'Style' : formatNaira(style.priceNGN)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. BANK TELLER & FX MODAL */}
+      {activeModal === 'bank' && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-zinc-950 border border-zinc-800 rounded-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Landmark className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-sm font-black text-white">{location.name} — Teller Counter</h3>
+                  <p className="text-[10px] font-mono text-emerald-400">
+                    Acct: {userProfile.walletAccountNumber || 'N/A'} · @{userProfile.username}
+                  </p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setActiveModal(null)} className="text-zinc-400 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800">
+                <span className="text-[10px] text-zinc-400 block">NGN Balance</span>
+                <span className="font-mono font-black text-emerald-400">{formatNaira(userProfile.bankNaira || 0)}</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-zinc-900 border border-zinc-800">
+                <span className="text-[10px] text-zinc-400 block">CAD Balance</span>
+                <span className="font-mono font-black text-sky-400">${(userProfile.bankCAD || 0).toLocaleString()} CAD</span>
+              </div>
+            </div>
+
+            {/* P2P Transfer */}
+            <div className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 space-y-2.5">
+              <div className="text-xs font-black text-white">Send Funds (Username or 10-Digit NUBAN)</div>
+              <div className="grid grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  value={bankRecipient}
+                  onChange={(e) => setBankRecipient(e.target.value)}
+                  placeholder="@username or 30..."
+                  className="col-span-2 px-2.5 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white"
+                />
+                <select
+                  value={bankCurrency}
+                  onChange={(e) => setBankCurrency(e.target.value as 'NGN' | 'CAD')}
+                  className="px-2 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white"
+                >
+                  <option value="NGN">NGN (₦)</option>
+                  <option value="CAD">CAD ($)</option>
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={bankAmount}
+                  onChange={(e) => setBankAmount(e.target.value)}
+                  className="flex-1 px-2.5 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white font-mono"
+                />
+                <button
+                  type="button"
+                  disabled={isBankBusy}
+                  onClick={async () => {
+                    const amt = Number(bankAmount);
+                    if (!bankRecipient.trim() || !amt || amt <= 0) {
+                      onShowToast('Enter valid recipient and positive amount.');
+                      return;
+                    }
+                    setIsBankBusy(true);
+                    const res = await executeServerTransfer({
+                      senderUsername: userProfile.username,
+                      recipientIdentifier: bankRecipient.trim(),
+                      amount: amt,
+                      currency: bankCurrency,
+                      note: `Counter transfer at ${location.name}`,
+                    });
+                    setIsBankBusy(false);
+                    if (res.success && res.senderProfile) {
+                      onUpdateUserProfile?.({
+                        ...userProfile,
+                        bankNaira: res.senderProfile.bankNaira,
+                        bankCAD: res.senderProfile.bankCAD,
+                        receipts: res.senderProfile.receipts || userProfile.receipts,
+                      });
+                      setBankRecipient('');
+                      showActionBanner(res.message || 'Transfer successful!');
+                      triggerSound?.('success');
+                    } else {
+                      onShowToast(res.error || 'Transfer failed');
+                      triggerSound?.('alert');
+                    }
+                  }}
+                  className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 text-xs font-black cursor-pointer disabled:opacity-50"
+                >
+                  Send
+                </button>
+              </div>
+            </div>
+
+            {/* FX Exchange */}
+            <div className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 space-y-2.5">
+              <div className="text-xs font-black text-white flex items-center gap-1.5">
+                <ArrowRightLeft className="w-3.5 h-3.5 text-sky-400" />
+                <span>FX Desk (1 CAD ≈ ₦{ECONOMY_CONFIG.cadToNgnRate})</span>
+              </div>
+              <div className="flex gap-2">
+                <select
+                  value={fxDirection}
+                  onChange={(e) => setFxDirection(e.target.value as 'NGN_TO_CAD' | 'CAD_TO_NGN')}
+                  className="px-2.5 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white"
+                >
+                  <option value="NGN_TO_CAD">NGN → CAD</option>
+                  <option value="CAD_TO_NGN">CAD → NGN</option>
+                </select>
+                <input
+                  type="number"
+                  min={1}
+                  value={fxAmount}
+                  onChange={(e) => setFxAmount(e.target.value)}
+                  className="flex-1 px-2.5 py-2 rounded-lg bg-zinc-950 border border-zinc-800 text-xs text-white font-mono"
+                />
+                <button
+                  type="button"
+                  disabled={isBankBusy}
+                  onClick={async () => {
+                    const amt = Number(fxAmount);
+                    if (!amt || amt <= 0) return;
+                    setIsBankBusy(true);
+                    const res = await executeServerFxExchange({
+                      direction: fxDirection,
+                      amount: amt,
+                    });
+                    setIsBankBusy(false);
+                    if (res.success && res.account) {
+                      onUpdateUserProfile?.({
+                        ...userProfile,
+                        bankNaira: res.account.bankNaira,
+                        bankCAD: res.account.bankCAD,
+                        receipts: res.account.receipts,
+                      });
+                      showActionBanner(res.message || 'FX exchange completed!');
+                      triggerSound?.('success');
+                    } else {
+                      onShowToast(res.error || 'FX failed');
+                      triggerSound?.('alert');
+                    }
+                  }}
+                  className="px-4 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 text-xs font-black cursor-pointer disabled:opacity-50"
+                >
+                  Convert
+                </button>
+              </div>
+            </div>
+
+            {onOpenPhoneApp && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveModal(null);
+                  onOpenPhoneApp('bank');
+                }}
+                className="w-full py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-xs font-bold text-zinc-200 cursor-pointer"
+              >
+                Open Full Bank App & Ledger History
+              </button>
+            )}
           </div>
         </div>
       )}

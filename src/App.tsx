@@ -94,6 +94,7 @@ import {
   syncGameSaveToCloud,
   syncProfileToCloud,
 } from './services/firebaseAccountService';
+import { syncEconomyAccount } from './services/economyService';
 
 /* =========================================================================
    1. RANDOM NIGERIAN SPAWN ENGINE: ALL 36 STATES + FCT
@@ -569,107 +570,15 @@ export interface CountryData {
 
 export const DESTINATION_COUNTRIES: CountryData[] = [
   {
-    id: 'uk',
-    name: 'United Kingdom',
-    flag: '🇬🇧',
-    city: 'London',
-    currency: 'GBP',
-    currencySymbol: '£',
-    visaName: 'Skilled Worker / Health & Care Visa',
-    visaFeeUSD: 190,
-    proofOfFundsNGN: 15000000,
-    flightTicketUSD: 850,
-    delicacy: { name: 'Full English Breakfast & Earl Grey', desc: 'Crispy bacon, Cumberland sausages, baked beans & sourdough', hunger: 45, joy: 28, costForeign: 15 },
-    foreignJobs: [
-      { id: 'uk_care', title: 'NHS Senior Care Worker', hourlyWage: 22, currency: 'GBP', currencySymbol: '£', energyCost: 18, hungerCost: 12, desc: 'Provide essential nursing and clinical assistance in regional NHS wards.' },
-      { id: 'uk_warehouse', title: 'London Underground Logistics Lead', hourlyWage: 26, currency: 'GBP', currencySymbol: '£', energyCost: 20, hungerCost: 14, desc: 'Coordinate passenger dispatch and terminal inventory in central transit stations.' },
-      { id: 'uk_tech', title: 'Canary Wharf Software Engineer', hourlyWage: 65, currency: 'GBP', currencySymbol: '£', energyCost: 18, hungerCost: 10, reqSkill: 'coding_cert', desc: 'Develop low-latency fintech payment rails for British investment banks.' },
-    ],
-    cashJobs: [
-      { id: 'uk_cash_kitchen', countryId: 'uk', title: 'Night Kitchen Porter / Dishwasher', hourlyWage: 11, currency: 'GBP', currencySymbol: '£', energyCost: 18, hungerCost: 14, raidRisk: 0.08, desc: 'Wash pots and pans in back-alley restaurant kitchens. Paid cash-in-hand in envelope.' },
-      { id: 'uk_cash_build', countryId: 'uk', title: 'Off-the-Books Construction Labourer', hourlyWage: 13, currency: 'GBP', currencySymbol: '£', energyCost: 22, hungerCost: 16, raidRisk: 0.12, desc: 'Haul cement bags and clear rubble on unregulated renovation sites.' },
-      { id: 'uk_cash_carwash', countryId: 'uk', title: 'Cash-in-Hand Hand Carwash Attendant', hourlyWage: 9, currency: 'GBP', currencySymbol: '£', energyCost: 19, hungerCost: 13, raidRisk: 0.10, desc: 'Scrub tires and buff luxury vehicles under cold drizzle for daily tips.' },
-    ],
-    rejectionReasons: [
-      'Appendix Finance: Bank statement did not meet 28-day consecutive balance rule.',
-      'Immigration Rules Part 9: Failure to demonstrate genuine intention to fulfill shortage role.',
-      'Insufficient proof of English proficiency certificate verification.',
-    ],
-    interviewQuestions: [
-      {
-        prompt: 'Why do you believe you meet the Home Office points-based requirements?',
-        choices: [
-          { text: 'I hold registered qualifications, valid CoS reference, and personal maintenance.', score: 35 },
-          { text: 'I just need to enter London first, then figure out work in Peckham.', score: -45 },
-          { text: 'My cousin promised to host me in Manchester while I look around.', score: -20 },
-        ],
-      },
-      {
-        prompt: 'How do you intend to finance your initial housing before first monthly payroll?',
-        choices: [
-          { text: 'Through personal liquid reserves demonstrated on my stamped bank statement.', score: 40 },
-          { text: 'Borrowing from acquaintances through unregistered cash transfers.', score: -40 },
-          { text: 'Using pre-booked employer corporate temporary accommodation.', score: 35 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'usa',
-    name: 'United States',
-    flag: '🇺🇸',
-    city: 'New York',
-    currency: 'USD',
-    currencySymbol: '$',
-    visaName: 'B1/B2 Non-Immigrant / H-1B Visa',
-    visaFeeUSD: 185,
-    proofOfFundsNGN: 25000000,
-    flightTicketUSD: 1100,
-    delicacy: { name: 'NYC Pastrami Sandwich & Craft Soda', desc: 'Spiced cured beef brisket layered on rye with kosher pickles', hunger: 48, joy: 30, costForeign: 22 },
-    foreignJobs: [
-      { id: 'us_amazon', title: 'Amazon Fulfillment Shift Lead', hourlyWage: 28, currency: 'USD', currencySymbol: '$', energyCost: 20, hungerCost: 14, desc: 'Direct automated robotics sorting in massive New Jersey warehouse hubs.' },
-      { id: 'us_driver', title: 'NYC Rideshare & City Driver', hourlyWage: 32, currency: 'USD', currencySymbol: '$', energyCost: 19, hungerCost: 12, desc: 'Navigate Midtown traffic and airport pickups during evening peak surges.' },
-      { id: 'us_tech', title: 'Silicon Alley Tech Software Engineer', hourlyWage: 85, currency: 'USD', currencySymbol: '$', energyCost: 18, hungerCost: 10, reqSkill: 'coding_cert', desc: 'Architect enterprise cloud infrastructure for Manhattan tech unicorns.' },
-    ],
-    cashJobs: [
-      { id: 'us_cash_cook', countryId: 'usa', title: 'Back-Alley Diner Line Cook', hourlyWage: 14, currency: 'USD', currencySymbol: '$', energyCost: 19, hungerCost: 14, raidRisk: 0.10, desc: 'Grill burgers and prep fries over hot grease without paper trail.' },
-      { id: 'us_cash_demolition', countryId: 'usa', title: 'Unlicensed Day Labor & Demolition', hourlyWage: 16, currency: 'USD', currencySymbol: '$', energyCost: 24, hungerCost: 16, raidRisk: 0.14, desc: 'Picked up on street corners for heavy masonry teardown.' },
-      { id: 'us_cash_janitor', countryId: 'usa', title: 'Graveyard Shift Janitorial Cleaner', hourlyWage: 12, currency: 'USD', currencySymbol: '$', energyCost: 17, hungerCost: 12, raidRisk: 0.08, desc: 'Mop corporate skyscrapers after midnight under shadow contractors.' },
-    ],
-    rejectionReasons: [
-      'Section 214(b) INA: Failed to overcome presumption of immigrant intent / lack of strong ties.',
-      'Unexplained large lump-sum deposit flagged on bank statement prior to interview.',
-      'Contradictory travel purpose during consular officer interrogation.',
-    ],
-    interviewQuestions: [
-      {
-        prompt: 'What strong binding social and economic ties guarantee your return to Nigeria?',
-        choices: [
-          { text: 'Verifiable corporate employment, titled landed property, and dependent family.', score: 45 },
-          { text: 'I sold everything in Lagos to fund this trip because life is hard.', score: -75 },
-          { text: 'I love Nigeria and plan to return once my conference finishes.', score: 15 },
-        ],
-      },
-      {
-        prompt: 'Can you account for the source of funds reflected in your account statement?',
-        choices: [
-          { text: 'Consistent business turnover and documented salary deposits over 12 months.', score: 40 },
-          { text: 'My uncle transferred the money into my account just for this embassy interview.', score: -80 },
-          { text: 'Personal savings generated from freelance technology consultancy.', score: 30 },
-        ],
-      },
-    ],
-  },
-  {
     id: 'canada',
     name: 'Canada',
     flag: '🇨🇦',
     city: 'Toronto',
     currency: 'CAD',
     currencySymbol: 'C$',
-    visaName: 'Express Entry / Study Permit',
+    visaName: 'Canada Visa & Nigerian Passport',
     visaFeeUSD: 150,
-    proofOfFundsNGN: 20000000,
+    proofOfFundsNGN: 2500000,
     flightTicketUSD: 1150,
     delicacy: { name: 'Poutine with Quebec Curds & Maple Bacon', desc: 'Golden hot fries drenched in savory brown gravy & squeaky curds', hunger: 44, joy: 28, costForeign: 18 },
     foreignJobs: [
@@ -682,9 +591,8 @@ export const DESTINATION_COUNTRIES: CountryData[] = [
       { id: 'ca_cash_sort', countryId: 'canada', title: 'Off-the-Books Vegetable Packer', hourlyWage: 13, currency: 'CAD', currencySymbol: 'C$', energyCost: 18, hungerCost: 13, raidRisk: 0.11, desc: 'Crate potatoes and carrots in unheated food terminal warehouses.' },
     ],
     rejectionReasons: [
-      'IRCC Section 216(1): Officer not satisfied you will leave Canada at end of stay.',
-      'Proof of settlement funds not unencumbered or readily accessible.',
-      'Course/career progression lacks logical coherence with past academic history.',
+      'IRCC Section 216(1): Complete all application fields accurately.',
+      'Proof of settlement funds must cover application fee.',
     ],
     interviewQuestions: [
       {
@@ -698,142 +606,9 @@ export const DESTINATION_COUNTRIES: CountryData[] = [
       {
         prompt: 'Why choose Canada specifically over educational and career options in Nigeria?',
         choices: [
-          { text: 'To gain advanced specialization in critical STEM sectors to deploy back home.', score: 35 },
+          { text: 'To gain advanced specialization in critical STEM sectors and global business.', score: 35 },
           { text: 'Anywhere outside Nigeria is fine, I just took the easiest option.', score: -40 },
           { text: 'Canada has world-class post-graduate research laboratories in my field.', score: 30 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'germany',
-    name: 'Germany',
-    flag: '🇩🇪',
-    city: 'Berlin',
-    currency: 'EUR',
-    currencySymbol: '€',
-    visaName: 'Opportunity Card (Chancenkarte) / Job Seeker',
-    visaFeeUSD: 110,
-    proofOfFundsNGN: 12000000,
-    flightTicketUSD: 780,
-    delicacy: { name: 'Currywurst, Fries & Sourdough Pretzel', desc: 'Fried sausage seasoned with curry ketchup and golden crusty pretzel', hunger: 42, joy: 25, costForeign: 14 },
-    foreignJobs: [
-      { id: 'de_support', title: 'Bilingual Tech Support Specialist', hourlyWage: 25, currency: 'EUR', currencySymbol: '€', energyCost: 16, hungerCost: 10, desc: 'Handle client escalations for European enterprise logistics providers.' },
-      { id: 'de_logistics', title: 'Berlin Cargo Logistics Team Lead', hourlyWage: 29, currency: 'EUR', currencySymbol: '€', energyCost: 20, hungerCost: 14, desc: 'Supervise rail freight consolidation in Brandenburg distribution centers.' },
-      { id: 'de_tech', title: 'Senior Full-Stack Engineer', hourlyWage: 68, currency: 'EUR', currencySymbol: '€', energyCost: 18, hungerCost: 10, reqSkill: 'coding_cert', desc: 'Develop sustainable clean-tech microservices in Berlin-Kreuzberg.' },
-    ],
-    cashJobs: [
-      { id: 'de_cash_dish', countryId: 'germany', title: 'Unregistered Bistro Cleaner', hourlyWage: 10, currency: 'EUR', currencySymbol: '€', energyCost: 17, hungerCost: 12, raidRisk: 0.09, desc: 'Wash beer mugs and scrub kitchen tiles behind closed doors in Neukölln.' },
-      { id: 'de_cash_scaffold', countryId: 'germany', title: 'Demolition Site Assistant', hourlyWage: 12, currency: 'EUR', currencySymbol: '€', energyCost: 22, hungerCost: 15, raidRisk: 0.12, desc: 'Dismantle scaffolding on construction sites for cash envelopes.' },
-    ],
-    rejectionReasons: [
-      'Blocked Account (Sperrkonto) minimum balance statutory requirement not satisfied.',
-      'Language certification credentials could not be verified with Goethe-Institut.',
-      'Failure to score minimum points on statutory Chancenkarte grid.',
-    ],
-    interviewQuestions: [
-      {
-        prompt: 'Have you fulfilled the mandatory Sperrkonto blocked account deposit for Germany?',
-        choices: [
-          { text: 'Yes, statutory funds are deposited in a recognized German blocked account.', score: 45 },
-          { text: 'I plan to bring cash paper notes in my pocket after landing.', score: -60 },
-          { text: 'Official formal bank guarantee letter provided by registered guarantor.', score: 35 },
-        ],
-      },
-      {
-        prompt: 'Which shortage occupational cluster matches your university qualification?',
-        choices: [
-          { text: 'IT, Software Engineering, and Renewable Technology sector shortages.', score: 35 },
-          { text: 'I will look for whatever manual job shows up on Berlin streets.', score: -30 },
-          { text: 'Healthcare diagnostics and telecommunications engineering.', score: 30 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'uae',
-    name: 'United Arab Emirates',
-    flag: '🇦🇪',
-    city: 'Dubai',
-    currency: 'USD',
-    currencySymbol: '$',
-    visaName: 'Green Freelance / Remote Residence Visa',
-    visaFeeUSD: 120,
-    proofOfFundsNGN: 5000000,
-    flightTicketUSD: 520,
-    delicacy: { name: 'Al Machboos Spiced Lamb & Saffron Rice', desc: 'Fragrant basmati with dried lime, whole cardamom, tender lamb & almonds', hunger: 46, joy: 29, costForeign: 20 },
-    foreignJobs: [
-      { id: 'uae_retail', title: 'Dubai Mall Luxury Hospitality & Retail', hourlyWage: 28, currency: 'USD', currencySymbol: '$', energyCost: 17, hungerCost: 11, desc: 'Serve VIP international tourists in Downtown Dubai luxury boutiques.' },
-      { id: 'uae_realtor', title: 'Marina Real Estate Investment Advisor', hourlyWage: 50, currency: 'USD', currencySymbol: '$', energyCost: 19, hungerCost: 12, desc: 'Broker off-plan luxury waterfront penthouse suites to global investors.' },
-      { id: 'uae_growth', title: 'Digital Growth Marketing Director', hourlyWage: 70, currency: 'USD', currencySymbol: '$', energyCost: 18, hungerCost: 10, reqSkill: 'coding_cert', desc: 'Scale performance campaigns for Business Bay commerce startups.' },
-    ],
-    cashJobs: [
-      { id: 'uae_cash_deira', countryId: 'uae', title: 'Deira Market Porter & Offloader', hourlyWage: 12, currency: 'USD', currencySymbol: '$', energyCost: 20, hungerCost: 14, raidRisk: 0.12, desc: 'Wheel wooden cartloads of spice and textile sacks in scorching Deira alleys.' },
-      { id: 'uae_cash_cleaner', countryId: 'uae', title: 'Private Villa Cleaner & Housekeeper', hourlyWage: 14, currency: 'USD', currencySymbol: '$', energyCost: 18, hungerCost: 12, raidRisk: 0.10, desc: 'Mop marble floors in private residences without labor card registration.' },
-    ],
-    rejectionReasons: [
-      'GDRFA Security Clearing: Incomplete document attestation from foreign ministry.',
-      'Failure to maintain required health insurance policy coverage.',
-      'National demographic visa quota reached for the quarter.',
-    ],
-    interviewQuestions: [
-      {
-        prompt: 'What is the commercial or freelance focus of your residence in Dubai?',
-        choices: [
-          { text: 'Digital software development, international trade, and remote enterprise tech.', score: 35 },
-          { text: 'I just want to visit clubs and film TikTok videos on Sheikh Zayed Road.', score: -30 },
-          { text: 'Managing regional supply chain distribution for West African clients.', score: 30 },
-        ],
-      },
-      {
-        prompt: 'Do you understand local labor laws regarding lawful freelance registration?',
-        choices: [
-          { text: 'Yes, fully licensed under a verified Free Zone commercial permit.', score: 40 },
-          { text: 'I will work under the radar without permits to avoid registration fees.', score: -70 },
-          { text: 'Sponsored through an approved corporate entity.', score: 35 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'ghana',
-    name: 'Ghana',
-    flag: '🇬🇭',
-    city: 'Accra',
-    currency: 'USD',
-    currencySymbol: '$',
-    visaName: 'ECOWAS Residence & Trade Stamp',
-    visaFeeUSD: 50,
-    proofOfFundsNGN: 2000000,
-    flightTicketUSD: 160,
-    delicacy: { name: 'Authentic Waakye with Shito & Fried Fish', desc: 'Rice and beans with red sorghum leaves, black pepper sauce & fried plantain', hunger: 42, joy: 26, costForeign: 6 },
-    foreignJobs: [
-      { id: 'gh_hospitality', title: 'Osu Hospitality & Tourism Coordinator', hourlyWage: 18, currency: 'USD', currencySymbol: '$', energyCost: 16, hungerCost: 10, desc: 'Organize cultural culinary tours and coastal retreats in East Legon.' },
-      { id: 'gh_trader', title: 'Cross-Border Gold & Commodity Merchant', hourlyWage: 30, currency: 'USD', currencySymbol: '$', energyCost: 19, hungerCost: 14, desc: 'Liaise between Makola market distributors and regional mineral buyers.' },
-      { id: 'gh_tech', title: 'Silicon Accra Tech Hub Instructor', hourlyWage: 42, currency: 'USD', currencySymbol: '$', energyCost: 17, hungerCost: 10, reqSkill: 'coding_cert', desc: 'Train aspiring frontend engineers at modern coding academies in Accra.' },
-    ],
-    cashJobs: [
-      { id: 'gh_cash_porter', countryId: 'ghana', title: 'Makola Market Kayayoo Porter', hourlyWage: 8, currency: 'USD', currencySymbol: '$', energyCost: 18, hungerCost: 13, raidRisk: 0.05, desc: 'Head-carry cargo pans across crowded wholesale market lanes.' },
-    ],
-    rejectionReasons: [
-      'GIPC Trade Infringement: Reserved retail trade compliance query.',
-      'Irregularity in ECOWAS biometric passport documentation.',
-    ],
-    interviewQuestions: [
-      {
-        prompt: 'Under what protocol of ECOWAS are you establishing entry into Ghana?',
-        choices: [
-          { text: '1979 ECOWAS Protocol on Free Movement of Persons and Goods.', score: 40 },
-          { text: 'I am sneaking through unofficial bush paths at Aflao border.', score: -80 },
-          { text: 'Visiting for regional cross-border commerce and tech hub exchanges.', score: 30 },
-        ],
-      },
-      {
-        prompt: 'Between Nigerian Jollof and Ghanaian Jollof, which one is superior?',
-        choices: [
-          { text: 'Both are West African treasures uniting our people through culinary greatness!', score: 50 },
-          { text: 'Ghana Jollof has no taste whatsoever!', score: -30 },
-          { text: 'I love Ghanaian Waakye and Naija Smokey Jollof equally with all my heart.', score: 40 },
         ],
       },
     ],
@@ -841,7 +616,7 @@ export const DESTINATION_COUNTRIES: CountryData[] = [
 ];
 
 /* =========================================================================
-   3. UNOFFICIAL ROUTES (HIGH-RISK SMUGGLING ENGINE)
+   3. UNOFFICIAL ROUTES (CANADA ONLY)
    ========================================================================= */
 
 export interface UnofficialRoute {
@@ -850,7 +625,7 @@ export interface UnofficialRoute {
   name: string;
   pathway: string;
   agentFeeNGN: number;
-  failureRate: number; // 0.60 (60% failure rate)
+  failureRate: number;
   dangerDescription: string;
   possibleDisasters: {
     title: string;
@@ -862,84 +637,16 @@ export interface UnofficialRoute {
 
 export const UNOFFICIAL_SMUGGLING_ROUTES: UnofficialRoute[] = [
   {
-    id: 'route_uk_dinghy',
-    destinationCountryId: 'uk',
-    name: 'English Channel Dinghy & Cargo Smuggling',
-    pathway: 'Lagos → Transit Airport → Calais Jungle Camp → Small Inflatable Dinghy → Dover Beach',
-    agentFeeNGN: 5200000,
-    failureRate: 0.60,
-    dangerDescription: 'Extremely freezing sea waters, puncture risk on overloaded dinghy, thermal drone scans by UK Border Force.',
-    possibleDisasters: [
-      { title: 'Channel Patrol Interception', narrative: 'Border Force intercepted your rubber dinghy near Dover. French coastguards pulled you from freezing waters and detained you in Calais camp.', healthDrop: 45, energyDrop: 50 },
-      { title: 'Smuggling Syndicate Scam', narrative: 'The "connection man" collected your ₦5.2M in cash, gave you a fake rendezvous point in France, and vanished into thin air!', healthDrop: 20, energyDrop: 30 },
-      { title: 'Refrigerated Truck Hypothermia', narrative: 'You hid inside a cold storage lorry. You suffered severe hypothermia before being discovered and dumped back at a transit checkpoint.', healthDrop: 55, energyDrop: 60 },
-    ],
-  },
-  {
-    id: 'route_usa_dunkey',
-    destinationCountryId: 'usa',
-    name: 'The "Dunkey" Jungle & Rio Grande Crossing',
-    pathway: 'Lagos → South America → Darien Gap Jungle Hike → Central America → Rio Grande River Crossing',
-    agentFeeNGN: 7500000,
-    failureRate: 0.60,
-    dangerDescription: 'Deadly jungle terrain, cartel checkpoints, flash floods in Darien Gap, and aggressive border patrol sweeps.',
-    possibleDisasters: [
-      { title: 'Cartel Ambush & Robbery', narrative: 'Coyotes stripped your group of passports, mobile phones, and remaining dollars in the jungle. You were left stranded in Guatemala with severe fever.', healthDrop: 50, energyDrop: 60 },
-      { title: 'Rio Grande Current Swept', narrative: 'Strong river currents swept away your group gear. US Border Patrol spotted you with night-vision scopes and immediately deported you.', healthDrop: 45, energyDrop: 50 },
-      { title: 'Fake Travel Agent Abandonment', narrative: 'Your connection agent dumped you at an airport transit zone without connecting boarding passes. You spent days sleeping on concrete floors.', healthDrop: 30, energyDrop: 40 },
-    ],
-  },
-  {
-    id: 'route_germany_sahara',
-    destinationCountryId: 'germany',
-    name: 'Sahara Desert & Mediterranean Sea Boat',
-    pathway: 'Kano → Agadez Desert Trucks → Tripoli Detention Risk → Mediterranean Boat → Lampedusa → Berlin',
-    agentFeeNGN: 2800000,
-    failureRate: 0.60,
-    dangerDescription: 'Extreme Sahara heat exhaustion, militia detention in Libya, dangerous sea crossing on wooden fishing boats.',
-    possibleDisasters: [
-      { title: 'Desert Truck Breakdown & Dehydration', narrative: 'The 4x4 pickup broke down amid Saharan sand dunes. You spent 3 days without water before an emergency humanitarian rescue found you.', healthDrop: 60, energyDrop: 70 },
-      { title: 'Libyan Militia Detention', narrative: 'Armed militia intercepted the convoy near Sabha. You were locked in a warehouse until your family in Nigeria sent emergency ransom to release you.', healthDrop: 50, energyDrop: 60 },
-      { title: 'Capsized Sea Dinghy', narrative: 'The engine stalled 12 miles off Zuwarah. You treaded water for hours before an NGO rescue boat picked you up and returned you to coastal quarantine.', healthDrop: 45, energyDrop: 55 },
-    ],
-  },
-  {
-    id: 'route_uae_ghost',
-    destinationCountryId: 'uae',
-    name: 'Ghost Visa Agent & Deira Irregular Transit',
-    pathway: 'Lagos → Addis Ababa → Dubai Tourist Entry → Fake Quota Agent Runs → Irregular Deira Slum Room',
-    agentFeeNGN: 1900000,
-    failureRate: 0.60,
-    dangerDescription: 'Fake employment offer letters, airport passport confiscation, sudden immigration raid in crowded partitioned flats.',
-    possibleDisasters: [
-      { title: 'Airport Immigration Turnaround', narrative: 'Dubai airport border control detected fraudulent hotel reservations and returned you on the very next flight back to Lagos MMIA.', healthDrop: 20, energyDrop: 35 },
-      { title: 'Passport Seizure by Fraud Syndicate', narrative: 'The fake recruitment agent took your passport and ₦1.9M promising a residency card, then blocked your WhatsApp number permanently.', healthDrop: 25, energyDrop: 40 },
-    ],
-  },
-  {
     id: 'route_canada_snow',
     destinationCountryId: 'canada',
     name: 'Northern Border Winter Forest Crossing',
-    pathway: 'Transit Flight → Northern US Rural Post → Unpatrolled Quebec Snow Trail Trek → Montreal / Toronto',
+    pathway: 'Transit Flight → Northern Rural Post → Unpatrolled Quebec Snow Trail Trek → Montreal / Toronto',
     agentFeeNGN: 4800000,
     failureRate: 0.60,
     dangerDescription: 'Severe frostbite, disorientation in deep Canadian winter blizzards, RCMP thermal imaging patrols.',
     possibleDisasters: [
       { title: 'Severe Frostbite in Snowdrift', narrative: 'You lost your path in a blinding blizzard at -22°C. Forest rangers found you semi-conscious with frostbitten fingers and transported you to hospital.', healthDrop: 55, energyDrop: 65 },
       { title: 'RCMP Thermal Drone Interception', narrative: 'Thermal cameras spotted foot tracks in the snow within 500 meters of the border fence. You were intercepted and refused entry.', healthDrop: 35, energyDrop: 45 },
-    ],
-  },
-  {
-    id: 'route_ghana_bush',
-    destinationCountryId: 'ghana',
-    name: 'Cross-Border Bush Path & Motorbike Crossing',
-    pathway: 'Badagry → Seme Bush Paths → Cotonou → Aflao Creek Boat → Accra Undocumented',
-    agentFeeNGN: 350000,
-    failureRate: 0.60,
-    dangerDescription: 'Border vigilantes, extortion along unpaved creek trails, motorcycle accidents on swampy terrain.',
-    possibleDisasters: [
-      { title: 'Border Gendarme Shakedown', narrative: 'Gendarmes ambushed your motorcycle in the mangroves, seized your baggage and personal cash, and forced you to trek back to Seme border.', healthDrop: 30, energyDrop: 40 },
-      { title: 'Motorcycle Swamp Crash', narrative: 'The speeding smuggler lost control on slippery red clay, tossing you into swamp mud with sprained limbs.', healthDrop: 35, energyDrop: 45 },
     ],
   },
 ];
@@ -1090,8 +797,8 @@ export const SKILL_COURSES: SkillTrainingCourse[] = [
     title: 'IELTS Academic & Language Test Coaching',
     cost: 180000,
     energyReq: 20,
-    benefit: '+15% Visa Approval for UK, Canada & Germany',
-    desc: 'Score Band 8.5 on British Council test to satisfy foreign immigration ministries.',
+    benefit: '+15% IRCC Express Entry Approval for Canada',
+    desc: 'Score Band 8.5 on British Council test to satisfy Canadian immigration points.',
   },
 ];
 
@@ -1704,9 +1411,10 @@ export default function App() {
   const [isPaused, setIsPaused] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  // Need Meters (0 - 100%, decay every 4 seconds)
+  // Need Meters (0 - 100%, decay gradually)
   const [energy, setEnergy] = useState(85);
   const [hunger, setHunger] = useState(80);
+  const [thirst, setThirst] = useState(95);
   const [health, setHealth] = useState(95);
   const [happiness, setHappiness] = useState(75);
 
@@ -2116,16 +1824,16 @@ export default function App() {
         return nextHour;
       });
 
-      // 2. Realistic, Slow Needs Decay (Like Lagos Life, forgiving and gradual)
-      // Decay Hunger 1 point every 15 ticks (~60 seconds)
+      // 2. Realistic, Slow Needs Decay
+      if (ticks % 11 === 0) {
+        setThirst((t) => Math.max(10, t - 1));
+      }
       if (ticks % 15 === 0) {
         setHunger((h) => Math.max(15, h - 1));
       }
-      // Decay Energy 1 point every 20 ticks (~80 seconds)
       if (ticks % 20 === 0) {
         setEnergy((e) => Math.max(15, e - 1));
       }
-      // Decay Happiness 1 point every 30 ticks (~120 seconds)
       if (ticks % 30 === 0) {
         setHappiness((hp) => Math.max(20, hp - 1));
       }
@@ -3079,6 +2787,7 @@ export default function App() {
       gameHour,
       energy,
       hunger,
+      thirst,
       health,
       happiness,
       familyHappiness,
@@ -3107,6 +2816,7 @@ export default function App() {
     gameHour,
     energy,
     hunger,
+    thirst,
     health,
     happiness,
     familyHappiness,
@@ -3133,11 +2843,11 @@ export default function App() {
   }) => {
     const bState = resolveFullStateData(saved.birthStateId);
     const cState = resolveFullStateData(saved.currentStateId || saved.birthStateId, bState);
-    const intlCountry = saved.internationalCountryId
-      ? DESTINATION_COUNTRIES.find((c) => c.id === saved.internationalCountryId) || null
-      : (cState.id === 'canada' ? DESTINATION_COUNTRIES.find((c) => c.id === 'canada') || null : null);
+    const intlCountry = saved.internationalCountryId === 'canada' || cState.id === 'canada'
+      ? DESTINATION_COUNTRIES.find((c) => c.id === 'canada') || null
+      : null;
     const resolvedMode: 'NIGERIA' | 'INTERNATIONAL' =
-      cState.id === 'canada' || !!intlCountry ? 'INTERNATIONAL' : (saved.locationMode || 'NIGERIA');
+      cState.id === 'canada' || !!intlCountry ? 'INTERNATIONAL' : 'NIGERIA';
 
     setPlayerName(saved.playerName || 'Citizen');
     setBirthState(bState);
@@ -3150,6 +2860,7 @@ export default function App() {
     setGameHour(saved.gameHour || 8);
     setEnergy(saved.energy ?? 85);
     setHunger(saved.hunger ?? 80);
+    setThirst(saved.thirst ?? 95);
     setHealth(saved.health ?? 95);
     setHappiness(saved.happiness ?? 75);
     setFamilyHappiness(saved.familyHappiness ?? 65);
@@ -3392,6 +3103,7 @@ export default function App() {
     setGameHour(8);
     setEnergy(85);
     setHunger(80);
+    setThirst(95);
     setHealth(95);
     setHappiness(75);
     setFamilyHappiness(65);
@@ -3442,7 +3154,30 @@ export default function App() {
   const applyAuthenticatedSession = useCallback(
     (profile: UserProfile, spawnState: any, cloudSave?: CloudGameSaveDoc | null) => {
       const isOwner = isStrictOwnerProfile(profile);
-      const hydratedProfile: UserProfile = enforceOwnerFinances(profile);
+      let hydratedProfile: UserProfile = enforceOwnerFinances(profile);
+      const needsOneTimeNigeriaReturn =
+        !hydratedProfile.migratedToNigeriaOriginalStateV1 &&
+        (String(hydratedProfile.currentCountry || '').toLowerCase() !== 'nigeria' ||
+          String(hydratedProfile.lastLocationStateId || '').toLowerCase() === 'canada' ||
+          String(cloudSave?.saveData?.currentStateId || '').toLowerCase() === 'canada' ||
+          cloudSave?.saveData?.locationMode === 'INTERNATIONAL');
+
+      const originalBirthId = hydratedProfile.spawnStateId || spawnState?.id || 'lagos';
+      if (needsOneTimeNigeriaReturn) {
+        hydratedProfile = {
+          ...hydratedProfile,
+          lastLocationStateId: originalBirthId,
+          currentCountry: 'nigeria',
+          migratedToNigeriaOriginalStateV1: true,
+        };
+        if (hydratedProfile.uid) {
+          syncProfileToCloud(hydratedProfile.uid, {
+            lastLocationStateId: originalBirthId,
+            currentCountry: 'nigeria',
+            migratedToNigeriaOriginalStateV1: true,
+          }).catch(() => {});
+        }
+      }
 
       setPendingVerificationEmail(null);
       setSuspendedNoticeReason(null);
@@ -3452,11 +3187,14 @@ export default function App() {
 
       if (cloudSave && cloudSave.saveData) {
         cloudSaveVersionRef.current = cloudSave.version || 1;
-        const resolvedSaveStateId =
-          cloudSave.saveData.currentStateId || hydratedProfile.lastLocationStateId || hydratedProfile.spawnStateId || 'lagos';
+        const resolvedSaveStateId = needsOneTimeNigeriaReturn
+          ? originalBirthId
+          : cloudSave.saveData.currentStateId || hydratedProfile.lastLocationStateId || hydratedProfile.spawnStateId || 'lagos';
         const mergedSaveData = {
           ...cloudSave.saveData,
           currentStateId: resolvedSaveStateId,
+          locationMode: needsOneTimeNigeriaReturn ? ('NIGERIA' as const) : cloudSave.saveData.locationMode,
+          internationalCountryId: needsOneTimeNigeriaReturn ? null : cloudSave.saveData.internationalCountryId,
         };
         restoreSavedState(mergedSaveData);
         if (isOwner) {
@@ -3493,12 +3231,6 @@ export default function App() {
           setCurrentState(CANADA_STATE_DATA as any);
           setInternationalCountry(DESTINATION_COUNTRIES.find((c) => c.id === 'canada') || null);
           setLegalStatus('LEGAL_RESIDENT');
-        } else if (targetCountry !== 'nigeria') {
-          const intl = DESTINATION_COUNTRIES.find((c) => c.id === targetCountry) || null;
-          setLocationMode(intl ? 'INTERNATIONAL' : 'NIGERIA');
-          setInternationalCountry(intl);
-          setCurrentState(resolveFullStateData(targetLocId));
-          setLegalStatus(intl ? 'LEGAL_RESIDENT' : 'CITIZEN_NIGERIA');
         } else {
           setLocationMode('NIGERIA');
           setInternationalCountry(null);
@@ -3515,6 +3247,7 @@ export default function App() {
         });
         setEnergy(hydratedProfile.energy ?? 100);
         setHunger(hydratedProfile.hunger ?? 90);
+        setThirst(hydratedProfile.thirst ?? 95);
         setHappiness(hydratedProfile.happiness ?? 85);
 
         if (isOwner) {
@@ -3609,8 +3342,38 @@ export default function App() {
         }
       }
 
+      // Sync with server-authoritative economy ledger (NUBAN, Canada return migration, receipts)
+      syncEconomyAccount(hydratedProfile).then((syncRes) => {
+        if (!syncRes.success || !syncRes.account) return;
+        const srv = syncRes.account;
+        setCurrentUser((prev) => {
+          if (!prev) return prev;
+          const merged = enforceOwnerFinances({
+            ...prev,
+            walletAccountNumber: srv.walletAccountNumber || prev.walletAccountNumber,
+            migratedToNigeriaOriginalStateV1: srv.migratedToNigeriaOriginalStateV1 ?? prev.migratedToNigeriaOriginalStateV1,
+            immigrationStatus: (srv.immigrationStatus as UserProfile['immigrationStatus']) || prev.immigrationStatus,
+            ownedClothing: srv.ownedClothing?.length ? srv.ownedClothing : prev.ownedClothing,
+            ownedHairstyles: srv.ownedHairstyles?.length ? srv.ownedHairstyles : prev.ownedHairstyles,
+            ownedDocuments: srv.ownedDocuments?.length ? srv.ownedDocuments : prev.ownedDocuments,
+            receipts: srv.receipts?.length ? srv.receipts : prev.receipts,
+            alerts: srv.alerts?.length ? srv.alerts : prev.alerts,
+          });
+          saveSession(merged);
+          return merged;
+        });
+        if (syncRes.restoredToNigeria) {
+          const homeState = resolveFullStateData(originalBirthId);
+          setCurrentState(homeState);
+          setLocationMode('NIGERIA');
+          setInternationalCountry(null);
+          setLegalStatus('CITIZEN_NIGERIA');
+          showToast(`Returned safely to your Nigerian home state (${homeState.name}) with all assets preserved!`);
+        }
+      }).catch(() => {});
+
       const activeStateId = (
-        cloudSave?.saveData?.currentStateId ||
+        (needsOneTimeNigeriaReturn ? originalBirthId : cloudSave?.saveData?.currentStateId) ||
         hydratedProfile?.lastLocationStateId ||
         spawnState?.id ||
         hydratedProfile?.spawnStateId ||
@@ -3620,7 +3383,11 @@ export default function App() {
         'immigration',
         `Cloud Session Authenticated: Welcome @${hydratedProfile.username} to Naija Life! Active Region: ${activeStateId === 'canada' ? 'Canada' : activeStateId.toUpperCase()}.`
       );
-      showToast(`Welcome, ${hydratedProfile.firstName}! Cloud profile synchronized.`);
+      showToast(
+        needsOneTimeNigeriaReturn
+          ? `Returned to ${resolveFullStateData(originalBirthId).name} State, Nigeria — all balances & items preserved!`
+          : `Welcome, ${hydratedProfile.firstName}! Cloud profile synchronized.`
+      );
     },
     [restoreSavedState, addLog, showToast]
   );
@@ -3695,6 +3462,7 @@ export default function App() {
         cashEUR: isOwner ? 1000000000 : wallet.EUR,
         energy,
         hunger,
+        thirst,
         health,
         happiness,
         spawnStateId: currentUser.spawnStateId || 'lagos',
@@ -3715,7 +3483,7 @@ export default function App() {
       await performCloudSaveSync(updatedProfile);
       return updatedProfile;
     } catch {}
-  }, [currentUser, wallet, energy, hunger, health, happiness, currentState, locationMode, internationalCountry, performCloudSaveSync]);
+  }, [currentUser, wallet, energy, hunger, thirst, health, happiness, currentState, locationMode, internationalCountry, performCloudSaveSync]);
 
   // Periodic automatic cloud sync + real-time suspension enforcement every 25 seconds
   useEffect(() => {
@@ -3927,6 +3695,7 @@ export default function App() {
         onToggleMusicMute={handleToggleMusicMute}
         isBroadcastPlaying={isBroadcastPlaying}
         hunger={hunger}
+        thirst={thirst}
         health={health}
         happiness={happiness}
         ownedProperties={ownedProperties}
@@ -4023,6 +3792,8 @@ export default function App() {
         onUpdateStats={(effects) => {
           if (effects.energy !== undefined) setEnergy((e) => Math.max(0, Math.min(100, e + effects.energy!)));
           if (effects.hunger !== undefined) setHunger((h) => Math.max(0, Math.min(100, h + effects.hunger!)));
+          if (effects.thirst !== undefined) setThirst((t) => Math.max(0, Math.min(100, t + effects.thirst!)));
+          if (effects.health !== undefined) setHealth((hl) => Math.max(0, Math.min(100, hl + effects.health!)));
           if (effects.happiness !== undefined) setHappiness((hp) => Math.max(0, Math.min(100, hp + effects.happiness!)));
         }}
         onLogAction={(category, text) => addLog(category === 'social' ? 'lifestyle' : (category as any), text)}

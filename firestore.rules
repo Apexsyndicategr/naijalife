@@ -101,12 +101,14 @@ service cloud.firestore {
     function isValidCitizenProfile(data, uid) {
       return data.keys().hasAll(['uid', 'username', 'usernameLower', 'socialClass', 'spawnStateId', 'avatar', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
-          'uid', 'username', 'usernameLower', 'citizenName', 'firstName', 'lastName',
-          'spawnStateId', 'lastLocationStateId', 'currentCountry', 'socialClass', 'phoneModel',
+          'uid', 'username', 'usernameLower', 'citizenName', 'firstName', 'lastName', 'walletAccountNumber',
+          'spawnStateId', 'lastLocationStateId', 'currentCountry', 'migratedToNigeriaOriginalStateV1', 'immigrationStatus', 'travelHistory',
+          'socialClass', 'phoneModel',
           'cashNaira', 'bankNaira', 'loanBalanceNGN', 'savingsBalanceNGN',
           'cashUSD', 'cashGBP', 'cashEUR', 'bankCAD', 'savingsCAD',
-          'energy', 'hunger', 'health', 'happiness', 'fatherRentSubsidyPct',
-          'avatar', 'inventory', 'completedCourses', 'furnitureBought',
+          'energy', 'hunger', 'thirst', 'health', 'happiness', 'fatherRentSubsidyPct',
+          'avatar', 'inventory', 'ownedClothing', 'ownedHairstyles', 'houseLayouts', 'storedItems',
+          'completedCourses', 'furnitureBought',
           'receipts', 'alerts', 'ownedBusinesses', 'ownedDocuments',
           'phoneWallpaper', 'savedNotes', 'academyProgress',
           'activeJobId', 'jobTitle', 'jobLevel', 'jobRank', 'jobShiftsWorked', 'jobWeeklySalaryNGN', 'jobAutoAttend',
@@ -118,12 +120,21 @@ service cloud.firestore {
         && (!('firstName' in data) || (data.firstName is string && data.firstName.size() <= 64))
         && (!('lastName' in data) || (data.lastName is string && data.lastName.size() <= 64))
         && (!('citizenName' in data) || (data.citizenName is string && data.citizenName.size() <= 80))
+        && (!('walletAccountNumber' in data) || (data.walletAccountNumber is string && data.walletAccountNumber.size() <= 24))
         && (data.socialClass == 'lapo' || data.socialClass == 'mapo' || data.socialClass == 'nepo')
         && data.spawnStateId is string && data.spawnStateId.size() >= 2 && data.spawnStateId.size() <= 32
         && (!('lastLocationStateId' in data) || (data.lastLocationStateId is string && data.lastLocationStateId.size() <= 32))
         && (!('currentCountry' in data) || (data.currentCountry is string && data.currentCountry.size() <= 32))
+        && (!('migratedToNigeriaOriginalStateV1' in data) || data.migratedToNigeriaOriginalStateV1 is bool)
+        && (!('immigrationStatus' in data) || (data.immigrationStatus is string && data.immigrationStatus.size() <= 48))
+        && (!('travelHistory' in data) || (data.travelHistory is list && data.travelHistory.size() <= 200))
+        && (!('thirst' in data) || data.thirst is number)
         && data.avatar is map
         && (!('inventory' in data) || (data.inventory is list && data.inventory.size() <= 200))
+        && (!('ownedClothing' in data) || (data.ownedClothing is list && data.ownedClothing.size() <= 200))
+        && (!('ownedHairstyles' in data) || (data.ownedHairstyles is list && data.ownedHairstyles.size() <= 100))
+        && (!('houseLayouts' in data) || data.houseLayouts is map)
+        && (!('storedItems' in data) || (data.storedItems is list && data.storedItems.size() <= 200))
         && (!('completedCourses' in data) || (data.completedCourses is list && data.completedCourses.size() <= 200))
         && (!('furnitureBought' in data) || (data.furnitureBought is list && data.furnitureBought.size() <= 200))
         && (!('receipts' in data) || (data.receipts is list && data.receipts.size() <= 500))
@@ -326,12 +337,14 @@ service cloud.firestore {
             request.auth.uid == uid
             && !isSuspendedUser(uid)
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'username', 'usernameLower', 'citizenName', 'firstName', 'lastName',
-              'spawnStateId', 'lastLocationStateId', 'currentCountry', 'phoneModel',
+              'username', 'usernameLower', 'citizenName', 'firstName', 'lastName', 'walletAccountNumber',
+              'spawnStateId', 'lastLocationStateId', 'currentCountry', 'migratedToNigeriaOriginalStateV1', 'immigrationStatus', 'travelHistory',
+              'phoneModel',
               'cashNaira', 'bankNaira', 'loanBalanceNGN', 'savingsBalanceNGN',
               'cashUSD', 'cashGBP', 'cashEUR', 'bankCAD', 'savingsCAD',
-              'energy', 'hunger', 'health', 'happiness',
-              'avatar', 'inventory', 'completedCourses', 'furnitureBought',
+              'energy', 'hunger', 'thirst', 'health', 'happiness',
+              'avatar', 'inventory', 'ownedClothing', 'ownedHairstyles', 'houseLayouts', 'storedItems',
+              'completedCourses', 'furnitureBought',
               'receipts', 'alerts', 'ownedBusinesses', 'ownedDocuments',
               'phoneWallpaper', 'savedNotes', 'academyProgress',
               'activeJobId', 'jobTitle', 'jobLevel', 'jobRank', 'jobShiftsWorked', 'jobWeeklySalaryNGN', 'jobAutoAttend',

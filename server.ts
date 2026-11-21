@@ -857,121 +857,804 @@ app.post('/api/nepa/toggle', async (req, res) => {
   return res.json({ success: true, grid: nepaGrid });
 });
 
-// 7. REAL CITIZEN-TO-CITIZEN BANK TRANSFERS (NGN & CAD)
-app.post('/api/bank/transfer', (req, res) => {
-  const { senderUsername, recipientUsername, amount, currency = 'NGN', note = 'Naija Pay Transfer' } = req.body;
-  if (!senderUsername || !recipientUsername || !amount || amount <= 0) {
-    return res.status(400).json({ error: 'Sender, recipient, and a positive amount are required.' });
+// =========================================================================
+// 7. AUTHORITATIVE SERVER ECONOMY, UNIQUE ACCOUNT IDS, TRANSFERS & IMMIGRATION
+// =========================================================================
+const ECONOMY_FILE = path.resolve(DB_DIR, 'economy_state.json');
+const CAD_TO_NGN_RATE = 960.54;
+const NGN_TO_CAD_SPREAD = 0.992;
+const CANADA_VISA_FEE_NGN = 2500000;
+const SEXTILLION_999_SERVER = 9.99e23;
+
+interface ServerEconomyAccount {
+  uid: string;
+  username: string;
+  usernameLower: string;
+  walletAccountNumber: string;
+  isOwner: boolean;
+  bankNaira: number;
+  cashNaira: number;
+  bankCAD: number;
+  savingsBalanceNGN: number;
+  savingsCAD: number;
+  loanBalanceNGN: number;
+  spawnStateId: string;
+  lastLocationStateId: string;
+  currentCountry: string;
+  migratedToNigeriaOriginalStateV1: boolean;
+  immigrationStatus: string;
+  ownedClothing: string[];
+  ownedHairstyles: string[];
+  furnitureBought: string[];
+  ownedDocuments: any[];
+  receipts: any[];
+  alerts: any[];
+  lastBusinessCollectByDate: Record<string, string>;
+  updatedAt: string;
+}
+
+interface EconomyStore {
+  accountsByUid: Record<string, ServerEconomyAccount>;
+  uidByUsername: Record<string, string>;
+  uidByAccountNumber: Record<string, string>;
+  processedRequestIds: Record<string, { createdAt: number; response: any }>;
+}
+
+function loadEconomyStore(): EconomyStore {
+  try {
+    if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+    if (fs.existsSync(ECONOMY_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(ECONOMY_FILE, 'utf-8'));
+      return {
+        accountsByUid: parsed.accountsByUid || {},
+        uidByUsername: parsed.uidByUsername || {},
+        uidByAccountNumber: parsed.uidByAccountNumber || {},
+        processedRequestIds: parsed.processedRequestIds || {},
+      };
+    }
+  } catch (err) {
+    console.error('Error loading economy store:', err);
   }
+  return {
+    accountsByUid: {},
+    uidByUsername: {},
+    uidByAccountNumber: {},
+    processedRequestIds: {},
+  };
+}
 
-  const cleanSender = String(senderUsername).toLowerCase().trim();
-  const cleanRecipient = String(recipientUsername).toLowerCase().trim();
+let economyStore: EconomyStore = loadEconomyStore();
 
-  if (cleanSender === cleanRecipient) {
-    return res.status(400).json({ error: 'Cannot transfer funds to yourself.' });
+function saveEconomyStore(): void {
+  try {
+    if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+    // Trim idempotency cache if above 2500 entries
+    const reqKeys = Object.keys(economyStore.processedRequestIds);
+    if (reqKeys.length > 2500) {
+      reqKeys.sort(
+        (a, b) =>
+          (economyStore.processedRequestIds[a]?.createdAt || 0) -
+          (economyStore.processedRequestIds[b]?.createdAt || 0)
+      );
+      for (const k of reqKeys.slice(0, reqKeys.length - 1500)) {
+        delete economyStore.processedRequestIds[k];
+      }
+    }
+    const tmpFile = `${ECONOMY_FILE}.tmp`;
+    fs.writeFileSync(tmpFile, JSON.stringify(economyStore, null, 2), 'utf-8');
+    fs.renameSync(tmpFile, ECONOMY_FILE);
+  } catch (err) {
+    console.error('Error saving economy store:', err);
   }
+}
 
-  citizensDB = loadCitizensDB();
-  if (!citizensDB[cleanSender] && req.body.senderProfile) {
-    citizensDB[cleanSender] = {
-      profile: req.body.senderProfile,
+function generateServerAccountNumber(seed: string, existingMap: Record<string, string>): string {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  let attempt = 0;
+  while (attempt < 50) {
+    const val = (Math.abs(hash + attempt * 7919) % 90000000) + 10000000;
+    const candidate = `30${val}`;
+    if (!existingMap[candidate]) return candidate;
+    attempt++;
+  }
+  return `30${Math.floor(10000000 + Math.random() * 89999999)}`;
+}
+
+function normalizeOwnerBalances(acc: ServerEconomyAccount): void {
+  if (acc.isOwner) {
+    acc.cashNaira = SEXTILLION_999_SERVER;
+    acc.bankNaira = SEXTILLION_999_SERVER;
+    acc.bankCAD = SEXTILLION_999_SERVER;
+    acc.savingsCAD = SEXTILLION_999_SERVER;
+    acc.loanBalanceNGN = 0;
+  }
+}
+
+function mirrorAccountToCitizensDB(acc: ServerEconomyAccount): void {
+  if (!acc.usernameLower) return;
+  const existing = citizensDB[acc.usernameLower]?.profile || {};
+  citizensDB[acc.usernameLower] = {
+    profile: {
+      ...existing,
+      uid: acc.uid,
+      username: acc.username,
+      walletAccountNumber: acc.walletAccountNumber,
+      cashNaira: acc.cashNaira,
+      bankNaira: acc.bankNaira,
+      bankCAD: acc.bankCAD,
+      savingsBalanceNGN: acc.savingsBalanceNGN,
+      savingsCAD: acc.savingsCAD,
+      loanBalanceNGN: acc.loanBalanceNGN,
+      spawnStateId: acc.spawnStateId,
+      lastLocationStateId: acc.lastLocationStateId,
+      currentCountry: acc.currentCountry,
+      migratedToNigeriaOriginalStateV1: acc.migratedToNigeriaOriginalStateV1,
+      immigrationStatus: acc.immigrationStatus,
+      ownedDocuments: acc.ownedDocuments,
+      receipts: acc.receipts.slice(0, 200),
+      alerts: acc.alerts.slice(0, 100),
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+app.post('/api/economy/sync-account', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) {
+    return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
+  }
+  const { uid, email, emailVerified, idToken } = tokenRes.user;
+  const userDoc = await fetchFirestoreUserFields(uid, idToken);
+  const clientProfile = (req.body?.profile || {}) as Record<string, any>;
+  const usernameRaw = String(clientProfile.username || userDoc?.usernameLower || uid.slice(0, 12)).trim();
+  const usernameLower = usernameRaw.toLowerCase();
+  const isOwner =
+    emailVerified &&
+    email === OWNER_EMAIL &&
+    (userDoc?.usernameLower === OWNER_USERNAME || usernameLower === OWNER_USERNAME);
+
+  let acc = economyStore.accountsByUid[uid];
+  if (!acc) {
+    const legacyCitizen = citizensDB[usernameLower]?.profile;
+    const acctNum =
+      String(clientProfile.walletAccountNumber || legacyCitizen?.walletAccountNumber || '').trim() ||
+      generateServerAccountNumber(uid, economyStore.uidByAccountNumber);
+    const spawnState = String(clientProfile.spawnStateId || legacyCitizen?.spawnStateId || 'lagos');
+    acc = {
+      uid,
+      username: usernameRaw,
+      usernameLower,
+      walletAccountNumber: acctNum,
+      isOwner,
+      bankNaira: Number(legacyCitizen?.bankNaira ?? clientProfile.bankNaira ?? 100000),
+      cashNaira: Number(legacyCitizen?.cashNaira ?? clientProfile.cashNaira ?? 50000),
+      bankCAD: Number(legacyCitizen?.bankCAD ?? clientProfile.bankCAD ?? 0),
+      savingsBalanceNGN: Number(legacyCitizen?.savingsBalanceNGN ?? clientProfile.savingsBalanceNGN ?? 0),
+      savingsCAD: Number(legacyCitizen?.savingsCAD ?? clientProfile.savingsCAD ?? 0),
+      loanBalanceNGN: Number(legacyCitizen?.loanBalanceNGN ?? clientProfile.loanBalanceNGN ?? 0),
+      spawnStateId: spawnState,
+      lastLocationStateId: String(clientProfile.lastLocationStateId || legacyCitizen?.lastLocationStateId || spawnState),
+      currentCountry: String(clientProfile.currentCountry || legacyCitizen?.currentCountry || 'nigeria').toLowerCase(),
+      migratedToNigeriaOriginalStateV1: Boolean(clientProfile.migratedToNigeriaOriginalStateV1),
+      immigrationStatus: String(clientProfile.immigrationStatus || 'NIGERIA_RESIDENT'),
+      ownedClothing: Array.isArray(clientProfile.ownedClothing) ? clientProfile.ownedClothing : [],
+      ownedHairstyles: Array.isArray(clientProfile.ownedHairstyles) ? clientProfile.ownedHairstyles : [],
+      furnitureBought: Array.isArray(clientProfile.furnitureBought) ? clientProfile.furnitureBought : [],
+      ownedDocuments: Array.isArray(clientProfile.ownedDocuments) ? clientProfile.ownedDocuments : [],
+      receipts: Array.isArray(clientProfile.receipts) ? clientProfile.receipts.slice(0, 200) : [],
+      alerts: Array.isArray(clientProfile.alerts) ? clientProfile.alerts.slice(0, 100) : [],
+      lastBusinessCollectByDate: {},
       updatedAt: new Date().toISOString(),
     };
+  } else {
+    acc.isOwner = isOwner;
+    if (usernameRaw) {
+      acc.username = usernameRaw;
+      acc.usernameLower = usernameLower;
+    }
+    // Reconcile any newly minted local starter grants or documents if server had zero
+    if (Array.isArray(clientProfile.ownedClothing) && clientProfile.ownedClothing.length > acc.ownedClothing.length) {
+      acc.ownedClothing = Array.from(new Set([...acc.ownedClothing, ...clientProfile.ownedClothing]));
+    }
+    if (Array.isArray(clientProfile.ownedHairstyles) && clientProfile.ownedHairstyles.length > acc.ownedHairstyles.length) {
+      acc.ownedHairstyles = Array.from(new Set([...acc.ownedHairstyles, ...clientProfile.ownedHairstyles]));
+    }
+    if (Array.isArray(clientProfile.furnitureBought) && clientProfile.furnitureBought.length > acc.furnitureBought.length) {
+      acc.furnitureBought = Array.from(new Set([...acc.furnitureBought, ...clientProfile.furnitureBought]));
+    }
+    if (clientProfile.lastLocationStateId && acc.migratedToNigeriaOriginalStateV1) {
+      acc.lastLocationStateId = String(clientProfile.lastLocationStateId);
+      acc.currentCountry = String(clientProfile.currentCountry || (acc.lastLocationStateId === 'canada' ? 'canada' : 'nigeria')).toLowerCase();
+    }
   }
 
-  const senderRecord = citizensDB[cleanSender];
-  const recipientRecord = citizensDB[cleanRecipient];
-
-  if (!senderRecord || !senderRecord.profile) {
-    return res.status(404).json({ error: 'Sender account not found.' });
+  // One-Time Existing-Player Restoration Migration:
+  // If user was placed abroad (uk, usa, germany, uae, ghana, canada) before this update and hasn't migrated yet,
+  // return them cleanly to Nigeria in their original spawnStateId while keeping ALL money, houses, inventory, businesses & docs.
+  let restoredToNigeria = false;
+  if (!acc.migratedToNigeriaOriginalStateV1) {
+    const loc = String(acc.lastLocationStateId || '').toLowerCase();
+    const country = String(acc.currentCountry || '').toLowerCase();
+    const legacyAbroadStates = new Set(['uk', 'usa', 'germany', 'uae', 'ghana', 'canada', 'london', 'toronto', 'dubai', 'berlin', 'new_york']);
+    if (legacyAbroadStates.has(loc) || (country && country !== 'nigeria')) {
+      acc.lastLocationStateId = acc.spawnStateId || 'lagos';
+      acc.currentCountry = 'nigeria';
+      restoredToNigeria = true;
+    }
+    acc.migratedToNigeriaOriginalStateV1 = true;
   }
 
-  if (!recipientRecord || !recipientRecord.profile) {
-    return res.status(404).json({ error: `Citizen @${recipientUsername} not found on Naija Life servers. Only real registered citizens can receive transfers.` });
+  normalizeOwnerBalances(acc);
+  acc.updatedAt = new Date().toISOString();
+
+  economyStore.accountsByUid[uid] = acc;
+  economyStore.uidByUsername[acc.usernameLower] = uid;
+  economyStore.uidByAccountNumber[acc.walletAccountNumber] = uid;
+  mirrorAccountToCitizensDB(acc);
+  saveEconomyStore();
+  saveCitizensDB(citizensDB);
+
+  return res.json({
+    success: true,
+    restoredToNigeria,
+    account: acc,
+  });
+});
+
+// Authentic Server-Authoritative Citizen-to-Citizen Transfers (supports @username OR 10-digit Account ID)
+app.post('/api/bank/transfer', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  const {
+    requestId,
+    senderUsername,
+    recipientIdentifier,
+    recipientUsername,
+    amount,
+    currency = 'NGN',
+    note = 'Naija Pay Transfer',
+  } = req.body || {};
+
+  const reqKey = requestId ? String(requestId).trim() : '';
+  if (reqKey && economyStore.processedRequestIds[reqKey]) {
+    return res.json({
+      ...economyStore.processedRequestIds[reqKey].response,
+      duplicate: true,
+    });
+  }
+
+  const targetInput = String(recipientIdentifier || recipientUsername || '').replace(/^@/, '').trim();
+  const numAmount = Math.round(Number(amount));
+  if (!targetInput || !Number.isFinite(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: 'Valid recipient (@username or Account ID) and positive amount are required.' });
+  }
+
+  let senderAcc: ServerEconomyAccount | undefined;
+  if (tokenRes.ok && tokenRes.user) {
+    senderAcc = economyStore.accountsByUid[tokenRes.user.uid];
+  }
+  if (!senderAcc && senderUsername) {
+    const cleanSender = String(senderUsername).toLowerCase().replace(/^@/, '').trim();
+    const mappedUid = economyStore.uidByUsername[cleanSender];
+    if (mappedUid) senderAcc = economyStore.accountsByUid[mappedUid];
+  }
+
+  if (!senderAcc) {
+    return res.status(401).json({ error: 'Authenticated sender account not initialized yet. Please retry.' });
+  }
+  if (tokenRes.ok && tokenRes.user && senderAcc.uid !== tokenRes.user.uid) {
+    return res.status(403).json({ error: 'Sender identity mismatch.' });
+  }
+
+  const targetLower = targetInput.toLowerCase();
+  const targetUid =
+    economyStore.uidByAccountNumber[targetInput] ||
+    economyStore.uidByUsername[targetLower];
+
+  let recipientAcc = targetUid ? economyStore.accountsByUid[targetUid] : undefined;
+
+  // Fallback: check legacy citizensDB or Firestore username index to hydrate recipient record
+  if (!recipientAcc) {
+    const legacyRec = citizensDB[targetLower];
+    if (legacyRec?.profile) {
+      const recUid = String(legacyRec.profile.uid || `legacy_${targetLower}`);
+      const acctNum =
+        String(legacyRec.profile.walletAccountNumber || '') ||
+        generateServerAccountNumber(recUid, economyStore.uidByAccountNumber);
+      recipientAcc = {
+        uid: recUid,
+        username: String(legacyRec.profile.username || targetLower),
+        usernameLower: targetLower,
+        walletAccountNumber: acctNum,
+        isOwner: false,
+        bankNaira: Number(legacyRec.profile.bankNaira ?? 100000),
+        cashNaira: Number(legacyRec.profile.cashNaira ?? 0),
+        bankCAD: Number(legacyRec.profile.bankCAD ?? 0),
+        savingsBalanceNGN: Number(legacyRec.profile.savingsBalanceNGN ?? 0),
+        savingsCAD: Number(legacyRec.profile.savingsCAD ?? 0),
+        loanBalanceNGN: Number(legacyRec.profile.loanBalanceNGN ?? 0),
+        spawnStateId: String(legacyRec.profile.spawnStateId || 'lagos'),
+        lastLocationStateId: String(legacyRec.profile.lastLocationStateId || 'lagos'),
+        currentCountry: String(legacyRec.profile.currentCountry || 'nigeria'),
+        migratedToNigeriaOriginalStateV1: true,
+        immigrationStatus: 'NIGERIA_RESIDENT',
+        ownedClothing: [],
+        ownedHairstyles: [],
+        furnitureBought: [],
+        ownedDocuments: [],
+        receipts: Array.isArray(legacyRec.profile.receipts) ? legacyRec.profile.receipts : [],
+        alerts: Array.isArray(legacyRec.profile.alerts) ? legacyRec.profile.alerts : [],
+        lastBusinessCollectByDate: {},
+        updatedAt: new Date().toISOString(),
+      };
+      economyStore.accountsByUid[recUid] = recipientAcc;
+      economyStore.uidByUsername[targetLower] = recUid;
+      economyStore.uidByAccountNumber[acctNum] = recUid;
+    } else if (FIREBASE_CONFIG.projectId) {
+      try {
+        const dbId = encodeURIComponent(FIREBASE_CONFIG.firestoreDatabaseId || '(default)');
+        const uResp = await fetch(
+          `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/${dbId}/documents/usernames/${encodeURIComponent(targetLower)}`
+        );
+        if (uResp.ok) {
+          const uJson = (await uResp.json()) as { fields?: { uid?: { stringValue?: string }; username?: { stringValue?: string } } };
+          const fUid = uJson.fields?.uid?.stringValue;
+          const fUsername = uJson.fields?.username?.stringValue || targetInput;
+          if (fUid) {
+            const acctNum = generateServerAccountNumber(fUid, economyStore.uidByAccountNumber);
+            recipientAcc = {
+              uid: fUid,
+              username: fUsername,
+              usernameLower: targetLower,
+              walletAccountNumber: acctNum,
+              isOwner: false,
+              bankNaira: 100000,
+              cashNaira: 50000,
+              bankCAD: 0,
+              savingsBalanceNGN: 0,
+              savingsCAD: 0,
+              loanBalanceNGN: 0,
+              spawnStateId: 'lagos',
+              lastLocationStateId: 'lagos',
+              currentCountry: 'nigeria',
+              migratedToNigeriaOriginalStateV1: true,
+              immigrationStatus: 'NIGERIA_RESIDENT',
+              ownedClothing: [],
+              ownedHairstyles: [],
+              furnitureBought: [],
+              ownedDocuments: [],
+              receipts: [],
+              alerts: [],
+              lastBusinessCollectByDate: {},
+              updatedAt: new Date().toISOString(),
+            };
+            economyStore.accountsByUid[fUid] = recipientAcc;
+            economyStore.uidByUsername[targetLower] = fUid;
+            economyStore.uidByAccountNumber[acctNum] = fUid;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  if (!recipientAcc) {
+    return res.status(404).json({
+      error: `Account "${targetInput}" not found on Naija Life Banking Network. Verify the @username or 10-digit Account Number.`,
+    });
+  }
+
+  if (recipientAcc.uid === senderAcc.uid) {
+    return res.status(400).json({ error: 'Cannot transfer funds to your own account.' });
   }
 
   const transferCurrency = currency === 'CAD' ? 'CAD' : 'NGN';
-  const numAmount = Math.round(Number(amount));
-
   if (transferCurrency === 'CAD') {
-    const senderBalance = Number(senderRecord.profile.bankCAD || 0);
-    if (senderBalance < numAmount) {
-      return res.status(400).json({ error: `Insufficient CAD funds. Your Canadian balance is $${senderBalance.toLocaleString()} CAD.` });
+    if (!senderAcc.isOwner && senderAcc.bankCAD < numAmount) {
+      return res.status(400).json({ error: `Insufficient CAD balance ($${senderAcc.bankCAD.toLocaleString()} CAD available).` });
     }
-    // Deduct from sender
-    senderRecord.profile.bankCAD = senderBalance - numAmount;
-    // Deposit into recipient's Canadian account
-    recipientRecord.profile.bankCAD = Number(recipientRecord.profile.bankCAD || 0) + numAmount;
+    if (!senderAcc.isOwner) senderAcc.bankCAD -= numAmount;
+    if (!recipientAcc.isOwner) recipientAcc.bankCAD += numAmount;
   } else {
-    const senderBalance = Number(senderRecord.profile.bankNaira || 0);
-    if (senderBalance < numAmount) {
-      return res.status(400).json({ error: `Insufficient NGN funds. Your Nigerian balance is ₦${senderBalance.toLocaleString()}.` });
+    if (!senderAcc.isOwner && senderAcc.bankNaira < numAmount) {
+      return res.status(400).json({ error: `Insufficient NGN balance (₦${senderAcc.bankNaira.toLocaleString()} available).` });
     }
-    // Deduct from sender
-    senderRecord.profile.bankNaira = senderBalance - numAmount;
-    // Deposit into recipient's Nigerian account
-    recipientRecord.profile.bankNaira = Number(recipientRecord.profile.bankNaira || 0) + numAmount;
+    if (!senderAcc.isOwner) senderAcc.bankNaira -= numAmount;
+    if (!recipientAcc.isOwner) recipientAcc.bankNaira += numAmount;
   }
 
-  const txId = `TX_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  normalizeOwnerBalances(senderAcc);
+  normalizeOwnerBalances(recipientAcc);
+
+  const txId = `NLTX_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
   const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-
-  // Update sender receipts
-  if (!Array.isArray(senderRecord.profile.receipts)) {
-    senderRecord.profile.receipts = [];
-  }
-  senderRecord.profile.receipts.unshift({
+  const debitReceipt = {
     id: txId,
-    title: `Transfer to @${recipientRecord.profile.username || cleanRecipient}`,
+    title: `Transfer to @${recipientAcc.username} (${recipientAcc.walletAccountNumber})`,
     category: 'transfer',
     amount: numAmount,
     date: nowStr,
     type: 'debit',
     currency: transferCurrency,
-    recipientOrSender: recipientRecord.profile.username || cleanRecipient,
+    recipientOrSender: `${recipientAcc.username} • ${recipientAcc.walletAccountNumber}`,
     referenceNo: txId,
-  });
-
-  // Update recipient receipts & alert
-  if (!Array.isArray(recipientRecord.profile.receipts)) {
-    recipientRecord.profile.receipts = [];
-  }
-  recipientRecord.profile.receipts.unshift({
-    id: `RX_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-    title: `Transfer from @${senderRecord.profile.username || cleanSender}`,
+  };
+  const creditReceipt = {
+    id: `NLRX_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+    title: `Transfer from @${senderAcc.username} (${note})`,
     category: 'transfer',
     amount: numAmount,
     date: nowStr,
     type: 'credit',
     currency: transferCurrency,
-    recipientOrSender: senderRecord.profile.username || cleanSender,
+    recipientOrSender: `${senderAcc.username} • ${senderAcc.walletAccountNumber}`,
     referenceNo: txId,
-  });
+  };
 
-  if (!Array.isArray(recipientRecord.profile.alerts)) {
-    recipientRecord.profile.alerts = [];
+  senderAcc.receipts = [debitReceipt, ...senderAcc.receipts].slice(0, 200);
+  recipientAcc.receipts = [creditReceipt, ...recipientAcc.receipts].slice(0, 200);
+  recipientAcc.alerts = [
+    {
+      id: `ALT_${Date.now()}`,
+      text: `CREDIT ALERT: Received ${transferCurrency === 'CAD' ? '$' : '₦'}${numAmount.toLocaleString()} ${transferCurrency} from @${senderAcc.username}. Ref: ${txId}`,
+      amount: numAmount,
+      date: nowStr,
+      type: 'credit',
+      senderOrRecipient: senderAcc.username,
+    },
+    ...recipientAcc.alerts,
+  ].slice(0, 100);
+
+  senderAcc.updatedAt = new Date().toISOString();
+  recipientAcc.updatedAt = new Date().toISOString();
+
+  mirrorAccountToCitizensDB(senderAcc);
+  mirrorAccountToCitizensDB(recipientAcc);
+
+  const responsePayload = {
+    success: true,
+    referenceNo: txId,
+    message: `Transferred ${transferCurrency === 'CAD' ? '$' : '₦'}${numAmount.toLocaleString()} ${transferCurrency} to @${recipientAcc.username} (${recipientAcc.walletAccountNumber}).`,
+    receipt: debitReceipt,
+    senderProfile: senderAcc,
+  };
+
+  if (reqKey) {
+    economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: responsePayload };
   }
-  recipientRecord.profile.alerts.unshift({
-    id: `ALT_${Date.now()}`,
-    text: `CREDIT ALERT: Received ${transferCurrency === 'CAD' ? '$' : '₦'}${numAmount.toLocaleString()} ${transferCurrency} from @${senderRecord.profile.username || cleanSender}. Ref: ${txId}`,
-    amount: numAmount,
-    date: nowStr,
-    type: 'credit',
-    senderOrRecipient: senderRecord.profile.username || cleanSender,
-  });
-
-  senderRecord.updatedAt = new Date().toISOString();
-  recipientRecord.updatedAt = new Date().toISOString();
 
   globalRefreshCounter++;
+  saveEconomyStore();
   saveCitizensDB(citizensDB);
 
-  return res.json({
-    success: true,
-    message: `Successfully transferred ${transferCurrency === 'CAD' ? '$' : '₦'}${numAmount.toLocaleString()} ${transferCurrency} to @${recipientRecord.profile.username || cleanRecipient}.`,
-    senderProfile: senderRecord.profile,
-  });
+  return res.json(responsePayload);
 });
+
+app.post('/api/economy/fx-exchange', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) {
+    return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
+  }
+  const { requestId, direction, amount } = req.body || {};
+  const reqKey = requestId ? String(requestId).trim() : '';
+  if (reqKey && economyStore.processedRequestIds[reqKey]) {
+    return res.json({ ...economyStore.processedRequestIds[reqKey].response, duplicate: true });
+  }
+
+  const acc = economyStore.accountsByUid[tokenRes.user.uid];
+  if (!acc) {
+    return res.status(404).json({ error: 'Account not initialized.' });
+  }
+
+  const numAmount = Number(amount);
+  if (!Number.isFinite(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: 'Positive exchange amount required.' });
+  }
+
+  const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const refId = `FX_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+  let message = '';
+  let converted = 0;
+
+  if (direction === 'CAD_TO_NGN') {
+    if (!acc.isOwner && acc.bankCAD < numAmount) {
+      return res.status(400).json({ error: `Insufficient CAD funds ($${acc.bankCAD.toLocaleString()} CAD available).` });
+    }
+    converted = Math.round(numAmount * CAD_TO_NGN_RATE);
+    if (!acc.isOwner) {
+      acc.bankCAD -= numAmount;
+      acc.bankNaira += converted;
+    }
+    message = `Exchanged $${numAmount.toLocaleString()} CAD -> ₦${converted.toLocaleString()} NGN`;
+    acc.receipts = [
+      {
+        id: refId,
+        title: `FX Conversion: CAD -> NGN`,
+        category: 'transfer',
+        amount: converted,
+        date: nowStr,
+        type: 'credit',
+        currency: 'NGN',
+        recipientOrSender: 'CBN / Royal Bank FX Desk',
+        referenceNo: refId,
+      },
+      ...acc.receipts,
+    ].slice(0, 200);
+  } else {
+    if (!acc.isOwner && acc.bankNaira < numAmount) {
+      return res.status(400).json({ error: `Insufficient NGN funds (₦${acc.bankNaira.toLocaleString()} available).` });
+    }
+    converted = Number(((numAmount / CAD_TO_NGN_RATE) * NGN_TO_CAD_SPREAD).toFixed(2));
+    if (!acc.isOwner) {
+      acc.bankNaira -= numAmount;
+      acc.bankCAD += converted;
+    }
+    message = `Exchanged ₦${numAmount.toLocaleString()} NGN -> $${converted.toLocaleString()} CAD`;
+    acc.receipts = [
+      {
+        id: refId,
+        title: `FX Conversion: NGN -> CAD ($${converted.toLocaleString()})`,
+        category: 'transfer',
+        amount: numAmount,
+        date: nowStr,
+        type: 'debit',
+        currency: 'NGN',
+        recipientOrSender: 'CBN / Royal Bank FX Desk',
+        referenceNo: refId,
+      },
+      ...acc.receipts,
+    ].slice(0, 200);
+  }
+
+  normalizeOwnerBalances(acc);
+  acc.updatedAt = new Date().toISOString();
+  mirrorAccountToCitizensDB(acc);
+  const resp = { success: true, converted, message, account: acc, referenceNo: refId };
+  if (reqKey) economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: resp };
+  saveEconomyStore();
+  saveCitizensDB(citizensDB);
+  return res.json(resp);
+});
+
+app.post('/api/economy/purchase', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) {
+    return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
+  }
+  const { requestId, itemId, title, category, amountNGN, unlockKey, unlockType } = req.body || {};
+  const reqKey = requestId ? String(requestId).trim() : '';
+  if (reqKey && economyStore.processedRequestIds[reqKey]) {
+    return res.json({ ...economyStore.processedRequestIds[reqKey].response, duplicate: true });
+  }
+
+  const acc = economyStore.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+
+  const cost = Math.max(0, Math.round(Number(amountNGN || 0)));
+  if (!acc.isOwner && acc.bankNaira + acc.cashNaira < cost) {
+    return res.status(400).json({ error: `Insufficient funds! Need ₦${cost.toLocaleString()}.` });
+  }
+
+  if (!acc.isOwner && cost > 0) {
+    if (acc.bankNaira >= cost) {
+      acc.bankNaira -= cost;
+    } else {
+      const rem = cost - acc.bankNaira;
+      acc.bankNaira = 0;
+      acc.cashNaira = Math.max(0, acc.cashNaira - rem);
+    }
+  }
+
+  if (unlockType === 'clothing' && unlockKey && !acc.ownedClothing.includes(unlockKey)) {
+    acc.ownedClothing.push(unlockKey);
+  } else if (unlockType === 'hairstyle' && unlockKey && !acc.ownedHairstyles.includes(unlockKey)) {
+    acc.ownedHairstyles.push(unlockKey);
+  } else if (unlockType === 'furniture' && unlockKey && !acc.furnitureBought.includes(unlockKey)) {
+    acc.furnitureBought.push(unlockKey);
+  }
+
+  const refId = `BUY_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const receipt = {
+    id: refId,
+    title: String(title || itemId || 'Merchant Purchase'),
+    category: String(category || 'general'),
+    amount: cost,
+    date: nowStr,
+    type: 'debit',
+    currency: 'NGN',
+    recipientOrSender: 'Naija Life Merchant Network',
+    referenceNo: refId,
+  };
+  if (cost > 0) {
+    acc.receipts = [receipt, ...acc.receipts].slice(0, 200);
+  }
+  normalizeOwnerBalances(acc);
+  acc.updatedAt = new Date().toISOString();
+  mirrorAccountToCitizensDB(acc);
+
+  const resp = { success: true, receipt, account: acc };
+  if (reqKey) economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: resp };
+  saveEconomyStore();
+  saveCitizensDB(citizensDB);
+  return res.json(resp);
+});
+
+app.post('/api/economy/business-collect', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) {
+    return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
+  }
+  const { requestId, businessId, businessName, dailyRevenueNGN } = req.body || {};
+  const reqKey = requestId ? String(requestId).trim() : '';
+  if (reqKey && economyStore.processedRequestIds[reqKey]) {
+    return res.json({ ...economyStore.processedRequestIds[reqKey].response, duplicate: true });
+  }
+
+  const acc = economyStore.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+
+  const bizKey = String(businessId || '').trim();
+  const todayKey = new Date().toISOString().slice(0, 10);
+  if (!bizKey || !Number.isFinite(Number(dailyRevenueNGN)) || Number(dailyRevenueNGN) <= 0) {
+    return res.status(400).json({ error: 'Invalid business payout request.' });
+  }
+  if (!acc.isOwner && acc.lastBusinessCollectByDate[bizKey] === todayKey) {
+    return res.status(429).json({ error: 'Daily revenue for this venture has already been settled today.' });
+  }
+
+  const payout = Math.round(Number(dailyRevenueNGN));
+  if (!acc.isOwner) {
+    acc.bankNaira += payout;
+  }
+  acc.lastBusinessCollectByDate[bizKey] = todayKey;
+
+  const refId = `BIZ_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const receipt = {
+    id: refId,
+    title: `Business Dividend: ${String(businessName || bizKey)}`,
+    category: 'business',
+    amount: payout,
+    date: nowStr,
+    type: 'credit',
+    currency: 'NGN',
+    recipientOrSender: 'Corporate Treasury Settlement',
+    referenceNo: refId,
+  };
+  acc.receipts = [receipt, ...acc.receipts].slice(0, 200);
+  normalizeOwnerBalances(acc);
+  acc.updatedAt = new Date().toISOString();
+  mirrorAccountToCitizensDB(acc);
+
+  const resp = { success: true, payout, receipt, account: acc, collectedDate: todayKey };
+  if (reqKey) economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: resp };
+  saveEconomyStore();
+  saveCitizensDB(citizensDB);
+  return res.json(resp);
+});
+
+// Instant Canada Visa & Nigerian Passport Processing Endpoint (0 wait timer)
+app.post('/api/immigration/apply-canada', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) {
+    return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
+  }
+  const {
+    requestId,
+    fullName,
+    age,
+    currentNigerianState,
+    travelPurpose,
+    intendedDuration,
+    employmentStatus,
+    financialInfo,
+  } = req.body || {};
+
+  const reqKey = requestId ? String(requestId).trim() : '';
+  if (reqKey && economyStore.processedRequestIds[reqKey]) {
+    return res.json({ ...economyStore.processedRequestIds[reqKey].response, duplicate: true });
+  }
+
+  const acc = economyStore.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+
+  const cleanName = String(fullName || '').trim();
+  const numAge = Number(age);
+  if (cleanName.length < 3) {
+    return res.status(400).json({ error: 'Full Name (at least 3 characters) is required.' });
+  }
+  if (!Number.isFinite(numAge) || numAge < 16 || numAge > 110) {
+    return res.status(400).json({ error: 'Valid applicant age (16 - 110) is required.' });
+  }
+  if (!currentNigerianState || !travelPurpose || !intendedDuration || !employmentStatus || !financialInfo) {
+    return res.status(400).json({ error: 'All Canada Visa application fields must be completed.' });
+  }
+
+  if (!acc.isOwner && acc.bankNaira + acc.cashNaira < CANADA_VISA_FEE_NGN) {
+    return res.status(400).json({
+      error: `Insufficient funds for Canada Visa Processing Fee (₦${CANADA_VISA_FEE_NGN.toLocaleString()}).`,
+    });
+  }
+
+  if (!acc.isOwner) {
+    if (acc.bankNaira >= CANADA_VISA_FEE_NGN) {
+      acc.bankNaira -= CANADA_VISA_FEE_NGN;
+    } else {
+      const rem = CANADA_VISA_FEE_NGN - acc.bankNaira;
+      acc.bankNaira = 0;
+      acc.cashNaira = Math.max(0, acc.cashNaira - rem);
+    }
+  }
+
+  const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const docsToAdd: any[] = [];
+  const hasPassport = acc.ownedDocuments.some((d) => d.type === 'passport' && d.country === 'Nigeria');
+  if (!hasPassport) {
+    docsToAdd.push({
+      id: `doc_ngp_${Date.now()}`,
+      type: 'passport',
+      title: 'Federal Republic of Nigeria e-Passport',
+      country: 'Nigeria',
+      documentNumber: `NGA-${Math.floor(1000000 + Math.random() * 8999999)}`,
+      issueDate: nowStr,
+      expiryDate: '10 Years',
+      status: 'Valid',
+      desc: `Issued to ${cleanName} (${currentNigerianState} Origin) by Nigeria Immigration Service.`,
+    });
+  }
+
+  const visaDoc = {
+    id: `doc_can_${Date.now()}`,
+    type: 'visa',
+    title: `Canada ${String(travelPurpose)} Visa (IRCC Electronic Travel Approval)`,
+    country: 'Canada',
+    documentNumber: `IRCC-CA-${Math.floor(10000000 + Math.random() * 89999999)}`,
+    issueDate: nowStr,
+    expiryDate: String(intendedDuration),
+    status: 'Active',
+    visaType: String(travelPurpose),
+    desc: `Applicant: ${cleanName} (Age ${numAge}) • Origin: ${currentNigerianState} • Status: ${employmentStatus} • Funds Verified: ${financialInfo}`,
+  };
+  docsToAdd.push(visaDoc);
+
+  acc.ownedDocuments = [...acc.ownedDocuments.filter((d) => !(d.country === 'Canada' && d.type === 'visa')), ...docsToAdd];
+  acc.immigrationStatus = 'CANADA_VISA_APPROVED';
+
+  const refId = `IRCC_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const receipt = {
+    id: refId,
+    title: `Canada Visa & Passport Processing (${travelPurpose})`,
+    category: 'immigration',
+    amount: CANADA_VISA_FEE_NGN,
+    date: nowStr,
+    type: 'debit',
+    currency: 'NGN',
+    recipientOrSender: 'IRCC Canada High Commission',
+    referenceNo: refId,
+  };
+  acc.receipts = [receipt, ...acc.receipts].slice(0, 200);
+  normalizeOwnerBalances(acc);
+  acc.updatedAt = new Date().toISOString();
+  mirrorAccountToCitizensDB(acc);
+
+  const resp = {
+    success: true,
+    approved: true,
+    issuedDocuments: docsToAdd,
+    receipt,
+    account: acc,
+    message: 'Canada Visa & Nigerian Passport APPROVED immediately! You are cleared for flight booking to Toronto, Canada.',
+  };
+  if (reqKey) economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: resp };
+  saveEconomyStore();
+  saveCitizensDB(citizensDB);
+  return res.json(resp);
+});
+
 
 
 // =========================================================================

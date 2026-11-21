@@ -234,7 +234,7 @@ export const BuyModeModal: React.FC<BuyModeModalProps> = ({
 
         {/* FOOTER */}
         <div className="p-4 bg-zinc-900/80 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 shrink-0">
-          <span>Purchased items are automatically installed in your home interior.</span>
+          <span>Purchased items are automatically placed in your house and editable in 3D Decorate mode.</span>
           <button
             type="button"
             onClick={onClose}

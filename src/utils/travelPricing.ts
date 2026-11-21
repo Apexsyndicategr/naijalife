@@ -247,14 +247,14 @@ export const DOMESTIC_AIRLINES: AirlineOption[] = [
 ];
 
 export interface InternationalDestination {
-  id: 'uk' | 'canada' | 'usa' | 'uae';
+  id: 'canada';
   country: string;
   city: string;
   airport: string;
   iata: string;
   flag: string;
   flightDuration: string;
-  status: 'COMING_SOON' | 'ACTIVE';
+  status: 'ACTIVE';
   statusBadge: string;
   priceDisplay: string;
   priceNGN: number;
@@ -264,21 +264,6 @@ export interface InternationalDestination {
 }
 
 export const INTERNATIONAL_DESTINATIONS: InternationalDestination[] = [
-  {
-    id: 'uk',
-    country: 'United Kingdom',
-    city: 'London',
-    airport: 'London Heathrow Airport (LHR)',
-    iata: 'LHR',
-    flag: '🇬🇧',
-    flightDuration: '6h 35m direct',
-    status: 'COMING_SOON',
-    statusBadge: 'COMING SOON (Japa Relocation Wing)',
-    priceDisplay: 'Coming Soon',
-    priceNGN: 0,
-    visaRequirements: 'UK Skilled Worker Visa, Student Visa (Tier 4) or British Passport',
-    desc: 'Direct trans-continental corridor from Lagos/Abuja to London Heathrow. Connect to Birmingham, Manchester, and Leeds.',
-  },
   {
     id: 'canada',
     country: 'Canada',
@@ -292,38 +277,8 @@ export const INTERNATIONAL_DESTINATIONS: InternationalDestination[] = [
     priceDisplay: '₦5,000,000',
     priceNGN: 5000000,
     priceCAD: 4350,
-    visaRequirements: 'Canada Visa, Study Permit, Work Permit, PR Card or Canadian Passport',
+    visaRequirements: 'Nigerian Passport + Canada Visa, Study Permit, Work Permit, or PR Card',
     desc: 'Official active international gateway into Toronto, Vancouver, Montreal, Ottawa, Calgary and beyond. 150 authentic Canadian real-life locations available upon arrival.',
-  },
-  {
-    id: 'usa',
-    country: 'United States',
-    city: 'New York / Atlanta',
-    airport: 'John F. Kennedy International (JFK)',
-    iata: 'JFK',
-    flag: '🇺🇸',
-    flightDuration: '11h 20m direct',
-    status: 'COMING_SOON',
-    statusBadge: 'COMING SOON (Embassy Visa Interview Wing)',
-    priceDisplay: 'Coming Soon',
-    priceNGN: 0,
-    visaRequirements: 'US B1/B2 Visitor Visa, F-1 Student Visa, or Green Card',
-    desc: 'North American trans-Atlantic connection into New York JFK and Atlanta Hartsfield.',
-  },
-  {
-    id: 'uae',
-    country: 'United Arab Emirates',
-    city: 'Dubai',
-    airport: 'Dubai International Airport (DXB)',
-    iata: 'DXB',
-    flag: '🇦🇪',
-    flightDuration: '7h 10m direct',
-    status: 'COMING_SOON',
-    statusBadge: 'COMING SOON (Gulf Trade & Tourism Corridor)',
-    priceDisplay: 'Coming Soon',
-    priceNGN: 0,
-    visaRequirements: 'UAE Tourist Visa, Residence Golden Visa or Investor Permit',
-    desc: 'Direct long-range link into Dubai DXB Terminal 3. High-flying lifestyle, luxury shopping, and Gulf business.',
   },
 ];
 

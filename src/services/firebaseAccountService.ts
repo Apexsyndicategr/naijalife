@@ -170,9 +170,13 @@ const ALLOWED_PROFILE_CLOUD_KEYS = new Set([
   'citizenName',
   'firstName',
   'lastName',
+  'walletAccountNumber',
   'spawnStateId',
   'lastLocationStateId',
   'currentCountry',
+  'migratedToNigeriaOriginalStateV1',
+  'immigrationStatus',
+  'travelHistory',
   'socialClass',
   'phoneModel',
   'cashNaira',
@@ -186,11 +190,16 @@ const ALLOWED_PROFILE_CLOUD_KEYS = new Set([
   'savingsCAD',
   'energy',
   'hunger',
+  'thirst',
   'health',
   'happiness',
   'fatherRentSubsidyPct',
   'avatar',
   'inventory',
+  'ownedClothing',
+  'ownedHairstyles',
+  'houseLayouts',
+  'storedItems',
   'completedCourses',
   'furnitureBought',
   'receipts',
@@ -246,6 +255,10 @@ export function buildFirestoreProfilePayload(
   }
 
   if (Array.isArray(clean.inventory)) clean.inventory = clean.inventory.slice(0, 200);
+  if (Array.isArray(clean.ownedClothing)) clean.ownedClothing = clean.ownedClothing.slice(0, 200);
+  if (Array.isArray(clean.ownedHairstyles)) clean.ownedHairstyles = clean.ownedHairstyles.slice(0, 100);
+  if (Array.isArray(clean.storedItems)) clean.storedItems = clean.storedItems.slice(0, 200);
+  if (Array.isArray(clean.travelHistory)) clean.travelHistory = clean.travelHistory.slice(0, 200);
   if (Array.isArray(clean.completedCourses)) clean.completedCourses = clean.completedCourses.slice(0, 200);
   if (Array.isArray(clean.furnitureBought)) clean.furnitureBought = clean.furnitureBought.slice(0, 200);
   if (Array.isArray(clean.receipts)) clean.receipts = clean.receipts.slice(0, 500);
@@ -270,6 +283,7 @@ export function hydrateUserProfile(
     uid,
     username: account.username,
     citizenName: String(cloudProfile?.citizenName || account.username),
+    walletAccountNumber: cloudProfile?.walletAccountNumber ? String(cloudProfile.walletAccountNumber) : undefined,
     firstName: String(cloudProfile?.firstName || account.username),
     lastName: String(cloudProfile?.lastName || 'Citizen'),
     email,
@@ -294,6 +308,9 @@ export function hydrateUserProfile(
     spawnStateId: String(cloudProfile?.spawnStateId || 'lagos'),
     lastLocationStateId: String(cloudProfile?.lastLocationStateId || cloudProfile?.spawnStateId || 'lagos'),
     currentCountry: (cloudProfile?.currentCountry as 'nigeria' | 'canada') || 'nigeria',
+    migratedToNigeriaOriginalStateV1: Boolean(cloudProfile?.migratedToNigeriaOriginalStateV1),
+    immigrationStatus: (cloudProfile?.immigrationStatus as UserProfile['immigrationStatus']) || 'NIGERIA_RESIDENT',
+    travelHistory: Array.isArray(cloudProfile?.travelHistory) ? (cloudProfile.travelHistory as string[]) : [],
     socialClass: ownerVerified ? 'nepo' : ((cloudProfile?.socialClass as UserProfile['socialClass']) || 'mapo'),
     phoneModel: ownerVerified ? 'iphone_18_pm' : String(cloudProfile?.phoneModel || 'samsung_s24_base'),
     cashNaira: ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.cashNaira ?? 50000),
@@ -307,9 +324,14 @@ export function hydrateUserProfile(
     savingsCAD: ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.savingsCAD ?? 0),
     energy: Number(cloudProfile?.energy ?? 100),
     hunger: Number(cloudProfile?.hunger ?? 95),
+    thirst: Number(cloudProfile?.thirst ?? 95),
     health: Number(cloudProfile?.health ?? 100),
     happiness: Number(cloudProfile?.happiness ?? 90),
     inventory: Array.isArray(cloudProfile?.inventory) ? (cloudProfile.inventory as string[]) : [],
+    ownedClothing: Array.isArray(cloudProfile?.ownedClothing) ? (cloudProfile.ownedClothing as string[]) : undefined,
+    ownedHairstyles: Array.isArray(cloudProfile?.ownedHairstyles) ? (cloudProfile.ownedHairstyles as string[]) : undefined,
+    houseLayouts: (cloudProfile?.houseLayouts as UserProfile['houseLayouts']) || undefined,
+    storedItems: Array.isArray(cloudProfile?.storedItems) ? (cloudProfile.storedItems as string[]) : [],
     fatherRentSubsidyPct: ownerVerified ? 100 : Number(cloudProfile?.fatherRentSubsidyPct ?? 35),
     completedCourses: Array.isArray(cloudProfile?.completedCourses) ? (cloudProfile.completedCourses as string[]) : [],
     academyProgress: (cloudProfile?.academyProgress as Record<string, unknown>) || undefined,

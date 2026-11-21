@@ -8,15 +8,83 @@ export type SocialClass = 'lapo' | 'mapo' | 'nepo';
 export interface CharacterAvatar {
   gender: 'male' | 'female' | 'unisex';
   skinTone: string;
-  hairstyle: 'afro' | 'fade' | 'braids' | 'dreads' | 'gele' | 'buzz' | 'waves' | 'locs' | 'cornrows' | 'peaky_cap';
+  bodyBuild?: 'slim' | 'average' | 'athletic' | 'broad';
+  faceShape?: 'oval' | 'square' | 'heart' | 'round';
+  eyeStyle?: 'classic' | 'almond' | 'sharp' | 'bright';
+  eyebrowStyle?: 'natural' | 'arched' | 'thick' | 'sleek';
+  noseStyle?: 'balanced' | 'sculpted' | 'broad' | 'button';
+  mouthStyle?: 'neutral' | 'smile' | 'confident' | 'full';
+  hairstyle:
+    | 'afro'
+    | 'fade'
+    | 'braids'
+    | 'dreads'
+    | 'gele'
+    | 'buzz'
+    | 'waves'
+    | 'locs'
+    | 'cornrows'
+    | 'peaky_cap'
+    | 'high_top'
+    | 'afro_puff'
+    | 'ponytail'
+    | 'bob_cut'
+    | 'long_wavy'
+    | 'fulani_braids';
   hairColor: string;
-  outfit: 'ankara' | 'agbada' | 'streetwear' | 'corporate' | 'casual' | 'trad_senator' | 'designer' | 'peaky_dapper';
+  outfit:
+    | 'ankara'
+    | 'agbada'
+    | 'streetwear'
+    | 'corporate'
+    | 'casual'
+    | 'trad_senator'
+    | 'designer'
+    | 'peaky_dapper'
+    | 'sporty_fit'
+    | 'female_sundress'
+    | 'female_casual'
+    | 'female_corporate'
+    | 'female_sporty'
+    | 'female_gala'
+    | 'streetwear_luxe'
+    | 'beach_shorts';
+  outfitColor?: string;
   pants?: 'jeans' | 'sweatpants' | 'slacks' | 'wrapper' | 'shorts' | 'pinstripe';
   pantsColor?: string;
   shoes?: 'sneakers' | 'loafers' | 'sandals' | 'boots' | 'heels' | 'oxford';
   shoesColor?: string;
-  accessory: 'none' | 'sunglasses' | 'gold_chain' | 'fila_cap' | 'designer_shades' | 'coral_beads' | 'rolex_watch' | 'diamond_chain' | 'peaky_cap' | 'red_tie';
+  accessory:
+    | 'none'
+    | 'sunglasses'
+    | 'gold_chain'
+    | 'fila_cap'
+    | 'designer_shades'
+    | 'coral_beads'
+    | 'rolex_watch'
+    | 'diamond_chain'
+    | 'peaky_cap'
+    | 'red_tie';
   height?: 'short' | 'average' | 'tall' | 'towering';
+}
+
+export interface PlacedFurnitureItem {
+  instanceId: string;
+  furnitureId: string;
+  name: string;
+  category: 'kitchen' | 'bathroom' | 'room' | 'living_room' | 'comfort' | 'luxury';
+  x: number;
+  z: number;
+  rotationY: number;
+}
+
+export interface HouseLayoutData {
+  propertyId: string;
+  wallTheme: 'cream' | 'sage' | 'charcoal' | 'terracotta' | 'ivory';
+  floorTheme: 'oak' | 'marble' | 'slate' | 'terrazzo';
+  lightsOn: boolean;
+  placedFurniture: PlacedFurnitureItem[];
+  updatedAt?: string;
 }
 
 export interface UserDocument {
@@ -63,6 +131,7 @@ export interface UserProfile {
   uid?: string;
   username: string;
   citizenName?: string;
+  walletAccountNumber?: string;
   role?: 'citizen' | 'owner';
   accountStatus?: 'active' | 'suspended';
   isOwner?: boolean;
@@ -77,6 +146,9 @@ export interface UserProfile {
   avatar: CharacterAvatar;
   spawnStateId: string; // Fixed birthplace/spawn state
   lastLocationStateId?: string; // Current state/country where user left off
+  migratedToNigeriaOriginalStateV1?: boolean;
+  immigrationStatus?: 'NIGERIA_RESIDENT' | 'CANADA_VISA_APPROVED' | 'CANADA_RESIDENT';
+  travelHistory?: string[];
   socialClass: SocialClass;
   phoneModel: string;
   cashNaira: number;
@@ -88,13 +160,18 @@ export interface UserProfile {
   cashEUR?: number;
   bankCAD?: number;
   savingsCAD?: number;
-  currentCountry?: 'nigeria' | 'canada' | 'uk' | 'usa' | 'germany' | 'uae' | 'ghana' | string;
+  currentCountry?: 'nigeria' | 'canada' | string;
   ownedDocuments?: UserDocument[];
   energy: number;
   hunger: number;
-  health: number; // maintained for internal wellness logic, not shown on HUD
+  thirst?: number;
+  health: number;
   happiness: number;
   inventory: string[];
+  ownedClothing?: string[];
+  ownedHairstyles?: string[];
+  houseLayouts?: Record<string, HouseLayoutData>;
+  storedItems?: string[];
   fatherRentSubsidyPct: number; // 0 for Lapo, 35 for Mapo, 100 for Nepo
   completedCourses: string[];
   academyProgress?: Record<string, any>;
@@ -152,8 +229,20 @@ export type POIType =
   | 'lake'
   | 'mall'
   | 'boutique'
+  | 'salon'
   | 'dealership'
   | 'techhub'
+  | 'office'
+  | 'warehouse'
+  | 'factory'
+  | 'petrol_station'
+  | 'bungalow'
+  | 'detached_house'
+  | 'semi_detached'
+  | 'duplex'
+  | 'mansion'
+  | 'apartment'
+  | 'estate'
   | 'home';
 
 export interface LocationPOI {
@@ -173,6 +262,7 @@ export interface LocationPOI {
     earn?: number;
     energyEffect?: number;
     hungerEffect?: number;
+    thirstEffect?: number;
     healthEffect?: number;
     happinessEffect?: number;
   }[];

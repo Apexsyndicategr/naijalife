@@ -639,6 +639,7 @@ export const NaijaCity3DCanvas = React.forwardRef<NaijaCity3DHandle, NaijaCity3D
       for (const home of homeLocations) {
         const built = sObj.buildingBuilder.buildLandmarkPOI(home, {
           isHome: true,
+          stateId: activeStateId,
           reduceShadows,
         });
         const w = poiPercentToWorld(home.x, home.y);
@@ -654,6 +655,7 @@ export const NaijaCity3DCanvas = React.forwardRef<NaijaCity3DHandle, NaijaCity3D
       for (const loc of locations) {
         const built = sObj.buildingBuilder.buildLandmarkPOI(loc, {
           isCnTower: activeStateId === 'canada' && loc.id === 'can_cntower',
+          stateId: activeStateId,
           reduceShadows,
         });
         const w = poiPercentToWorld(loc.x, loc.y);
@@ -711,10 +713,10 @@ export const NaijaCity3DCanvas = React.forwardRef<NaijaCity3DHandle, NaijaCity3D
                 style={{ display: 'none', willChange: 'transform' }}
                 className="absolute top-0 left-0 flex-col items-center pointer-events-auto"
               >
-                {/* Compact Hover / Toggled Name Pill */}
+                {/* Compact Hover / Toggled Name Pill + ENTER Interaction Prompt */}
                 {showFullLabel && (
                   <div
-                    className={`mb-1 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-tight whitespace-nowrap shadow-md border pointer-events-none transition-all ${
+                    className={`mb-1 px-2 py-0.5 rounded-md text-[10px] font-bold tracking-tight whitespace-nowrap shadow-md border flex items-center gap-1.5 pointer-events-none transition-all ${
                       mk.isHome
                         ? 'bg-emerald-950/95 text-emerald-200 border-emerald-400/70'
                         : isHighlighted
@@ -722,7 +724,12 @@ export const NaijaCity3DCanvas = React.forwardRef<NaijaCity3DHandle, NaijaCity3D
                         : 'bg-zinc-950/90 text-white border-zinc-700/80'
                     }`}
                   >
-                    {isHovered ? mk.loc.name : mk.loc.tagLabel || mk.loc.name}
+                    <span>{isHovered ? mk.loc.name : mk.loc.tagLabel || mk.loc.name}</span>
+                    {(isHovered || isHighlighted) && mk.loc.type !== 'airport' && (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500 text-black font-black text-[9px] uppercase tracking-wider">
+                        ENTER
+                      </span>
+                    )}
                   </div>
                 )}
 

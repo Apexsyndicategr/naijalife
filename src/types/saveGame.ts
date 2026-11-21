@@ -66,6 +66,7 @@ export interface SavedGameState {
   gameHour: number;
   energy: number;
   hunger: number;
+  thirst?: number;
   health: number;
   happiness: number;
   familyHappiness: number;
@@ -80,5 +81,6 @@ export interface SavedGameState {
   visas: Record<string, VisaDoc>;
   skills: string[];
   travelHistory: string[];
+  migratedToNigeriaOriginalStateV1?: boolean;
   terminalLogs: TerminalEvent[];
 }

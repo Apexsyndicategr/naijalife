@@ -203,6 +203,19 @@ import {
   getWorkShiftQuestions,
   WorkShiftQuestion
 } from '../data/workShiftScenarios';
+import { CharacterCustomizer } from './CharacterCustomizer';
+import {
+  ECONOMY_CONFIG,
+  generateWalletAccountNumber,
+  inferDrinkStats,
+} from '../config/economyConfig';
+import {
+  applyCanadaVisaServer,
+  collectServerBusinessRevenue,
+  executeServerFxExchange,
+  executeServerPurchase,
+  executeServerTransfer,
+} from '../services/economyService';
 
 export function formatFullNairaNumber(amount: number): string {
   if (!amount || isNaN(amount)) return '₦0.00';
@@ -259,7 +272,7 @@ export interface NaijaPhoneProps {
   onInvest: (assetId: string, amount: number) => void;
   onLiquidateInvestment: (assetId: string) => void;
   onUpdateMoney: (deltaNGN: number, deltaUSD?: number) => void;
-  onUpdateStats: (effects: { energy?: number; hunger?: number; health?: number; happiness?: number }) => void;
+  onUpdateStats: (effects: { energy?: number; hunger?: number; thirst?: number; health?: number; happiness?: number }) => void;
   onLogAction: (category: 'finance' | 'career' | 'lifestyle' | 'social', text: string) => void;
   onShowToast: (message: string) => void;
   onLogout?: () => void;
@@ -618,8 +631,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
     }
   });
 
-  // Banking state (Naija Pay - Multi-Country accounts: Nigeria, Canada, UK, US, UAE)
-  const [bankCountry, setBankCountry] = useState<'nigeria' | 'canada' | 'uk' | 'usa' | 'uae'>('nigeria');
+  // Banking state (Naija Pay - Dual Currency: Nigeria NGN & Canada CAD)
+  const [bankCountry, setBankCountry] = useState<'nigeria' | 'canada'>('nigeria');
   const [bankTab, setBankTab] = useState<'home' | 'transfer' | 'savings' | 'repay_loan'>('home');
   const [transferUser, setTransferUser] = useState<string>('');
   const [transferAmount, setTransferAmount] = useState<number>(10000);
@@ -637,11 +650,23 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   // Documents App State
   const [documentsFilter, setDocumentsFilter] = useState<'all' | 'canada' | 'nigeria'>('all');
 
-  // Immigration Interactive Assessment State
+  // Immigration Interactive Assessment & Direct Canada Visa Application State
   const [selectedImmigrationItem, setSelectedImmigrationItem] = useState<any | null>(null);
   const [visaAnswerDest, setVisaAnswerDest] = useState<string>('Toronto (Ontario)');
   const [visaAnswerStream, setVisaAnswerStream] = useState<string>('Federal Skilled Worker (Express Entry)');
   const [visaAnswerFunds, setVisaAnswerFunds] = useState<string>('Certified Settlement Funds Available');
+  const [canadaFormName, setCanadaFormName] = useState<string>(
+    `${userProfile?.firstName || ''} ${userProfile?.lastName || ''}`.trim()
+  );
+  const [canadaFormAge, setCanadaFormAge] = useState<string>('24');
+  const [canadaFormState, setCanadaFormState] = useState<string>(
+    NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === (currentStateId || userProfile?.spawnStateId || 'lagos'))?.name || 'Lagos'
+  );
+  const [canadaFormPurpose, setCanadaFormPurpose] = useState<'Work' | 'Study' | 'Tourism' | 'Permanent Relocation'>('Work');
+  const [canadaFormDuration, setCanadaFormDuration] = useState<string>('5 Years (Multiple Entry)');
+  const [canadaFormEmployment, setCanadaFormEmployment] = useState<string>('Software / Skilled Professional');
+  const [canadaFormFinancials, setCanadaFormFinancials] = useState<string>('Verified Liquid Balance & Tax Clearance');
+  const [isSubmittingCanadaVisa, setIsSubmittingCanadaVisa] = useState<boolean>(false);
 
   // NaijaBet state: SportyBet 10 matches + Aviator + History Tab
   const [betTab, setBetTab] = useState<'sports' | 'history' | 'aviator'>('sports');
@@ -2527,25 +2552,17 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
                       {[
                         { id: 'nigeria', label: '🇳🇬 36 States Domestic', status: 'active' },
-                        { id: 'canada', label: '🇨🇦 Canada', status: 'active' },
-                        { id: 'uk', label: '🇬🇧 United Kingdom', status: 'soon' },
-                        { id: 'usa', label: '🇺🇸 United States', status: 'soon' },
-                        { id: 'uae', label: '🇦🇪 United Arab Emirates', status: 'soon' },
+                        { id: 'canada', label: '🇨🇦 Canada International', status: 'active' },
                       ].map((tab) => {
                         const isSelected =
                           (tab.id === 'nigeria' && flightTab === 'domestic') ||
                           (tab.id === 'canada' && flightTab === 'international' && selectedIntlDestId === 'canada');
-                        const isSoon = tab.status === 'soon';
+                        const isSoon = false;
                         return (
                           <button
                             key={tab.id}
                             type="button"
                             onClick={() => {
-                              if (isSoon) {
-                                onShowToast(`🌐 International flights to ${tab.label} are COMING SOON! Bilateral FAAN & NCAA clearance in progress.`);
-                                triggerSound?.('alert');
-                                return;
-                              }
                               if (tab.id === 'nigeria') {
                                 setFlightTab('domestic');
                                 triggerSound?.('coin');
@@ -3442,29 +3459,75 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           <span className="text-amber-400">Daily Revenue Stream</span>
                         </div>
 
-                        {userBusinesses.map((biz) => (
-                          <div
-                            key={biz.id}
-                            className="p-3.5 rounded-2xl bg-zinc-950/90 border border-amber-500/30 shadow-md space-y-2"
-                          >
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <h4 className="text-xs font-black text-white">{biz.name}</h4>
-                                <span className="text-[10px] font-mono text-zinc-400">
-                                  {biz.typeName} · Registered: {biz.registeredDate}
+                        {userBusinesses.map((biz) => {
+                          const todayKey = new Date().toISOString().slice(0, 10);
+                          const alreadyClaimedToday = biz.lastCollectedDate === todayKey;
+                          const dailyRev = (biz.dailyRevenueNGN || 0) * (biz.level || 1);
+                          return (
+                            <div
+                              key={biz.id}
+                              className="p-3.5 rounded-2xl bg-zinc-950/90 border border-amber-500/30 shadow-md space-y-2"
+                            >
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <h4 className="text-xs font-black text-white">{biz.name}</h4>
+                                  <span className="text-[10px] font-mono text-zinc-400">
+                                    {biz.typeName} · Registered: {biz.registeredDate}
+                                  </span>
+                                </div>
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold border border-emerald-500/40">
+                                  +{formatNaira(dailyRev)}/day
                                 </span>
                               </div>
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold border border-emerald-500/40">
-                                +{formatNaira(biz.dailyRevenueNGN)}/day
-                              </span>
-                            </div>
 
-                            <div className="flex justify-between items-center text-[10px] font-mono bg-zinc-900/60 p-2 rounded-xl border border-zinc-800">
-                              <span className="text-zinc-400">Enterprise Level: {biz.level}</span>
-                              <span className="text-emerald-400 font-bold">Produces Active Cashflow</span>
+                              <div className="flex justify-between items-center text-[10px] font-mono bg-zinc-900/60 p-2 rounded-xl border border-zinc-800 gap-2">
+                                <span className="text-zinc-400">Lvl {biz.level} · {alreadyClaimedToday ? 'Settled Today' : 'Ready to Claim'}</span>
+                                <button
+                                  type="button"
+                                  disabled={alreadyClaimedToday}
+                                  onClick={async () => {
+                                    if (alreadyClaimedToday) return;
+                                    const srv = await collectServerBusinessRevenue({
+                                      businessId: biz.id,
+                                      businessName: biz.name,
+                                      dailyRevenueNGN: dailyRev,
+                                    });
+                                    if (!srv.success && srv.error && !srv.error.includes('Auth required')) {
+                                      onShowToast(srv.error);
+                                      triggerSound?.('alert');
+                                      return;
+                                    }
+                                    const payoutAmt = srv.success && srv.payout ? srv.payout : dailyRev;
+                                    onUpdateMoney(payoutAmt);
+                                    const nextBiz = userBusinesses.map((b) =>
+                                      b.id === biz.id ? { ...b, lastCollectedDate: todayKey } : b
+                                    );
+                                    setUserBusinesses(nextBiz);
+                                    if (userProfile) {
+                                      persistProfileUpdate({
+                                        ...userProfile,
+                                        ownedBusinesses: nextBiz,
+                                        receipts: srv.receipt
+                                          ? [srv.receipt, ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : [])]
+                                          : userProfile.receipts,
+                                      });
+                                    }
+                                    onShowToast(`🏢 Collected +${formatNaira(payoutAmt)} daily dividend from ${biz.name}!`);
+                                    onLogAction('finance', `Daily Business Dividend (${biz.name}): +${formatNaira(payoutAmt)}`);
+                                    triggerSound?.('coin');
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg font-black text-[10px] cursor-pointer transition-all ${
+                                    alreadyClaimedToday
+                                      ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
+                                      : 'bg-emerald-500 hover:bg-emerald-400 text-black'
+                                  }`}
+                                >
+                                  {alreadyClaimedToday ? 'Claimed' : 'Claim Daily'}
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -3687,49 +3750,34 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 ============================================================= */}
             {currentApp === 'banking' && (
               <div className="space-y-4">
-                {/* Top Multi-Country Account Selector */}
+                {/* Dual-Country Account Selector (Nigeria & Canada) */}
                 <div className="space-y-1">
                   <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-wider block">
-                    Global Bank Account & Jurisdiction:
+                    Bank Jurisdiction:
                   </span>
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {[
-                      { id: 'nigeria', label: '🇳🇬 Nigeria', currency: 'NGN (₦)', status: 'active' },
-                      { id: 'canada', label: '🇨🇦 Canada', currency: 'CAD ($)', status: 'active' },
-                      { id: 'uk', label: '🇬🇧 UK', currency: 'GBP (£)', status: 'soon' },
-                      { id: 'usa', label: '🇺🇸 USA', currency: 'USD ($)', status: 'soon' },
-                      { id: 'uae', label: '🇦🇪 UAE', currency: 'AED (د.إ)', status: 'soon' },
+                      { id: 'nigeria', label: '🇳🇬 Nigeria (NGN ₦)' },
+                      { id: 'canada', label: '🇨🇦 Canada (CAD $)' },
                     ].map((cty) => {
                       const isSelected = bankCountry === cty.id;
-                      const isSoon = cty.status === 'soon';
                       return (
                         <button
                           key={cty.id}
                           type="button"
                           onClick={() => {
-                            if (isSoon) {
-                              onShowToast(`${cty.label} foreign bank account is COMING SOON! Central bank clearance in progress.`);
-                              return;
-                            }
-                            setBankCountry(cty.id as any);
+                            setBankCountry(cty.id as 'nigeria' | 'canada');
                             triggerSound?.('coin');
                           }}
-                          className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 shrink-0 ${
+                          className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
                             isSelected
                               ? cty.id === 'canada'
                                 ? 'bg-gradient-to-r from-red-600 via-rose-600 to-red-800 text-white border-red-400 shadow-md font-black'
                                 : 'bg-emerald-500 text-black border-emerald-400 shadow-md font-black'
-                              : isSoon
-                              ? 'bg-zinc-900/60 text-zinc-500 border-zinc-800'
                               : 'bg-zinc-900 text-zinc-300 border-zinc-700 hover:border-zinc-500'
                           }`}
                         >
                           <span>{cty.label}</span>
-                          {isSoon && (
-                            <span className="text-[8px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-400 uppercase font-mono">
-                              Soon
-                            </span>
-                          )}
                         </button>
                       );
                     })}
@@ -3754,8 +3802,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                           ({formatNaira(checkIsOwner(userProfile) ? 9.99e23 : moneyNGN)})
                         </div>
                       </div>
-                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-emerald-500/20 text-[10px] text-zinc-400">
-                        <span>NUBAN: 0182948291 · Zenith/Access Gateway</span>
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-emerald-500/20 text-[10px] text-zinc-300 gap-2">
+                        <span className="font-mono">
+                          NUBAN: <strong className="text-emerald-300">{userProfile?.walletAccountNumber || generateWalletAccountNumber(userProfile?.uid || userProfile?.username || 'citizen')}</strong> · @{userProfile?.username}
+                        </span>
                         <button
                           type="button"
                           onClick={() => {
@@ -3763,10 +3813,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             setFxAmount(115000);
                             setFxModalOpen(true);
                           }}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/40 font-bold text-[9px] cursor-pointer flex items-center gap-1"
+                          className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-400/40 font-bold text-[9px] cursor-pointer flex items-center gap-1 shrink-0"
                         >
                           <span>💱</span>
-                          <span>Transfer to Canada (CAD)</span>
+                          <span>FX to CAD</span>
                         </button>
                       </div>
                     </div>
@@ -3911,10 +3961,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         })()}
 
                         <div className="space-y-1">
-                          <span className="text-[10px] text-zinc-400 font-mono font-bold uppercase">Recipient Citizen Username</span>
+                          <span className="text-[10px] text-zinc-400 font-mono font-bold uppercase">Recipient @Username or 10-Digit NUBAN ID</span>
                           <input
                             type="text"
-                            placeholder="Enter real citizen username (e.g. chiboy_52)..."
+                            placeholder="Enter @username or 10-digit NUBAN (e.g. chiboy_52 or 3012345678)..."
                             value={transferUser}
                             onChange={(e) => setTransferUser(e.target.value)}
                             className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white"
@@ -3935,74 +3985,90 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <button
                           type="button"
                           onClick={async () => {
-                            const cleanRecipient = transferUser.trim().toLowerCase().replace(/^@/, '');
-                            if (!cleanRecipient) {
-                              onShowToast('Please enter recipient citizen username!');
+                            const rawInput = transferUser.trim().replace(/^@/, '');
+                            const cleanRecipient = rawInput.toLowerCase();
+                            const amt = Math.round(Number(transferAmount));
+                            if (!rawInput) {
+                              onShowToast('Please enter recipient @username or 10-digit NUBAN account number!');
                               return;
                             }
-                            if (moneyNGN < transferAmount) {
+                            if (!Number.isFinite(amt) || amt <= 0) {
+                              onShowToast('Please enter a valid positive transfer amount!');
+                              triggerSound?.('alert');
+                              return;
+                            }
+                            const isOwner = checkIsOwner(userProfile);
+                            if (!isOwner && moneyNGN < amt) {
                               onShowToast('Insufficient funds in your Nigerian account!');
                               triggerSound?.('alert');
                               return;
                             }
-                            if (transferAmount <= 0) {
-                              onShowToast('Please enter a valid transfer amount!');
-                              return;
-                            }
-
-                            const storedUsers = getStoredUsers();
-                            let recipientRecord = storedUsers[cleanRecipient];
-                            if (!recipientRecord) {
-                              try {
-                                const unameSnap = await getDoc(doc(db, 'usernames', cleanRecipient));
-                                if (unameSnap.exists()) {
-                                  recipientRecord = { profile: { username: unameSnap.data().username } } as any;
-                                }
-                              } catch {}
-                            }
-                            if (!recipientRecord) {
-                              onShowToast(`Citizen @${cleanRecipient} not found. Transfers can only be made to real registered citizens!`);
+                            if (cleanRecipient === userProfile?.username?.toLowerCase().trim() || rawInput === userProfile?.walletAccountNumber) {
+                              onShowToast('Cannot transfer funds to your own account.');
                               triggerSound?.('alert');
                               return;
                             }
 
-                            // Try API transfer
-                            try {
-                              await fetch('/api/bank/transfer', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  senderUsername: userProfile.username,
-                                  recipientUsername: cleanRecipient,
-                                  amount: transferAmount,
-                                  currency: 'NGN',
-                                }),
-                              });
-                            } catch {}
+                            const srv = await executeServerTransfer({
+                              senderUsername: userProfile?.username || '',
+                              recipientIdentifier: rawInput,
+                              amount: amt,
+                              currency: 'NGN',
+                              note: 'Naija Pay Instant Transfer',
+                            });
 
-                            onUpdateMoney(-transferAmount);
+                            if (srv.error && !srv.error.includes('not initialized')) {
+                              // Check local / Firestore fallback only when offline/unauthenticated
+                              if (srv.error.includes('not found') || srv.error.includes('Insufficient') || srv.error.includes('own account')) {
+                                onShowToast(srv.error);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                            }
 
-                            const txRef = `TX_${Date.now()}`;
+                            if (!srv.success) {
+                              const storedUsers = getStoredUsers();
+                              let recipientRecord =
+                                storedUsers[cleanRecipient] ||
+                                Object.values(storedUsers).find((u) => u.profile?.walletAccountNumber === rawInput);
+                              if (!recipientRecord) {
+                                try {
+                                  const unameSnap = await getDoc(doc(db, 'usernames', cleanRecipient));
+                                  if (unameSnap.exists()) {
+                                    recipientRecord = { profile: { username: unameSnap.data().username } } as any;
+                                  }
+                                } catch {}
+                              }
+                              if (!recipientRecord) {
+                                onShowToast(srv.error || `Account "${rawInput}" not found on Naija Life Banking Network!`);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                            }
+
+                            onUpdateMoney(-amt);
+
+                            const txRef = srv.referenceNo || `TX_${Date.now()}`;
                             const nowStr = new Date().toLocaleDateString('en-GB');
+                            const nextReceipt = srv.receipt || {
+                              id: txRef,
+                              title: `Transfer to @${cleanRecipient}`,
+                              category: 'transfer' as const,
+                              amount: amt,
+                              date: nowStr,
+                              type: 'debit' as const,
+                              currency: 'NGN' as const,
+                              recipientOrSender: rawInput,
+                              referenceNo: txRef,
+                            };
 
                             if (userProfile) {
-                              const isOwn = checkIsOwner(userProfile);
-                              const nextNGN = isOwn ? 9.99e23 : Math.max(0, moneyNGN - transferAmount);
-                              const cashNaira = isOwn ? 9.99e23 : Math.round(nextNGN * 0.15);
-                              const bankNaira = isOwn ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
-                              const nextReceipts = [
-                                {
-                                  id: txRef,
-                                  title: `Transfer to @${cleanRecipient}`,
-                                  category: 'transfer' as const,
-                                  amount: transferAmount,
-                                  date: nowStr,
-                                  type: 'debit' as const,
-                                  currency: 'NGN' as const,
-                                  recipientOrSender: cleanRecipient,
-                                },
-                                ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
-                              ];
+                              const nextNGN = isOwner ? 9.99e23 : Math.max(0, moneyNGN - amt);
+                              const cashNaira = isOwner ? 9.99e23 : Math.round(nextNGN * 0.15);
+                              const bankNaira = isOwner ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
+                              const nextReceipts = Array.isArray(srv.senderProfile?.receipts)
+                                ? srv.senderProfile.receipts
+                                : [nextReceipt, ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : [])];
                               persistProfileUpdate({
                                 ...userProfile,
                                 cashNaira,
@@ -4011,43 +4077,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               });
                             }
 
-                            if (recipientRecord && recipientRecord.profile) {
-                              recipientRecord.profile.bankNaira = (recipientRecord.profile.bankNaira || 0) + transferAmount;
-                              if (!Array.isArray(recipientRecord.profile.receipts)) recipientRecord.profile.receipts = [];
-                              recipientRecord.profile.receipts.unshift({
-                                id: `RX_${Date.now()}`,
-                                title: `Transfer from @${userProfile.username}`,
-                                category: 'transfer',
-                                amount: transferAmount,
-                                date: nowStr,
-                                type: 'credit',
-                                currency: 'NGN',
-                                recipientOrSender: userProfile.username,
-                              });
-                              storedUsers[cleanRecipient] = recipientRecord;
-                              if (userProfile && storedUsers[userProfile.username.toLowerCase().trim()]) {
-                                storedUsers[userProfile.username.toLowerCase().trim()].profile = {
-                                  ...storedUsers[userProfile.username.toLowerCase().trim()].profile,
-                                  ...userProfile,
-                                  bankNaira: Math.max(0, moneyNGN - transferAmount),
-                                };
-                              }
-                              try {
-                                localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(storedUsers));
-                                if (userProfile) saveSession(userProfile);
-                                const bc = new BroadcastChannel('naija_life_bank_transfer');
-                                bc.postMessage({
-                                  type: 'TRANSFER_COMPLETE',
-                                  sender: userProfile?.username,
-                                  recipient: cleanRecipient,
-                                  amount: transferAmount,
-                                  currency: 'NGN',
-                                });
-                                bc.close();
-                              } catch {}
-                            }
-
-                            onShowToast(`💸 Transferred (-₦${transferAmount.toLocaleString()}) to @${cleanRecipient}!`);
+                            onShowToast(srv.message || `💸 Transferred (-₦${amt.toLocaleString()}) to ${rawInput}!`);
+                            onLogAction('finance', `Bank Transfer to ${rawInput}: -₦${amt.toLocaleString()} (Ref: ${txRef})`);
                             triggerSound?.('coin');
                             setTransferUser('');
                           }}
@@ -4320,10 +4351,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         })()}
 
                         <div className="space-y-1">
-                          <span className="text-[10px] text-zinc-400 font-mono font-bold uppercase">Recipient Citizen Username</span>
+                          <span className="text-[10px] text-zinc-400 font-mono font-bold uppercase">Recipient @Username or 10-Digit Account ID</span>
                           <input
                             type="text"
-                            placeholder="Recipient citizen username..."
+                            placeholder="Recipient @username or Account ID..."
                             value={cadTransferUser}
                             onChange={(e) => setCadTransferUser(e.target.value)}
                             className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white"
@@ -4344,70 +4375,79 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         <button
                           type="button"
                           onClick={async () => {
-                            const cleanRecipient = cadTransferUser.trim().toLowerCase().replace(/^@/, '');
-                            if (!cleanRecipient) {
-                              onShowToast('Please enter recipient citizen username!');
+                            const rawInput = cadTransferUser.trim().replace(/^@/, '');
+                            const cleanRecipient = rawInput.toLowerCase();
+                            const amt = Number(cadTransferAmount);
+                            if (!rawInput) {
+                              onShowToast('Please enter recipient @username or Account ID!');
                               return;
                             }
+                            if (!Number.isFinite(amt) || amt <= 0) {
+                              onShowToast('Please enter a valid positive transfer amount in CAD!');
+                              triggerSound?.('alert');
+                              return;
+                            }
+                            const isOwner = checkIsOwner(userProfile);
                             const senderCad = getEffectiveCAD();
-                            if (senderCad < cadTransferAmount) {
+                            if (!isOwner && senderCad < amt) {
                               onShowToast(`Insufficient funds! Your Canadian balance is $${senderCad.toLocaleString()} CAD.`);
                               triggerSound?.('alert');
                               return;
                             }
-                            if (cadTransferAmount <= 0) {
-                              onShowToast('Please enter a valid transfer amount in CAD!');
-                              return;
-                            }
 
-                            const storedUsers = getStoredUsers();
-                            let recipientRecord = storedUsers[cleanRecipient];
-                            if (!recipientRecord) {
-                              try {
-                                const unameSnap = await getDoc(doc(db, 'usernames', cleanRecipient));
-                                if (unameSnap.exists()) {
-                                  recipientRecord = { profile: { username: unameSnap.data().username } } as any;
-                                }
-                              } catch {}
-                            }
-                            if (!recipientRecord) {
-                              onShowToast(`Citizen @${cleanRecipient} not found. Transfers can only be made to real registered citizens!`);
+                            const srv = await executeServerTransfer({
+                              senderUsername: userProfile?.username || '',
+                              recipientIdentifier: rawInput,
+                              amount: amt,
+                              currency: 'CAD',
+                              note: 'Interac e-Transfer CAD',
+                            });
+
+                            if (srv.error && (srv.error.includes('not found') || srv.error.includes('Insufficient') || srv.error.includes('own account'))) {
+                              onShowToast(srv.error);
                               triggerSound?.('alert');
                               return;
                             }
 
-                            // Try API transfer
-                            try {
-                              await fetch('/api/bank/transfer', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  senderUsername: userProfile.username,
-                                  recipientUsername: cleanRecipient,
-                                  amount: cadTransferAmount,
-                                  currency: 'CAD',
-                                }),
-                              });
-                            } catch {}
+                            if (!srv.success) {
+                              const storedUsers = getStoredUsers();
+                              let recipientRecord =
+                                storedUsers[cleanRecipient] ||
+                                Object.values(storedUsers).find((u) => u.profile?.walletAccountNumber === rawInput);
+                              if (!recipientRecord) {
+                                try {
+                                  const unameSnap = await getDoc(doc(db, 'usernames', cleanRecipient));
+                                  if (unameSnap.exists()) {
+                                    recipientRecord = { profile: { username: unameSnap.data().username } } as any;
+                                  }
+                                } catch {}
+                              }
+                              if (!recipientRecord) {
+                                onShowToast(srv.error || `Account "${rawInput}" not found on Naija Life Banking Network!`);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                            }
 
-                            // Deduct from sender CAD
                             if (userProfile) {
-                              const nextCAD = checkIsOwner(userProfile)
+                              const nextCAD = isOwner
                                 ? 9.99e23
-                                : Math.max(0, Math.round((senderCad - cadTransferAmount) * 100) / 100);
-                              const nextReceipts = [
-                                {
-                                  id: `TX_CAD_${Date.now()}`,
-                                  title: `Interac Transfer to @${cleanRecipient}`,
-                                  category: 'transfer' as const,
-                                  amount: cadTransferAmount,
-                                  date: new Date().toLocaleDateString('en-CA'),
-                                  type: 'debit' as const,
-                                  currency: 'CAD' as const,
-                                  recipientOrSender: cleanRecipient,
-                                },
-                                ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
-                              ];
+                                : srv.senderProfile?.bankCAD !== undefined
+                                ? Number(srv.senderProfile.bankCAD)
+                                : Math.max(0, Math.round((senderCad - amt) * 100) / 100);
+                              const nextReceipt = srv.receipt || {
+                                id: `TX_CAD_${Date.now()}`,
+                                title: `Interac Transfer to @${cleanRecipient}`,
+                                category: 'transfer' as const,
+                                amount: amt,
+                                date: new Date().toLocaleDateString('en-CA'),
+                                type: 'debit' as const,
+                                currency: 'CAD' as const,
+                                recipientOrSender: rawInput,
+                              };
+                              const nextReceipts = Array.isArray(srv.senderProfile?.receipts)
+                                ? srv.senderProfile.receipts
+                                : [nextReceipt, ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : [])];
                               persistProfileUpdate({
                                 ...userProfile,
                                 bankCAD: nextCAD,
@@ -4415,44 +4455,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               });
                             }
 
-                            // Deposit directly into recipient's Canadian account (bankCAD)
-                            if (recipientRecord && recipientRecord.profile) {
-                              recipientRecord.profile.bankCAD = (recipientRecord.profile.bankCAD || 0) + cadTransferAmount;
-                              if (!Array.isArray(recipientRecord.profile.receipts)) recipientRecord.profile.receipts = [];
-                              recipientRecord.profile.receipts.unshift({
-                                id: `RX_CAD_${Date.now()}`,
-                                title: `Interac Transfer from @${userProfile.username}`,
-                                category: 'transfer',
-                                amount: cadTransferAmount,
-                                date: new Date().toLocaleDateString('en-CA'),
-                                type: 'credit',
-                                currency: 'CAD',
-                                recipientOrSender: userProfile.username,
-                              });
-                              storedUsers[cleanRecipient] = recipientRecord;
-                              if (userProfile && storedUsers[userProfile.username.toLowerCase().trim()]) {
-                                storedUsers[userProfile.username.toLowerCase().trim()].profile = {
-                                  ...storedUsers[userProfile.username.toLowerCase().trim()].profile,
-                                  ...userProfile,
-                                  bankCAD: Math.max(0, senderCad - cadTransferAmount),
-                                };
-                              }
-                              try {
-                                localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(storedUsers));
-                                if (userProfile) saveSession(userProfile);
-                                const bc = new BroadcastChannel('naija_life_bank_transfer');
-                                bc.postMessage({
-                                  type: 'TRANSFER_COMPLETE',
-                                  sender: userProfile?.username,
-                                  recipient: cleanRecipient,
-                                  amount: cadTransferAmount,
-                                  currency: 'CAD',
-                                });
-                                bc.close();
-                              } catch {}
-                            }
-
-                            onShowToast(`💸 Transferred (-$${cadTransferAmount.toLocaleString()} CAD) to @${cleanRecipient}'s Canadian account!`);
+                            onShowToast(srv.message || `💸 Transferred (-$${amt.toLocaleString()} CAD) to ${rawInput}!`);
+                            onLogAction('finance', `Interac CAD Transfer to ${rawInput}: -$${amt.toLocaleString()} CAD`);
                             triggerSound?.('coin');
                             setCadTransferUser('');
                           }}
@@ -4630,7 +4634,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
                             const amt = Number(fxAmount);
                             if (!Number.isFinite(amt) || amt <= 0) {
                               onShowToast('Please enter a valid positive exchange amount.');
@@ -4646,7 +4650,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 triggerSound?.('alert');
                                 return;
                               }
-                              const receivedCAD = Math.round((amt / 960.54) * 100) / 100;
+                              const srv = await executeServerFxExchange({ direction: 'NGN_TO_CAD', amount: amt });
+                              if (srv.error && !srv.error.includes('Auth required') && !srv.error.includes('not initialized')) {
+                                onShowToast(srv.error);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              const receivedCAD =
+                                srv.success && srv.converted !== undefined
+                                  ? Number(srv.converted)
+                                  : Math.round((amt / ECONOMY_CONFIG.cadToNgnRate) * 100) / 100;
                               if (receivedCAD <= 0) {
                                 onShowToast('Minimum NGN exchange is ₦10 to receive at least $0.01 CAD.');
                                 triggerSound?.('alert');
@@ -4654,27 +4667,29 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               }
 
                               const txNow = Date.now();
-                              const newReceipts = [
-                                {
-                                  id: `FX_IN_${txNow}`,
-                                  title: `FX Conversion from NGN`,
-                                  category: 'transfer' as const,
-                                  amount: receivedCAD,
-                                  date: new Date().toLocaleDateString('en-CA'),
-                                  type: 'credit' as const,
-                                  currency: 'CAD' as const,
-                                },
-                                {
-                                  id: `FX_OUT_${txNow}`,
-                                  title: `FX Conversion to CAD Account`,
-                                  category: 'transfer' as const,
-                                  amount: amt,
-                                  date: new Date().toLocaleDateString('en-GB'),
-                                  type: 'debit' as const,
-                                  currency: 'NGN' as const,
-                                },
-                                ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
-                              ];
+                              const newReceipts = Array.isArray(srv.account?.receipts)
+                                ? srv.account.receipts
+                                : [
+                                    {
+                                      id: `FX_IN_${txNow}`,
+                                      title: `FX Conversion from NGN`,
+                                      category: 'transfer' as const,
+                                      amount: receivedCAD,
+                                      date: new Date().toLocaleDateString('en-CA'),
+                                      type: 'credit' as const,
+                                      currency: 'CAD' as const,
+                                    },
+                                    {
+                                      id: `FX_OUT_${txNow}`,
+                                      title: `FX Conversion to CAD Account`,
+                                      category: 'transfer' as const,
+                                      amount: amt,
+                                      date: new Date().toLocaleDateString('en-GB'),
+                                      type: 'debit' as const,
+                                      currency: 'NGN' as const,
+                                    },
+                                    ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
+                                  ];
 
                               if (onCurrencyExchange) {
                                 onCurrencyExchange({
@@ -4699,6 +4714,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                               setFxModalOpen(false);
                               onShowToast(`💱 Exchanged ₦${amt.toLocaleString()} NGN ➔ $${receivedCAD.toLocaleString()} CAD (Rate: ₦960.54)!`);
+                              onLogAction('finance', `FX NGN -> CAD: ₦${amt.toLocaleString()} -> $${receivedCAD.toLocaleString()} CAD`);
                               triggerSound?.('success');
                             } else {
                               const currentCad = getEffectiveCAD();
@@ -4707,7 +4723,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 triggerSound?.('alert');
                                 return;
                               }
-                              const receivedNGN = Math.floor(amt * 960.54);
+                              const srv = await executeServerFxExchange({ direction: 'CAD_TO_NGN', amount: amt });
+                              if (srv.error && !srv.error.includes('Auth required') && !srv.error.includes('not initialized')) {
+                                onShowToast(srv.error);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              const receivedNGN =
+                                srv.success && srv.converted !== undefined
+                                  ? Number(srv.converted)
+                                  : Math.floor(amt * ECONOMY_CONFIG.cadToNgnRate);
                               if (receivedNGN <= 0) {
                                 onShowToast('Please enter at least $0.01 CAD to exchange.');
                                 triggerSound?.('alert');
@@ -4715,27 +4740,29 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               }
 
                               const txNow = Date.now();
-                              const newReceipts = [
-                                {
-                                  id: `FX_NGN_IN_${txNow}`,
-                                  title: `FX Conversion from CAD`,
-                                  category: 'transfer' as const,
-                                  amount: receivedNGN,
-                                  date: new Date().toLocaleDateString('en-GB'),
-                                  type: 'credit' as const,
-                                  currency: 'NGN' as const,
-                                },
-                                {
-                                  id: `FX_CAD_OUT_${txNow}`,
-                                  title: `FX Conversion to NGN Account`,
-                                  category: 'transfer' as const,
-                                  amount: amt,
-                                  date: new Date().toLocaleDateString('en-CA'),
-                                  type: 'debit' as const,
-                                  currency: 'CAD' as const,
-                                },
-                                ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
-                              ];
+                              const newReceipts = Array.isArray(srv.account?.receipts)
+                                ? srv.account.receipts
+                                : [
+                                    {
+                                      id: `FX_NGN_IN_${txNow}`,
+                                      title: `FX Conversion from CAD`,
+                                      category: 'transfer' as const,
+                                      amount: receivedNGN,
+                                      date: new Date().toLocaleDateString('en-GB'),
+                                      type: 'credit' as const,
+                                      currency: 'NGN' as const,
+                                    },
+                                    {
+                                      id: `FX_CAD_OUT_${txNow}`,
+                                      title: `FX Conversion to NGN Account`,
+                                      category: 'transfer' as const,
+                                      amount: amt,
+                                      date: new Date().toLocaleDateString('en-CA'),
+                                      type: 'debit' as const,
+                                      currency: 'CAD' as const,
+                                    },
+                                    ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
+                                  ];
 
                               if (onCurrencyExchange) {
                                 onCurrencyExchange({
@@ -4760,6 +4787,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                               setFxModalOpen(false);
                               onShowToast(`💱 Exchanged $${amt.toLocaleString()} CAD ➔ ₦${receivedNGN.toLocaleString()} NGN (Rate: ₦960.54)!`);
+                              onLogAction('finance', `FX CAD -> NGN: $${amt.toLocaleString()} CAD -> ₦${receivedNGN.toLocaleString()}`);
                               triggerSound?.('success');
                             }
                           }}
@@ -5490,9 +5518,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 triggerSound?.('alert');
                                 return;
                               }
+                              const drinkInfo = inferDrinkStats(f.name, f.category);
                               onUpdateMoney(-f.cost);
-                              onUpdateStats({ hunger: f.hunger, happiness: f.joy });
-                              onShowToast(`🍲 Order delivered! Enjoyed ${f.name}.`);
+                              onUpdateStats({
+                                hunger: f.hunger,
+                                thirst: drinkInfo.thirstGain,
+                                happiness: f.joy,
+                              });
+                              onShowToast(`🍲 Enjoyed ${f.name} (+${f.hunger}% Hunger${drinkInfo.isDrink ? `, +${drinkInfo.thirstGain}% Thirst` : ''}).`);
                               triggerSound?.('coin');
                             }}
                             className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs rounded-xl cursor-pointer shrink-0"
@@ -5707,9 +5740,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 triggerSound?.('alert');
                                 return;
                               }
+                              const drinkInfo = inferDrinkStats(item.name, item.category);
                               onUpdateMoney(-item.priceNGN);
-                              if (item.hungerRestore > 0) {
-                                onUpdateStats({ hunger: item.hungerRestore, health: 5 });
+                              if (item.hungerRestore > 0 || drinkInfo.isDrink) {
+                                onUpdateStats({
+                                  hunger: item.hungerRestore,
+                                  thirst: drinkInfo.thirstGain,
+                                  health: 5,
+                                });
                               }
                               onShowToast(`🛒 Bought ${item.name}! Delivered straight to your home pantry.`);
                               triggerSound?.('coin');
@@ -6733,35 +6771,273 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
             )}
 
             {/* =============================================================
-                9. IMMIGRATION APP (CANADA ACTIVE + GENERAL DOCS + COMING SOON)
+                9. IMMIGRATION APP (CANADA-ONLY + INSTANT 0-WAIT FORM)
                 ============================================================= */}
             {currentApp === 'immigration' && (
               <div className="space-y-4">
-                <div className="bg-gradient-to-r from-blue-950/90 via-sky-950/80 to-indigo-950/90 border border-sky-500/40 rounded-2xl p-3.5 shadow-lg">
-                  <div className="flex items-center justify-between">
+                <div className="bg-gradient-to-r from-red-950/90 via-rose-950/80 to-zinc-950 border border-red-500/40 rounded-2xl p-3.5 shadow-lg">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <Plane className="w-6 h-6 text-sky-400" />
+                      <Plane className="w-6 h-6 text-red-400" />
                       <div>
-                        <h3 className="text-xs font-black text-sky-300 uppercase">NIS & IRCC RELOCATION GATEWAY</h3>
-                        <p className="text-[10px] text-zinc-400">Nigeria Immigration Service & Canadian High Commission</p>
+                        <h3 className="text-xs font-black text-red-200 uppercase">NIS &amp; IRCC CANADA RELOCATION</h3>
+                        <p className="text-[10px] text-zinc-400">Official Nigeria-to-Canada Instant Visa &amp; Passport Portal</p>
                       </div>
                     </div>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-[9px] font-mono font-black uppercase">
+                      0-Wait Instant
+                    </span>
                   </div>
                 </div>
 
-                {/* Relocation Country Sections */}
+                {/* DIRECT INTERACTIVE CANADA VISA + NIGERIAN PASSPORT FORM */}
+                <div className="p-4 rounded-2xl bg-zinc-950/95 border border-red-500/40 space-y-3 shadow-xl">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-[9px] font-mono text-red-400 uppercase font-bold block">Direct Official Application</span>
+                      <h4 className="text-xs font-black text-white">🇨🇦 Canada Visa &amp; Nigerian Passport Package</h4>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-xl bg-amber-500/20 border border-amber-400/50 text-amber-300 font-mono font-black text-[11px]">
+                      ₦{ECONOMY_CONFIG.canadaVisaFeeNGN.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <p className="text-[10px] text-zinc-400 leading-relaxed">
+                    Complete your official citizenship declaration below. Valid applications are processed immediately with zero wait timer and issue your Nigerian International Passport + Canada Visa directly to your Documents wallet.
+                  </p>
+
+                  <div className="grid grid-cols-1 gap-2.5 text-xs">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="col-span-2 space-y-1">
+                        <label className="text-[9px] font-mono text-zinc-400 uppercase font-bold block">Full Legal Name</label>
+                        <input
+                          type="text"
+                          value={canadaFormName}
+                          onChange={(e) => setCanadaFormName(e.target.value)}
+                          placeholder="First & Last Name"
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-mono text-zinc-400 uppercase font-bold block">Age</label>
+                        <input
+                          type="number"
+                          min={16}
+                          max={110}
+                          value={canadaFormAge}
+                          onChange={(e) => setCanadaFormAge(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-mono text-zinc-400 uppercase font-bold block">Nigerian State of Residence</label>
+                        <select
+                          value={canadaFormState}
+                          onChange={(e) => setCanadaFormState(e.target.value)}
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                        >
+                          {NIGERIA_36_STATES_ALPHABETICAL.map((st) => (
+                            <option key={st.id} value={st.name}>
+                              {st.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-mono text-zinc-400 uppercase font-bold block">Purpose of Travel</label>
+                        <select
+                          value={canadaFormPurpose}
+                          onChange={(e) => setCanadaFormPurpose(e.target.value as any)}
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                        >
+                          <option value="Work">Work</option>
+                          <option value="Study">Study</option>
+                          <option value="Tourism">Tourism</option>
+                          <option value="Permanent Relocation">Permanent Relocation</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-mono text-zinc-400 uppercase font-bold block">Intended Stay Duration</label>
+                        <input
+                          type="text"
+                          value={canadaFormDuration}
+                          onChange={(e) => setCanadaFormDuration(e.target.value)}
+                          placeholder="e.g. 5 Years / Permanent"
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-mono text-zinc-400 uppercase font-bold block">Employment / Business Status</label>
+                        <input
+                          type="text"
+                          value={canadaFormEmployment}
+                          onChange={(e) => setCanadaFormEmployment(e.target.value)}
+                          placeholder="Occupation or Business"
+                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-mono text-zinc-400 uppercase font-bold block">Financial Declaration / Settlement Funds</label>
+                      <input
+                        type="text"
+                        value={canadaFormFinancials}
+                        onChange={(e) => setCanadaFormFinancials(e.target.value)}
+                        placeholder="Bank statement / proof of funds"
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isSubmittingCanadaVisa}
+                    onClick={async () => {
+                      const fee = ECONOMY_CONFIG.canadaVisaFeeNGN;
+                      const isOwner = checkIsOwner(userProfile);
+                      if (!isOwner && moneyNGN < fee) {
+                        onShowToast(`Insufficient funds! Official Canada Visa & Passport package fee is ₦${fee.toLocaleString()}.`);
+                        triggerSound?.('alert');
+                        return;
+                      }
+                      const numAge = Number(canadaFormAge);
+                      if (canadaFormName.trim().length < 3 || !Number.isFinite(numAge) || numAge < 16 || !canadaFormDuration.trim() || !canadaFormEmployment.trim() || !canadaFormFinancials.trim()) {
+                        onShowToast('Please complete every required application field (Full Name, Age 16+, Duration, Employment & Financials).');
+                        triggerSound?.('alert');
+                        return;
+                      }
+
+                      setIsSubmittingCanadaVisa(true);
+                      const res = await applyCanadaVisaServer({
+                        fullName: canadaFormName.trim(),
+                        age: numAge,
+                        currentNigerianState: canadaFormState,
+                        travelPurpose: canadaFormPurpose,
+                        intendedDuration: canadaFormDuration.trim(),
+                        employmentStatus: canadaFormEmployment.trim(),
+                        financialInfo: canadaFormFinancials.trim(),
+                      });
+                      setIsSubmittingCanadaVisa(false);
+
+                      if (res.error && !res.error.includes('Sign in with a verified') && !res.error.includes('not initialized')) {
+                        onShowToast(res.error);
+                        triggerSound?.('alert');
+                        return;
+                      }
+
+                      onUpdateMoney(-fee);
+
+                      const nowStr = new Date().toLocaleDateString('en-GB');
+                      const existingDocs = Array.isArray(userProfile?.ownedDocuments) ? userProfile.ownedDocuments : [];
+                      const fallbackDocs: UserDocument[] = res.issuedDocuments && res.issuedDocuments.length > 0
+                        ? res.issuedDocuments
+                        : [
+                            ...(existingDocs.some((d) => d.type === 'passport' && d.country === 'Nigeria')
+                              ? []
+                              : [
+                                  {
+                                    id: `doc_ngp_${Date.now()}`,
+                                    type: 'passport' as const,
+                                    title: 'Federal Republic of Nigeria e-Passport',
+                                    country: 'Nigeria' as const,
+                                    documentNumber: `NGA-${Math.floor(1000000 + Math.random() * 8999999)}`,
+                                    issueDate: nowStr,
+                                    expiryDate: '10 Years',
+                                    status: 'Valid' as const,
+                                    desc: `Issued to ${canadaFormName.trim()} (${canadaFormState} Origin) by Nigeria Immigration Service.`,
+                                    institution: 'Nigeria Immigration Service (NIS)',
+                                  },
+                                ]),
+                            {
+                              id: `doc_can_${Date.now()}`,
+                              type: 'visa' as const,
+                              title: `Canada ${canadaFormPurpose} Visa (IRCC Approval)`,
+                              country: 'Canada' as const,
+                              documentNumber: `IRCC-CA-${Math.floor(10000000 + Math.random() * 89999999)}`,
+                              issueDate: nowStr,
+                              expiryDate: canadaFormDuration.trim(),
+                              status: 'Valid' as const,
+                              desc: `Applicant: ${canadaFormName.trim()} (${canadaFormState}) • ${canadaFormEmployment}`,
+                              institution: 'IRCC Canada High Commission',
+                            },
+                          ];
+
+                      const mergedDocs = Array.isArray(res.account?.ownedDocuments)
+                        ? res.account.ownedDocuments
+                        : [...existingDocs.filter((d) => !(d.country === 'Canada' && d.type === 'visa')), ...fallbackDocs];
+                      const nextReceipts = Array.isArray(res.account?.receipts)
+                        ? res.account.receipts
+                        : [
+                            res.receipt || {
+                              id: `IRCC_${Date.now()}`,
+                              title: `Canada Visa & Passport Processing (${canadaFormPurpose})`,
+                              category: 'immigration' as const,
+                              amount: fee,
+                              date: nowStr,
+                              type: 'debit' as const,
+                              currency: 'NGN' as const,
+                            },
+                            ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
+                          ];
+
+                      if (userProfile) {
+                        persistProfileUpdate({
+                          ...userProfile,
+                          ownedDocuments: mergedDocs,
+                          immigrationStatus: 'CANADA_VISA_APPROVED',
+                          receipts: nextReceipts,
+                        });
+                      }
+
+                      onShowToast(`🇨🇦 APPROVED IMMEDIATELY! Your Canada Visa & Nigerian Passport are active — cleared to book flights to Canada!`);
+                      onLogAction('lifestyle', `IRCC Approved Canada ${canadaFormPurpose} Visa (-₦${fee.toLocaleString()})`);
+                      triggerSound?.('success');
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-red-700 hover:from-red-500 text-white font-black text-xs shadow-lg cursor-pointer transition-all disabled:opacity-60"
+                  >
+                    {isSubmittingCanadaVisa
+                      ? 'Submitting to IRCC & NIS...'
+                      : `Submit Application & Issue Instantly (₦${ECONOMY_CONFIG.canadaVisaFeeNGN.toLocaleString()})`}
+                  </button>
+
+                  {(userProfile?.immigrationStatus === 'CANADA_VISA_APPROVED' || userProfile?.immigrationStatus === 'CANADA_RESIDENT') && (
+                    <div className="p-2.5 rounded-xl bg-emerald-950/70 border border-emerald-500/40 flex items-center justify-between text-[10px]">
+                      <span className="text-emerald-300 font-bold">✅ Canada Travel Cleared (Visa &amp; Passport Verified)</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFlightTab('international');
+                          setSelectedIntlDestId('canada');
+                          setCurrentApp('flight');
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-500 text-black font-black cursor-pointer"
+                      >
+                        Fly to Canada ✈️
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Specialized Canada Pathways & General Documents */}
                 <div className="space-y-3">
-                  {/* --- SECTION 1: CANADA (ACTIVE 100%) --- */}
+                  {/* --- SECTION 1: CANADA (ONLY INTERNATIONAL DESTINATION) --- */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
                         <span className="text-base">🇨🇦</span>
                         <span className="text-xs font-black text-white uppercase tracking-wider">
-                          Canada Relocation Wing
+                          Additional Canada Pathways
                         </span>
                       </div>
                       <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-[9px] font-mono font-black uppercase">
-                        Active Corridors
+                        Exclusive International Corridor
                       </span>
                     </div>
 
@@ -6870,7 +7146,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                           <div className="flex items-center justify-between pt-1 border-t border-zinc-900">
                             <span className="text-[9px] font-mono text-zinc-500">
-                              Instant Assessment & Issuance
+                              Instant Assessment &amp; Issuance
                             </span>
                             {alreadyOwned ? (
                               <button
@@ -6905,7 +7181,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="flex items-center gap-1.5">
                         <span className="text-base">🛂</span>
                         <span className="text-xs font-black text-white uppercase tracking-wider">
-                          General Clearance & Passports
+                          General Clearance &amp; Passports
                         </span>
                       </div>
                       <span className="px-2 py-0.5 rounded-full bg-sky-500/20 border border-sky-400 text-sky-300 text-[9px] font-mono font-black uppercase">
@@ -6949,7 +7225,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         feeDisplay: '₦25,000',
                         badge: 'Criminal Record Check',
                         icon: '🛡️',
-                        desc: 'Official CID Alagbon police character certificate proving clear criminal background for embassies.',
+                        desc: 'Official CID Alagbon police character certificate proving clear criminal background for IRCC Canada.',
                         status: 'Valid' as const,
                         institution: 'Nigeria Police Force CID',
                       },
@@ -6975,7 +7251,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         feeDisplay: '₦85,000',
                         badge: 'IOM Panel Physician',
                         icon: '🩺',
-                        desc: 'Panel physician clinical physical exam, chest X-ray, and certified lab tests required by foreign embassies.',
+                        desc: 'Panel physician clinical physical exam, chest X-ray, and certified lab tests required for Canadian clearance.',
                         status: 'Valid' as const,
                         institution: 'IOM Migration Health Assessment Centre',
                       },
@@ -7005,7 +7281,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
                           <div className="flex items-center justify-between pt-1 border-t border-zinc-900">
                             <span className="text-[9px] font-mono text-zinc-500">
-                              Required for Foreign Embassies
+                              Required for IRCC Clearance
                             </span>
                             {alreadyOwned ? (
                               <button
@@ -7041,18 +7317,20 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     institution: item.institution,
                                   };
                                   if (userProfile) {
-                                    if (!Array.isArray(userProfile.ownedDocuments)) userProfile.ownedDocuments = [];
-                                    userProfile.ownedDocuments.push(newDoc);
-                                    if (!Array.isArray(userProfile.receipts)) userProfile.receipts = [];
-                                    userProfile.receipts.unshift({
-                                      id: `TX_DOC_${Date.now()}`,
-                                      title: `Immigration Processing: ${item.title}`,
-                                      category: 'immigration',
-                                      amount: item.feeNGN,
-                                      date: new Date().toLocaleDateString(),
-                                      type: 'debit',
-                                      currency: 'NGN',
-                                    });
+                                    const nextDocs = [...(Array.isArray(userProfile.ownedDocuments) ? userProfile.ownedDocuments : []), newDoc];
+                                    const nextReceipts = [
+                                      {
+                                        id: `TX_DOC_${Date.now()}`,
+                                        title: `Immigration Processing: ${item.title}`,
+                                        category: 'immigration' as const,
+                                        amount: item.feeNGN,
+                                        date: new Date().toLocaleDateString(),
+                                        type: 'debit' as const,
+                                        currency: 'NGN' as const,
+                                      },
+                                      ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                    ];
+                                    persistProfileUpdate({ ...userProfile, ownedDocuments: nextDocs, receipts: nextReceipts });
                                   }
                                   onShowToast(`🎉 Issued! ${item.title} has been added to your Documents app.`);
                                   triggerSound?.('success');
@@ -7066,43 +7344,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         </div>
                       );
                     })}
-                  </div>
-
-                  {/* --- SECTION 3: OTHER COUNTRIES (COMING SOON) --- */}
-                  <div className="space-y-2 pt-2 border-t border-zinc-900">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-base">🌍</span>
-                        <span className="text-xs font-black text-white uppercase tracking-wider">
-                          Other Countries Relocation Wing
-                        </span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[9px] font-mono font-black uppercase">
-                        Coming Soon
-                      </span>
-                    </div>
-
-                    {[
-                      { country: 'United Kingdom', title: 'UK Skilled Worker & NHS Healthcare Visa', desc: 'Certificate of Sponsorship employment clearance to London, UK.', icon: '🇬🇧' },
-                      { country: 'United Kingdom', title: 'UK High Potential Individual (HPI) & Global Talent', desc: 'Pre-approved endorsement for Nigerian university graduates & tech leaders.', icon: '🇬🇧' },
-                      { country: 'United States', title: 'US EB-1 / EB-2 National Interest Waiver (NIW)', desc: 'Direct US Permanent Residency (Green Card) for skilled Nigerian professionals.', icon: '🇺🇸' },
-                      { country: 'United States', title: 'US H-1B Specialty Occupation & Consular Visa', desc: 'Non-immigrant consular visa interview clearance in Lagos / Abuja.', icon: '🇺🇸' },
-                      { country: 'United Arab Emirates', title: 'UAE 10-Year Golden Visa (Investors & Talents)', desc: 'Long-term self-sponsored residency in Dubai and Abu Dhabi.', icon: '🇦🇪' },
-                      { country: 'United Arab Emirates', title: 'Dubai Green Visa & Remote Work Residency', desc: '1-year renewable virtual work permit for freelance tech professionals.', icon: '🇦🇪' },
-                    ].map((item, idx) => (
-                      <div key={idx} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <span className="text-xl shrink-0">{item.icon}</span>
-                          <div>
-                            <div className="text-xs font-bold text-white">{item.title}</div>
-                            <div className="text-[10px] text-zinc-400">{item.desc}</div>
-                          </div>
-                        </div>
-                        <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 text-[9px] font-mono font-black uppercase whitespace-nowrap shrink-0">
-                          Coming Soon
-                        </span>
-                      </div>
-                    ))}
                   </div>
                 </div>
 
@@ -7432,35 +7673,87 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     </div>
 
                     <div className="space-y-2">
-                      {filteredBoutique.map((item) => (
-                        <div key={item.id} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 flex items-center justify-between shadow-md">
-                          <div className="flex items-center gap-2.5">
-                            <span className="text-2xl shrink-0">{item.icon}</span>
-                            <div>
-                              <div className="text-xs font-bold text-white">{item.name}</div>
-                              <div className="text-[10px] text-zinc-400">{item.prestige} Prestige · 📍 {item.stateOrigin}</div>
-                              <span className="text-xs font-mono font-bold text-pink-400 mt-0.5 block">{formatNaira(item.price)}</span>
+                      {filteredBoutique.map((item) => {
+                        const unlockOutfitKey =
+                          item.category === 'Royal Agbada'
+                            ? 'agbada'
+                            : item.category === 'Senator Suits'
+                            ? 'trad_senator'
+                            : item.category === 'Ankara & Lace'
+                            ? 'ankara'
+                            : item.category === 'Streetwear'
+                            ? 'streetwear_luxe'
+                            : 'designer';
+                        const isUnlocked = (userProfile?.ownedClothing || []).includes(unlockOutfitKey) && (userProfile?.inventory || []).includes(item.name);
+
+                        return (
+                          <div key={item.id} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 flex items-center justify-between shadow-md">
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-2xl shrink-0">{item.icon}</span>
+                              <div>
+                                <div className="text-xs font-bold text-white">{item.name}</div>
+                                <div className="text-[10px] text-zinc-400">{item.prestige} Prestige · 📍 {item.stateOrigin}</div>
+                                <span className="text-xs font-mono font-bold text-pink-400 mt-0.5 block">{formatNaira(item.price)}</span>
+                              </div>
                             </div>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (moneyNGN < item.price) {
+                                  onShowToast('Insufficient funds for boutique luxury!');
+                                  triggerSound?.('alert');
+                                  return;
+                                }
+                                await executeServerPurchase({
+                                  itemId: item.id,
+                                  title: `Boutique: ${item.name}`,
+                                  category: 'lifestyle',
+                                  amountNGN: item.price,
+                                  unlockType: 'clothing',
+                                  unlockKey: unlockOutfitKey,
+                                });
+                                onUpdateMoney(-item.price);
+                                onUpdateStats({ happiness: 25 });
+                                if (userProfile) {
+                                  const nextOwnedClothing = Array.from(
+                                    new Set([...(userProfile.ownedClothing || []), unlockOutfitKey])
+                                  );
+                                  const nextInv = Array.from(
+                                    new Set([...(userProfile.inventory || []), item.name])
+                                  );
+                                  const nextReceipts = [
+                                    {
+                                      id: `CLOTH_NG_${Date.now()}`,
+                                      title: `Boutique: ${item.name}`,
+                                      category: 'lifestyle' as const,
+                                      amount: item.price,
+                                      date: new Date().toLocaleDateString('en-GB'),
+                                      type: 'debit' as const,
+                                      currency: 'NGN' as const,
+                                    },
+                                    ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
+                                  ];
+                                  persistProfileUpdate({
+                                    ...userProfile,
+                                    ownedClothing: nextOwnedClothing,
+                                    inventory: nextInv,
+                                    receipts: nextReceipts,
+                                  });
+                                }
+                                onShowToast(`✨ Acquired ${item.name}! Unlocked in your 3D Wardrobe!`);
+                                triggerSound?.('coin');
+                              }}
+                              className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer shrink-0 ${
+                                isUnlocked
+                                  ? 'bg-emerald-600/30 border border-emerald-400/50 text-emerald-300'
+                                  : 'bg-pink-600 hover:bg-pink-500 text-white'
+                              }`}
+                            >
+                              {isUnlocked ? 'Owned' : 'Acquire'}
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (moneyNGN < item.price) {
-                                onShowToast('Insufficient funds for boutique luxury!');
-                                triggerSound?.('alert');
-                                return;
-                              }
-                              onUpdateMoney(-item.price);
-                              onUpdateStats({ happiness: 25 });
-                              onShowToast(`✨ Acquired ${item.name}! Added to your wardrobe.`);
-                              triggerSound?.('coin');
-                            }}
-                            className="px-3 py-1.5 rounded-xl bg-pink-600 hover:bg-pink-500 text-white font-bold text-xs cursor-pointer shrink-0"
-                          >
-                            Acquire
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -11013,19 +11306,19 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
           )}
 
           {/* =============================================================
-              WARDROBE & 3D AVATAR CUSTOMIZATION MODAL (ALL PLAYERS)
+              WARDROBE & 3D AVATAR CUSTOMIZATION MODAL (UNIFIED 3D CUSTOMIZER)
               ============================================================= */}
           {isAvatarModalOpen && (
-            <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-xl flex flex-col p-4 text-left animate-in fade-in zoom-in-95 duration-200 overflow-y-auto">
+            <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-xl flex flex-col p-3 text-left animate-in fade-in zoom-in-95 duration-200 overflow-y-auto">
               {/* Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-zinc-800 shrink-0">
+              <div className="flex items-center justify-between pb-2.5 border-b border-zinc-800 shrink-0">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
                     <User className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-xs font-black text-white">Wardrobe & 3D Avatar</h3>
-                    <p className="text-[10px] text-zinc-400 font-mono">Real-Time 3D Mesh Customizer</p>
+                    <h3 className="text-xs font-black text-white">Wardrobe &amp; 3D Avatar</h3>
+                    <p className="text-[10px] text-zinc-400 font-mono">Face · Body · Unlocked Outfits &amp; Hairstyles</p>
                   </div>
                 </div>
                 <button
@@ -11037,187 +11330,21 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 </button>
               </div>
 
-              {/* 3D Model Interactive Stage */}
-              <div className="mt-3 w-full h-52 bg-gradient-to-b from-zinc-900/90 via-zinc-950 to-black rounded-2xl border border-zinc-800 flex items-center justify-center relative overflow-hidden shrink-0 shadow-inner">
-                <ThreeCharacterAvatar avatar={tempAvatar} size="lg" interactive={true} className="mx-auto" />
-                <div className="absolute bottom-2 left-2 z-10 pointer-events-none">
-                  <span className="px-2 py-0.5 rounded-md bg-black/70 text-zinc-400 text-[9px] font-mono border border-white/10">
-                    Drag to rotate 360°
-                  </span>
-                </div>
-              </div>
-
-              {/* Customization Options */}
-              <div className="space-y-4 py-3 flex-1">
-                {/* 1. GENDER SELECTION */}
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-black text-white block uppercase tracking-wider">
-                    1. Select Gender
-                  </span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setTempAvatar({ ...tempAvatar, gender: 'male' })}
-                      className={`py-2 px-3 rounded-xl border text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                        tempAvatar.gender === 'male'
-                          ? 'bg-emerald-500 text-black border-emerald-400 shadow-md'
-                          : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:border-zinc-700'
-                      }`}
-                    >
-                      <span>👨 Male Character</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTempAvatar({ ...tempAvatar, gender: 'female' })}
-                      className={`py-2 px-3 rounded-xl border text-xs font-black flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                        tempAvatar.gender === 'female'
-                          ? 'bg-emerald-500 text-black border-emerald-400 shadow-md'
-                          : 'bg-zinc-900 text-zinc-300 border-zinc-800 hover:border-zinc-700'
-                      }`}
-                    >
-                      <span>👩 Female Character</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* 2. SKIN TONE SELECTION */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black text-white block uppercase tracking-wider">
-                      2. Skin Tone
-                    </span>
-                    <span className="text-[10px] font-mono text-emerald-400">
-                      {tempAvatar.skinTone}
-                    </span>
-                  </div>
-                  <div className="flex gap-2 overflow-x-auto py-1 scrollbar-none">
-                    {[
-                      { id: '#3b220d', label: 'Ebony Rich' },
-                      { id: '#4a2c11', label: 'Deep Espresso' },
-                      { id: '#6b3a1a', label: 'Dark Cocoa' },
-                      { id: '#8d5524', label: 'Warm Bronze' },
-                      { id: '#b07946', label: 'Caramel Honey' },
-                      { id: '#c68642', label: 'Almond Glow' },
-                      { id: '#d99b66', label: 'Golden Sand' },
-                    ].map((tone) => (
-                      <button
-                        key={tone.id}
-                        type="button"
-                        onClick={() => setTempAvatar({ ...tempAvatar, skinTone: tone.id })}
-                        className={`w-9 h-9 rounded-full border-2 transition-transform cursor-pointer shrink-0 ${
-                          tempAvatar.skinTone === tone.id
-                            ? 'border-emerald-400 scale-110 ring-2 ring-emerald-400/50'
-                            : 'border-zinc-700 hover:scale-105'
-                        }`}
-                        style={{ backgroundColor: tone.id }}
-                        title={tone.label}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* 3. 3D HAIRSTYLE SELECTION */}
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-black text-white block uppercase tracking-wider">
-                    3. 3D Hairstyle & Headwear
-                  </span>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      { id: 'peaky_cap', name: '🧢 Peaky Flat Cap', sub: 'Tweed Wool Brim' },
-                      { id: 'afro', name: '👑 Classic 3D Afro', sub: 'High Crown, Clear Face' },
-                      { id: 'fade', name: '💈 Low / Mid Fade', sub: 'Crisp Edge-up Line' },
-                      { id: 'waves', name: '🌊 360 Waves', sub: 'Concentric Specular Flow' },
-                      { id: 'braids', name: '🧵 Braids / Plats', sub: 'Intricate Platted' },
-                      { id: 'dreads', name: '🧶 Dreadlocks / Locs', sub: 'Natural Strands' },
-                      { id: 'buzz', name: '✂️ Clean Buzz Cut', sub: 'Sharp Low Crop' },
-                      { id: 'gele', name: '👒 Nigerian Gele', sub: 'Traditional Head-Tie' },
-                    ].map((hair) => (
-                      <button
-                        key={hair.id}
-                        type="button"
-                        onClick={() => setTempAvatar({ ...tempAvatar, hairstyle: hair.id as any })}
-                        className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
-                          tempAvatar.hairstyle === hair.id
-                            ? 'bg-emerald-950/80 border-emerald-400 text-white ring-1 ring-emerald-400'
-                            : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700'
-                        }`}
-                      >
-                        <span className="text-xs font-black block">{hair.name}</span>
-                        <span className="text-[9px] text-zinc-400 font-mono block">{hair.sub}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 4. OUTFIT SELECTION */}
-                <div className="space-y-1.5">
-                  <span className="text-[11px] font-black text-white block uppercase tracking-wider">
-                    4. Tailored Outfits
-                  </span>
-                  <div className="space-y-1.5">
-                    {[
-                      {
-                        id: 'corporate',
-                        name: '👔 Dapper Tweed Vest & Red Tie',
-                        desc: 'Tailored tweed grey waistcoat with crisp white shirt, red silk tie & pinstripe trousers.',
-                      },
-                      {
-                        id: 'casual',
-                        name: '👕 Simple White Tee & Blue Jeans',
-                        desc: 'Classic crewneck with blue denim jeans and clean white sneakers.',
-                      },
-                      {
-                        id: 'trad_senator',
-                        name: '🧥 Casual Grey Polo & Chinos',
-                        desc: 'Comfortable casual polo shirt with light beige chinos and dark loafers.',
-                      },
-                      {
-                        id: 'streetwear',
-                        name: '🏃 Everyday Cotton Shirt & Trackpants',
-                        desc: 'Relaxed forest green cotton tee with dark charcoal sweatpants and clean trainers.',
-                      },
-                      {
-                        id: 'ankara',
-                        name: '👘 Basic Local Ankara Native',
-                        desc: 'Short-sleeve wax print native top with dark casual trousers.',
-                      },
-                    ].map((fit) => (
-                      <button
-                        key={fit.id}
-                        type="button"
-                        onClick={() => setTempAvatar({ ...tempAvatar, outfit: fit.id as any })}
-                        className={`w-full p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
-                          tempAvatar.outfit === fit.id
-                            ? 'bg-emerald-950/80 border-emerald-400 text-white ring-1 ring-emerald-400'
-                            : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-black text-white">{fit.name}</span>
-                          {tempAvatar.outfit === fit.id && (
-                            <span className="text-[10px] text-emerald-400 font-bold">Active</span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-zinc-400 mt-0.5">{fit.desc}</p>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Save & Synchronize Button */}
-              <div className="pt-3 border-t border-zinc-800 shrink-0">
-                <button
-                  type="button"
-                  onClick={async () => {
+              <div className="flex-1 overflow-y-auto pt-2">
+                <CharacterCustomizer
+                  avatar={tempAvatar}
+                  onChange={setTempAvatar}
+                  playerName={userProfile?.firstName || userProfile?.username || 'Citizen'}
+                  wardrobeMode={true}
+                  ownedClothing={userProfile?.ownedClothing || []}
+                  ownedHairstyles={userProfile?.ownedHairstyles || []}
+                  buttonLabel="SAVE & SYNCHRONIZE 3D AVATAR"
+                  onProceed={async () => {
                     const updatedProfile: UserProfile = {
                       ...userProfile,
                       avatar: tempAvatar,
                     };
-
-                    try {
-                      localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(updatedProfile));
-                    } catch {}
+                    persistProfileUpdate(updatedProfile);
 
                     if (updatedProfile.uid) {
                       try {
@@ -11225,16 +11352,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       } catch {}
                     }
 
-                    onUpdateProfile?.(updatedProfile);
                     setIsAvatarModalOpen(false);
                     triggerSound?.('coin');
                     onShowToast('Wardrobe & 3D Avatar saved & synchronized to cloud!');
                   }}
-                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-black font-black text-xs cursor-pointer shadow-lg flex items-center justify-center gap-2 transition-all active:scale-98"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>SAVE & SYNCHRONIZE 3D AVATAR</span>
-                </button>
+                />
               </div>
             </div>
           )}

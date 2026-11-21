@@ -116,6 +116,7 @@ export interface LagosLifeMapProps {
   onToggleMusicMute?: () => void;
   isBroadcastPlaying?: boolean;
   hunger?: number;
+  thirst?: number;
   health?: number;
   happiness?: number;
   ownedProperties?: PropertyAsset[];
@@ -144,7 +145,7 @@ export interface LagosLifeMapProps {
   onLogout?: () => void;
   onNewLife?: () => void;
   onUpdateMoney?: (deltaNGN: number, deltaUSD?: number) => void;
-  onUpdateStats?: (effects: { energy?: number; hunger?: number; health?: number; happiness?: number }) => void;
+  onUpdateStats?: (effects: { energy?: number; hunger?: number; thirst?: number; health?: number; happiness?: number }) => void;
   onLogAction?: (category: 'finance' | 'career' | 'lifestyle' | 'social', text: string) => void;
   onShowToast?: (message: string) => void;
   triggerSound?: (type: 'coin' | 'stamp' | 'alert' | 'success') => void;
@@ -172,6 +173,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
   onToggleMusicMute,
   isBroadcastPlaying = false,
   hunger = 100,
+  thirst = 95,
   health = 100,
   happiness = 100,
   ownedProperties = [],
@@ -696,9 +698,11 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
 
     if (fare > 0 && onUpdateMoney) onUpdateMoney(-fare);
     if (onUpdateStats) {
+      const thirstCost = mode === 'trek' ? 6 : mode === 'keke' || mode === 'danfo' ? 3 : 0;
       onUpdateStats({
         energy: -energyCost,
         hunger: -hungerCost,
+        thirst: thirstCost > 0 ? -thirstCost : undefined,
         happiness: joyGain,
       });
     }
@@ -1436,65 +1440,72 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       </div>
 
       {/* =========================================================================
-          BOTTOM-LEFT HUD: CIRCULAR AVATAR WITH NEON GREEN RING + 6 MINI NEED BARS
-          ========================================================================= */}
-      {/* =========================================================================
-          BOTTOM-LEFT HUD: CIRCULAR AVATAR WITH NEON GREEN RING + 6 MINI NEED BARS
+          BOTTOM-LEFT HUD: 3D AVATAR PORTRAIT RING + VITALS (HUNGER, THIRST, ENERGY, HEALTH, JOY)
           ========================================================================= */}
       <div className="absolute bottom-[66px] sm:bottom-5 left-2 sm:left-5 z-30 pointer-events-auto flex items-center gap-2 sm:gap-3 bg-[#101b14]/95 border border-zinc-750/90 rounded-2xl sm:rounded-3xl p-1.5 sm:p-2.5 shadow-2xl backdrop-blur-md scale-90 sm:scale-100 origin-bottom-left">
-        {/* Circular Avatar Portrait with Neon Green Ring */}
+        {/* Circular 3D Avatar Portrait with Neon Green Ring */}
         <div className="w-11 h-11 sm:w-14 sm:h-14 rounded-full bg-emerald-950 border-2 sm:border-3 border-emerald-400 p-0.5 shadow-[0_0_15px_rgba(52,211,153,0.5)] flex items-center justify-center shrink-0 overflow-hidden ring-2 ring-emerald-500/30">
           <CharacterRenderer avatar={userProfile?.avatar} size="sm" fullBody={false} showBackground={false} />
         </div>
 
-        {/* 6 Mini Need Status Bars in 2 Rows of 3 */}
+        {/* Vitals Bars in 2 Clean Rows */}
         <div className="flex flex-col gap-1 sm:gap-1.5">
-          {/* Row 1: Hunger (orange), Energy (yellow), Happiness (cyan) */}
+          {/* Row 1: Hunger (orange), Thirst (sky), Energy (yellow) */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             <div className="flex items-center gap-1" title={`Hunger: ${Math.round(hunger)}%`}>
               <span className="text-[9px] sm:text-[10px]">🍔</span>
               <div className="w-8 sm:w-10 h-1.5 sm:h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${hunger}%` }} />
+                <div className="h-full bg-orange-500 transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, hunger))}%` }} />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1" title={`Thirst: ${Math.round(thirst)}%`}>
+              <span className="text-[9px] sm:text-[10px]">💧</span>
+              <div className="w-8 sm:w-10 h-1.5 sm:h-2 bg-zinc-800 rounded-full overflow-hidden">
+                <div className="h-full bg-sky-400 transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, thirst))}%` }} />
               </div>
             </div>
 
             <div className="flex items-center gap-1" title={`Energy: ${Math.round(energy)}%`}>
               <span className="text-[9px] sm:text-[10px]">⚡</span>
               <div className="w-8 sm:w-10 h-1.5 sm:h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-amber-400 transition-all duration-300" style={{ width: `${energy}%` }} />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1" title={`Happiness: ${Math.round(happiness)}%`}>
-              <span className="text-[9px] sm:text-[10px]">🎉</span>
-              <div className="w-8 sm:w-10 h-1.5 sm:h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-sky-400 transition-all duration-300" style={{ width: `${happiness}%` }} />
+                <div className="h-full bg-amber-400 transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, energy))}%` }} />
               </div>
             </div>
           </div>
 
-          {/* Row 2: Social (purple), Hygiene (blue), Rest/Sleep (teal) */}
+          {/* Row 2: Health (rose), Happiness (emerald), Status (purple) */}
           <div className="flex items-center gap-1.5 sm:gap-2">
-            <div className="flex items-center gap-1" title="Social Well-being">
-              <span className="text-[9px] sm:text-[10px]">💬</span>
+            <div className="flex items-center gap-1" title={`Health: ${Math.round(health)}%`}>
+              <span className="text-[9px] sm:text-[10px]">❤️</span>
               <div className="w-8 sm:w-10 h-1.5 sm:h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-purple-400 transition-all duration-300" style={{ width: `${Math.min(100, Math.round(happiness * 0.95 + 5))}%` }} />
+                <div className="h-full bg-rose-500 transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, health))}%` }} />
               </div>
             </div>
 
-            <div className="flex items-center gap-1" title="Hygiene">
-              <span className="text-[9px] sm:text-[10px]">🧼</span>
+            <div className="flex items-center gap-1" title={`Joy: ${Math.round(happiness)}%`}>
+              <span className="text-[9px] sm:text-[10px]">🎉</span>
               <div className="w-8 sm:w-10 h-1.5 sm:h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-400 transition-all duration-300" style={{ width: `${Math.min(100, Math.round(health * 0.9 + 10))}%` }} />
+                <div className="h-full bg-emerald-400 transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, happiness))}%` }} />
               </div>
             </div>
 
-            <div className="flex items-center gap-1" title="Rest & Sleep">
-              <span className="text-[9px] sm:text-[10px]">🌙</span>
-              <div className="w-8 sm:w-10 h-1.5 sm:h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-400 transition-all duration-300" style={{ width: `${Math.min(100, Math.round(energy * 0.9 + 10))}%` }} />
-              </div>
-            </div>
+            {(() => {
+              const avgVitals = (energy + hunger + thirst + health + happiness) / 5;
+              const feeling = avgVitals >= 75
+                ? { emoji: '😁', label: 'Thriving' }
+                : avgVitals >= 50
+                ? { emoji: '🙂', label: 'Balanced' }
+                : avgVitals >= 25
+                ? { emoji: '😓', label: 'Strained' }
+                : { emoji: '🆘', label: 'Critical' };
+              return (
+                <div className="flex items-center gap-1" title="Overall Vitals & Mood">
+                  <span className="text-[9px] sm:text-[10px]">{feeling.emoji}</span>
+                  <span className="text-[9px] font-bold text-zinc-300 hidden sm:inline truncate max-w-[54px]">{feeling.label}</span>
+                </div>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -1827,16 +1838,16 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
               </div>
             )}
 
-            {/* TAB 2: INTERNATIONAL CONCOURSE (UK, CANADA, US, UAE - ALL COMING SOON) */}
+            {/* TAB 2: INTERNATIONAL CONCOURSE (CANADA EXCLUSIVE CORRIDOR) */}
             {airportModalTab === 'international' && (
               <div className="space-y-3">
-                <div className="bg-sky-950/50 border border-sky-500/40 rounded-2xl p-3 text-xs text-sky-200">
+                <div className="bg-red-950/50 border border-red-500/40 rounded-2xl p-3 text-xs text-red-200">
                   <p className="font-bold flex items-center gap-1.5">
-                    <span>🌍</span>
-                    <span>International Trans-Continental Corridors</span>
+                    <span>🇨🇦</span>
+                    <span>Direct Nigeria-to-Canada International Air Corridor</span>
                   </p>
                   <p className="text-[11px] text-zinc-400 mt-0.5">
-                    Bilateral air service agreements and embassy visa integration are currently being commissioned.
+                    Canada is the active international destination. Obtain an IRCC Canada Visa &amp; Nigerian Passport to board direct flights.
                   </p>
                 </div>
 
@@ -2333,30 +2344,19 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
       )}
 
       {/* =========================================================================
-          COMMUTE / TRANSPORTATION OPTIONS MODAL (WHEN VISITING BUILDINGS)
-          ========================================================================= */}
-      {/* =========================================================================
-          INTERIOR RENOVATION & ARCHITECTURAL FIT-OUT NOTICE (FOR ALL BUILDINGS)
+          COMMUTE & ENTER 3D INTERIOR MODAL
           ========================================================================= */}
       {pendingCommuteTarget && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-lg bg-zinc-950 border-2 border-amber-500/60 rounded-3xl p-6 shadow-2xl text-left space-y-4 relative overflow-hidden">
-            {/* Ambient Background Glow */}
-            <div className="absolute top-0 right-0 w-36 h-36 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
-            <div className="absolute bottom-0 left-0 w-36 h-36 bg-yellow-500/10 rounded-full blur-2xl pointer-events-none" />
-
-            {/* Header & Construction Ribbon */}
-            <div className="flex items-start justify-between pb-3 border-b border-zinc-800 relative z-10">
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-mono font-black uppercase">
-                  <span>🚧</span>
-                  <span>INTERIOR FIT-OUT & ACTIVE RENOVATION</span>
-                </div>
-                <h3 className="text-xl font-black text-white tracking-tight">
-                  {pendingCommuteTarget.name}
-                </h3>
-                <p className="text-xs text-zinc-400 font-mono">
-                  📍 {currentState.name} State · {pendingCommuteTarget.desc || 'Commercial Landmark'}
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-zinc-950 border border-emerald-500/40 rounded-3xl p-5 shadow-2xl text-left space-y-4">
+            <div className="flex items-start justify-between pb-3 border-b border-zinc-800">
+              <div>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono font-black uppercase">
+                  ENTER BUILDING INTERIOR
+                </span>
+                <h3 className="text-lg font-black text-white mt-1">{pendingCommuteTarget.name}</h3>
+                <p className="text-xs text-zinc-400">
+                  {currentState.name} · {pendingCommuteTarget.desc || pendingCommuteTarget.tagLabel}
                 </p>
               </div>
               <button
@@ -2364,76 +2364,62 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
                 onClick={() => setPendingCommuteTarget(null)}
                 className="p-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Renovation Notice Details */}
-            <div className="space-y-3 relative z-10">
-              <div className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-950/60 via-zinc-900/80 to-black border border-amber-500/30 text-xs text-zinc-300 leading-relaxed space-y-2">
-                <div className="flex items-center justify-between text-[11px] font-mono font-bold text-amber-300">
-                  <span className="flex items-center gap-1">
-                    <span>🏗️</span>
-                    <span>Federal Works & Urban Planning Directive</span>
-                  </span>
-                  <span className="text-[10px] bg-amber-500/20 px-2 py-0.5 rounded text-amber-200">
-                    PERMIT #NJA-2025-ARCH
-                  </span>
-                </div>
-                <p>
-                  Please bear with us! The indoor interiors of <strong>{pendingCommuteTarget.name}</strong> are currently undergoing intensive architectural remodeling, marble flooring installation, soundproof acoustic wall fit-outs, and customized interactive station setups.
+            {pendingCommuteTarget.type === 'home' ? (
+              <div className="space-y-3">
+                <p className="text-xs text-zinc-300">
+                  Step inside your private 3D residence to rest, cook, change clothes, store items, or decorate rooms.
                 </p>
-                <p className="text-[11px] text-zinc-400">
-                  Our master construction teams and electrical engineers are working round the clock to deliver hyper-realistic walkthroughs. No manual commuting is needed to access services!
-                </p>
+                <button
+                  type="button"
+                  onClick={() => handleConfirmCommute('trek')}
+                  className="w-full py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-sm flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>ENTER RESIDENCE</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
               </div>
-
-              {/* Progress Indicator */}
-              <div className="p-3 rounded-2xl bg-zinc-900/90 border border-zinc-800 space-y-2">
-                <div className="flex justify-between items-center text-xs font-mono">
-                  <span className="text-zinc-400 flex items-center gap-1.5">
-                    <span>👷‍♂️</span>
-                    <span>Interior Remodeling Completion:</span>
-                  </span>
-                  <span className="text-amber-300 font-bold">84% Finalized</span>
-                </div>
-                <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-amber-500 via-yellow-400 to-emerald-400 rounded-full w-[84%]" />
-                </div>
-                <div className="flex justify-between text-[10px] font-mono text-zinc-500">
-                  <span>Structural Framing ✓</span>
-                  <span>Acoustics & Lighting ✓</span>
-                  <span>3D Walkthrough Fit-Out (Active)</span>
-                </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] font-mono uppercase text-zinc-400">Choose how to get there & enter:</p>
+                {[
+                  { mode: 'trek' as const, label: 'Trek on Foot', meta: 'Free (₦0) · -6 Energy, -5 Hunger', icon: '🚶' },
+                  { mode: 'keke' as const, label: 'Keke Napep', meta: '₦300 · -2 Energy', icon: '🛺' },
+                  { mode: 'danfo' as const, label: 'Yellow Danfo Bus', meta: '₦600 · -3 Energy', icon: '🚐' },
+                  { mode: 'bolt' as const, label: 'Air-Con Bolt Ride', meta: '₦2,500 · +8 Joy', icon: '🚕' },
+                  ...((ownedVehicles && ownedVehicles.length > 0)
+                    ? [{ mode: 'car' as const, label: `Drive ${activeVehicle?.name || ownedVehicles[0].name}`, meta: '₦1,200 Fuel · +10 Joy', icon: '🚗' }]
+                    : []),
+                ].map((opt) => (
+                  <button
+                    key={opt.mode}
+                    type="button"
+                    onClick={() => handleConfirmCommute(opt.mode)}
+                    className="w-full p-3 rounded-2xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-emerald-500/50 flex items-center justify-between text-left transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl">{opt.icon}</span>
+                      <div>
+                        <div className="text-xs font-black text-white">{opt.label}</div>
+                        <div className="text-[10px] text-zinc-400 font-mono">{opt.meta}</div>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 text-[11px] font-black">
+                      ENTER
+                    </span>
+                  </button>
+                ))}
               </div>
-
-              {/* Work Phone Hint */}
-              <div className="p-2.5 rounded-xl bg-blue-950/40 border border-blue-500/30 flex items-center gap-2.5 text-xs text-blue-200">
-                <span className="text-base">📱</span>
-                <div>
-                  <strong>Work Shift Notice:</strong> All occupational shifts and career tasks are performed directly through your <strong>Smartphone Job Portal</strong> without needing physical interior entry.
-                </div>
-              </div>
-            </div>
-
-            {/* Primary Action Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setPendingCommuteTarget(null);
-                triggerSound?.('coin');
-              }}
-              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 text-black font-black text-sm tracking-wide shadow-xl shadow-amber-500/20 cursor-pointer active:scale-98 transition-all flex items-center justify-center gap-2 relative z-10"
-            >
-              <span>Understood (Bear With Us & Be Patient)</span>
-              <Check className="w-4 h-4 text-black" />
-            </button>
+            )}
           </div>
         </div>
       )}
 
       {/* =========================================================================
-          INTERIOR VIEW MODAL
+          INTERIOR VIEW MODAL (3D WALKABLE INTERIOR)
           ========================================================================= */}
       {activeInteriorLocation && (
         <InteriorView
@@ -2443,6 +2429,14 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
           onExit={() => setActiveInteriorLocation(null)}
           onUpdateStats={onUpdateStats || (() => {})}
           onUpdateMoney={onUpdateMoney}
+          onUpdateUserProfile={onUpdateUserProfile}
+          onOpenPhoneApp={(app) => {
+            setActiveInteriorLocation(null);
+            const mappedApp =
+              app === 'bank' ? 'banking' : app === 'properties' ? 'houses' : app;
+            setPhoneInitialApp(mappedApp);
+            setIsPhoneOpen(true);
+          }}
           onShowToast={onShowToast}
           triggerSound={triggerSound}
         />
@@ -2455,19 +2449,47 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
         <BuyModeModal
           isOpen={isBuyModeOpen}
           onClose={() => setIsBuyModeOpen(false)}
-          moneyNGN={moneyNGN}
+          moneyNGN={effectiveNGN}
           ownedFurnitureIds={userProfile?.furnitureBought || []}
           onPurchaseItem={(item) => {
-            if (moneyNGN < item.priceNGN) {
+            if (!isStrictOwner && effectiveNGN < item.priceNGN) {
               onShowToast(`Insufficient funds for ${item.name}!`);
               triggerSound?.('alert');
               return;
             }
             if (onUpdateMoney) onUpdateMoney(-item.priceNGN);
             if (userProfile) {
-              userProfile.furnitureBought = [...(userProfile.furnitureBought || []), item.id];
+              const homeKey = activeHome?.id || 'player_home';
+              const existingLayout = userProfile.houseLayouts?.[homeKey] || {
+                propertyId: homeKey,
+                wallTheme: 'cream' as const,
+                floorTheme: 'oak' as const,
+                lightsOn: true,
+                placedFurniture: [],
+              };
+              const autoPlaced: import('../types/game').PlacedFurnitureItem = {
+                instanceId: `pf_${Date.now()}_${item.id}`,
+                furnitureId: item.id,
+                name: item.name,
+                category: item.category,
+                x: ((existingLayout.placedFurniture.length % 4) - 1.5) * 2.1,
+                z: 0.4 + Math.floor(existingLayout.placedFurniture.length / 4) * 1.4,
+                rotationY: 0,
+              };
+              const updatedProfile: UserProfile = {
+                ...userProfile,
+                furnitureBought: Array.from(new Set([...(userProfile.furnitureBought || []), item.id])),
+                houseLayouts: {
+                  ...(userProfile.houseLayouts || {}),
+                  [homeKey]: {
+                    ...existingLayout,
+                    placedFurniture: [...existingLayout.placedFurniture, autoPlaced],
+                  },
+                },
+              };
+              onUpdateUserProfile?.(updatedProfile);
             }
-            onShowToast(`🎉 Purchased and installed ${item.name}!`);
+            onShowToast(`🎉 Purchased and placed ${item.name} inside your house!`);
             triggerSound?.('success');
           }}
           triggerSound={triggerSound}

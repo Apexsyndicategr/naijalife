@@ -199,6 +199,20 @@
           "minLength": 2,
           "maxLength": 32
         },
+        "walletAccountNumber": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "migratedToNigeriaOriginalStateV1": {
+          "type": "boolean"
+        },
+        "immigrationStatus": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "travelHistory": {
+          "type": "array"
+        },
         "cashNaira": {
           "type": "number"
         },
@@ -217,6 +231,9 @@
         "hunger": {
           "type": "number"
         },
+        "thirst": {
+          "type": "number"
+        },
         "health": {
           "type": "number"
         },
@@ -227,6 +244,18 @@
           "type": "object"
         },
         "inventory": {
+          "type": "array"
+        },
+        "ownedClothing": {
+          "type": "array"
+        },
+        "ownedHairstyles": {
+          "type": "array"
+        },
+        "houseLayouts": {
+          "type": "object"
+        },
+        "storedItems": {
           "type": "array"
         },
         "completedCourses": {
