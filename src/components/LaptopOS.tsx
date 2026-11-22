@@ -207,13 +207,13 @@ export const LaptopOS: React.FC<LaptopOSProps> = ({
       setConsoleOutput(`PASSED! All test cases succeeded. Submitting +${currentChallenge.xpReward} XP...`);
       setBusy(true);
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/coding/complete', {
+      const resp = await fetch('/api/laptops/coding-complete', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          kind: 'challenge',
-          id: currentChallenge.id,
-          xpEarned: currentChallenge.xpReward,
+          challengeId: currentChallenge.id,
+          xpGain: currentChallenge.xpReward,
+          isCyberMission: false,
         }),
       });
       const data = await resp.json();
@@ -252,15 +252,16 @@ export const LaptopOS: React.FC<LaptopOSProps> = ({
       const payout = isCanada ? mission.payoutCAD : mission.payoutNGN;
       const currency = isCanada ? 'CAD' : 'NGN';
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/coding/complete', {
+      const resp = await fetch('/api/laptops/coding-complete', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          kind: 'cyber_mission',
-          id: mission.id,
-          xpEarned: mission.xpReward,
-          payoutAmount: payout,
+          challengeId: mission.id,
+          xpGain: mission.xpReward,
+          isCyberMission: true,
           currency,
+          rewardNGN: mission.payoutNGN,
+          rewardCAD: mission.payoutCAD,
         }),
       });
       const data = await resp.json();
@@ -275,7 +276,7 @@ export const LaptopOS: React.FC<LaptopOSProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           codingXp: data.account.codingXp,
           codingLevel: data.account.codingLevel,
@@ -437,7 +438,7 @@ export const LaptopOS: React.FC<LaptopOSProps> = ({
                     <p className="text-[11px] text-zinc-400">
                       {codingLevel >= 7
                         ? 'Clearance Granted! Complete defensive security audits for high-tier NGN/CAD payouts.'
-                        : `Locked: Reach Coding Level 7 in Code Studio first (Current Level: ${codingLevel}/7 · ${1500 - Math.min(1500, codingXp)} XP needed).`}
+                        : `Locked: Reach Coding Level 7 in Code Studio first (Current Level: ${codingLevel}/7 · ${Math.max(0, 900 - codingXp)} XP needed).`}
                     </p>
                   </div>
                   {codingLevel < 7 && <Lock className="w-6 h-6 text-amber-400" />}
@@ -544,7 +545,7 @@ export const LaptopOS: React.FC<LaptopOSProps> = ({
                   {browserPage === 'docs' && (
                     <>
                       <h4 className="font-black text-white text-sm">Coding Career Progression Guide</h4>
-                      <p>Every 250 XP earned in Code Studio advances your developer tier by +1 Level. Reach Level 7 (1,500 XP) to unlock paid enterprise cybersecurity contracts.</p>
+                      <p>Every 150 XP earned in Code Studio advances your developer tier by +1 Level. Reach Level 7 (900 XP) to unlock paid enterprise cybersecurity contracts.</p>
                     </>
                   )}
                   {browserPage === 'cyber_brief' && (

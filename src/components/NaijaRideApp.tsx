@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { MapPin, Navigation, Clock, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { MapPin, Navigation, Clock, CheckCircle2, Car } from 'lucide-react';
 import { UserProfile } from '../types/game';
 import { formatNaira, formatCAD } from '../utils/formatNaira';
 import { getAuthBearerHeaders } from '../services/economyService';
@@ -17,42 +17,59 @@ export interface NaijaRideAppProps {
   triggerSound?: (type: 'coin' | 'stamp' | 'alert' | 'success') => void;
 }
 
-const RIDE_PROVIDERS = [
+interface RideCompanyDef {
+  id: 'ekogo' | 'swiftcab' | 'mapleride';
+  name: string;
+  tagline: string;
+  color: string;
+  rating: number;
+  baseNGN: number;
+  perUnitNGN: number;
+  baseCAD: number;
+  perUnitCAD: number;
+  tierLabel: string;
+  etaMins: number;
+}
+
+const DEFAULT_COMPANIES: RideCompanyDef[] = [
   {
     id: 'ekogo',
     name: 'EkoGo',
-    tier: 'Everyday Economy',
-    ngnPerKm: 320,
-    baseNGN: 800,
-    cadPerKm: 0.95,
-    baseCAD: 2.5,
-    etaBase: 4,
-    accent: '#10b981',
-    desc: 'Budget-friendly city hatchbacks & sedans',
+    tagline: 'Everyday Smart City Rides',
+    color: '#10b981',
+    rating: 4.7,
+    baseNGN: 1200,
+    perUnitNGN: 380,
+    baseCAD: 6.5,
+    perUnitCAD: 1.9,
+    tierLabel: 'Value Economy',
+    etaMins: 4,
   },
   {
     id: 'swiftcab',
     name: 'SwiftCab',
-    tier: 'Priority Comfort',
-    ngnPerKm: 480,
-    baseNGN: 1200,
-    cadPerKm: 1.45,
-    baseCAD: 3.75,
-    etaBase: 2,
-    accent: '#3b82f6',
-    desc: 'Fast-dispatch AC sedans with priority routing',
+    tagline: 'AC Comfort & Priority Dispatch',
+    color: '#f59e0b',
+    rating: 4.9,
+    baseNGN: 1850,
+    perUnitNGN: 470,
+    baseCAD: 9.0,
+    perUnitCAD: 2.35,
+    tierLabel: 'Comfort Sedan',
+    etaMins: 2,
   },
   {
-    id: 'royallux',
+    id: 'mapleride',
     name: 'RoyalLux Ride',
-    tier: 'Executive VIP SUV',
-    ngnPerKm: 920,
-    baseNGN: 2500,
-    cadPerKm: 2.6,
-    baseCAD: 6.5,
-    etaBase: 6,
-    accent: '#f59e0b',
-    desc: 'Chauffeur-driven executive SUVs',
+    tagline: 'Executive SUV Chauffeur',
+    color: '#38bdf8',
+    rating: 4.95,
+    baseNGN: 3400,
+    perUnitNGN: 720,
+    baseCAD: 15.0,
+    perUnitCAD: 3.4,
+    tierLabel: 'Executive Class',
+    etaMins: 3,
   },
 ];
 
@@ -84,7 +101,7 @@ function ProviderLogo({ id, accent }: { id: string; accent: string }) {
       {id === 'swiftcab' && (
         <path d="M9 18l9-7 9 7-3 1v6h-4v-4h-4v4h-4v-6l-3-1z" fill={accent} />
       )}
-      {id === 'royallux' && (
+      {id === 'mapleride' && (
         <path d="M9 24l3-10 6 4 6-4 3 10H9z" fill={accent} />
       )}
     </svg>
@@ -102,6 +119,7 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
   const spots = isCanada ? CANADA_SPOTS : NIGERIA_SPOTS;
 
   const [tab, setTab] = useState<'book' | 'history'>('book');
+  const [companies, setCompanies] = useState<RideCompanyDef[]>(DEFAULT_COMPANIES);
   const [pickup, setPickup] = useState(spots[0].name);
   const [destination, setDestination] = useState(spots[1].name);
   const [rides, setRides] = useState<any[]>([]);
@@ -113,7 +131,10 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
       const resp = await fetch('/api/rides/state', { headers });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        setRides(data.rides || []);
+        if (Array.isArray(data.companies) && data.companies.length > 0) {
+          setCompanies(data.companies);
+        }
+        setRides(Array.isArray(data.history) ? data.history : []);
       }
     } catch {}
   }, []);
@@ -122,24 +143,24 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
     loadRides();
   }, [loadRides]);
 
-  const activeRide = rides.find((r) => r.status !== 'completed');
+  const activeRide = rides.find((r) => r.status !== 'COMPLETED');
 
   useEffect(() => {
     if (!activeRide) return;
     const timer = window.setInterval(async () => {
       const nextStatus =
-        activeRide.status === 'driver_assigned'
-          ? 'arriving'
-          : activeRide.status === 'arriving'
-          ? 'in_progress'
-          : 'completed';
+        activeRide.status === 'SEARCHING'
+          ? 'DRIVER_EN_ROUTE'
+          : activeRide.status === 'DRIVER_EN_ROUTE'
+          ? 'IN_TRANSIT'
+          : 'COMPLETED';
       const headers = await getAuthBearerHeaders();
-      await fetch(`/api/rides/${activeRide.id}/advance`, {
+      await fetch('/api/rides/status', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ status: nextStatus }),
+        body: JSON.stringify({ rideId: activeRide.id, status: nextStatus }),
       });
-      if (nextStatus === 'completed') {
+      if (nextStatus === 'COMPLETED') {
         onShowToast?.(`Arrived at ${activeRide.destination}!`);
         triggerSound?.('success');
       }
@@ -152,14 +173,11 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
   const dKm = spots.find((s) => s.name === destination)?.km ?? 8;
   const distanceKm = Math.max(2, Math.abs(dKm - pKm) + 3);
 
-  const handleBookRide = async (provider: (typeof RIDE_PROVIDERS)[number]) => {
+  const handleBookRide = async (provider: RideCompanyDef) => {
     if (pickup === destination) {
       onShowToast?.('Pickup and destination must be different.');
       return;
     }
-    const fare = isCanada
-      ? +(provider.baseCAD + distanceKm * provider.cadPerKm).toFixed(2)
-      : Math.round(provider.baseNGN + distanceKm * provider.ngnPerKm);
 
     setBusy(true);
     try {
@@ -169,12 +187,11 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
         headers,
         body: JSON.stringify({
           companyId: provider.id,
-          companyName: provider.name,
           pickup,
           destination,
-          fare,
-          currency: isCanada ? 'CAD' : 'NGN',
-          etaMinutes: provider.etaBase + Math.floor(distanceKm / 6),
+          distanceKm,
+          country: isCanada ? 'canada' : 'nigeria',
+          requestId: `ride_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         }),
       });
       const data = await resp.json();
@@ -189,12 +206,12 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           receipts: data.account.receipts,
         });
       }
-      onShowToast?.(`${provider.name} driver dispatched!`);
+      onShowToast?.(`${provider.name} driver ${data.ride?.driverName || ''} dispatched!`);
       triggerSound?.('coin');
       loadRides();
     } finally {
@@ -210,7 +227,7 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
           <div>
             <h3 className="text-xs font-black text-white">Naija Ride Dispatch</h3>
             <p className="text-[10px] text-teal-300 font-mono">
-              {isCanada ? '🍁 Ontario Ride Network (CAD)' : `🇳🇬 ${currentStateId?.toUpperCase()} Transit (NGN)`}
+              {isCanada ? 'Ontario Ride Network (CAD)' : `${currentStateId?.toUpperCase()} Transit (NGN)`}
             </p>
           </div>
         </div>
@@ -233,17 +250,22 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
       {activeRide && (
         <div className="p-3.5 rounded-2xl bg-emerald-950/50 border border-emerald-400/50 space-y-2">
           <div className="flex items-center justify-between text-xs font-black text-emerald-300">
-            <span>{activeRide.companyName} Live Trip</span>
+            <span className="flex items-center gap-1.5">
+              <Car className="w-4 h-4" /> {activeRide.companyName} Live Trip
+            </span>
             <span className="uppercase font-mono text-[10px] px-2 py-0.5 rounded bg-emerald-500/20">
-              {activeRide.status.replace('_', ' ')}
+              {String(activeRide.status).replace(/_/g, ' ')}
             </span>
           </div>
           <div className="text-[11px] text-white">
-            {activeRide.pickup} ➔ {activeRide.destination}
+            {activeRide.pickup} &rarr; {activeRide.destination}
+          </div>
+          <div className="text-[10px] text-zinc-300 font-mono">
+            Driver: {activeRide.driverName} · Plate: {activeRide.vehiclePlate}
           </div>
           <div className="grid grid-cols-4 gap-1 pt-1">
-            {['driver_assigned', 'arriving', 'in_progress', 'completed'].map((st, idx) => {
-              const curIdx = ['driver_assigned', 'arriving', 'in_progress', 'completed'].indexOf(activeRide.status);
+            {['SEARCHING', 'DRIVER_EN_ROUTE', 'IN_TRANSIT', 'COMPLETED'].map((st, idx) => {
+              const curIdx = ['SEARCHING', 'DRIVER_EN_ROUTE', 'IN_TRANSIT', 'COMPLETED'].indexOf(activeRide.status);
               return (
                 <div key={st} className={`h-1.5 rounded-full ${idx <= curIdx ? 'bg-emerald-400' : 'bg-zinc-800'}`} />
               );
@@ -289,22 +311,21 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
             </div>
           </div>
 
-          {/* 3 Ride Companies Fare Comparison */}
           <div className="space-y-2">
-            {RIDE_PROVIDERS.map((p) => {
+            {companies.map((p) => {
               const fare = isCanada
-                ? +(p.baseCAD + distanceKm * p.cadPerKm).toFixed(2)
-                : Math.round(p.baseNGN + distanceKm * p.ngnPerKm);
-              const eta = p.etaBase + Math.floor(distanceKm / 6);
+                ? +(p.baseCAD + distanceKm * p.perUnitCAD).toFixed(2)
+                : Math.round(p.baseNGN + distanceKm * p.perUnitNGN);
+              const eta = p.etaMins + Math.floor(distanceKm / 6);
               return (
                 <div key={p.id} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <ProviderLogo id={p.id} accent={p.accent} />
+                    <ProviderLogo id={p.id} accent={p.color} />
                     <div className="min-w-0">
                       <div className="text-xs font-black text-white">
-                        {p.name} <span className="text-[9px] text-zinc-400 font-normal">· {p.tier}</span>
+                        {p.name} <span className="text-[9px] text-zinc-400 font-normal">· {p.tierLabel} ({p.rating}★)</span>
                       </div>
-                      <div className="text-[10px] text-zinc-400 truncate">{p.desc}</div>
+                      <div className="text-[10px] text-zinc-400 truncate">{p.tagline}</div>
                       <div className="text-[10px] font-mono text-teal-300 flex items-center gap-1 mt-0.5">
                         <Clock className="w-3 h-3" /> {eta} mins away
                       </div>
@@ -337,10 +358,12 @@ export const NaijaRideApp: React.FC<NaijaRideAppProps> = ({
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                     <span>{r.companyName}: {r.destination}</span>
                   </div>
-                  <div className="text-[10px] text-zinc-500 font-mono">From {r.pickup} · {r.status}</div>
+                  <div className="text-[10px] text-zinc-500 font-mono">
+                    From {r.pickup} · {r.driverName} · {r.status}
+                  </div>
                 </div>
                 <span className="font-mono font-bold text-teal-300">
-                  {r.currency === 'CAD' ? formatCAD(r.fare) : formatNaira(r.fare)}
+                  {r.currency === 'CAD' ? formatCAD(r.fareMajor) : formatNaira(r.fareMajor)}
                 </span>
               </div>
             ))

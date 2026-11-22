@@ -9446,6 +9446,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
             {currentApp === 'insurance' && (
               <InsuranceApp
                 userProfile={userProfile}
+                ownedProperties={ownedProperties}
+                ownedVehicles={ownedVehicles}
                 currentStateId={activeStateKey}
                 onUpdateProfile={persistProfileUpdate}
                 onShowToast={onShowToast}

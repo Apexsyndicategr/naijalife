@@ -18,6 +18,25 @@ export interface PetsAppProps {
   triggerSound?: (type: 'coin' | 'stamp' | 'alert' | 'success') => void;
 }
 
+function mapSpeciesIdTo3DMesh(speciesId: string): string {
+  switch (speciesId) {
+    case 'pet_boerboel':
+      return 'boerboel_mastiff';
+    case 'pet_gsd':
+      return 'german_shepherd';
+    case 'pet_husky':
+      return 'siberian_husky';
+    case 'pet_siamese':
+      return 'siamese_cat';
+    case 'pet_rabbit':
+      return 'holland_lop';
+    case 'pet_parrot':
+      return 'african_grey';
+    default:
+      return speciesId || 'boerboel_mastiff';
+  }
+}
+
 export const PetsApp: React.FC<PetsAppProps> = ({
   userProfile,
   currentStateId = 'lagos',
@@ -31,7 +50,7 @@ export const PetsApp: React.FC<PetsAppProps> = ({
   const [catalog, setCatalog] = useState<any[]>([]);
   const [pets, setPets] = useState<any[]>([]);
   const [selectedPetId, setSelectedPetId] = useState<string>('');
-  const [previewBreedId, setPreviewBreedId] = useState<string>('boerboel_mastiff');
+  const [previewSpeciesId, setPreviewSpeciesId] = useState<string>('pet_boerboel');
   const [petNameInput, setPetNameInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -42,10 +61,11 @@ export const PetsApp: React.FC<PetsAppProps> = ({
       const resp = await fetch('/api/pets/state', { headers });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        setCatalog(data.catalog || []);
-        setPets(data.pets || []);
-        if (data.pets?.length > 0 && !selectedPetId) {
-          setSelectedPetId(data.pets[0].id);
+        const list = Array.isArray(data.ownedPets) ? data.ownedPets : [];
+        setCatalog(Array.isArray(data.catalog) ? data.catalog : []);
+        setPets(list);
+        if (list.length > 0 && !selectedPetId) {
+          setSelectedPetId(list[0].id);
         }
       }
     } finally {
@@ -59,7 +79,7 @@ export const PetsApp: React.FC<PetsAppProps> = ({
 
   const activePet = pets.find((p) => p.id === selectedPetId) || pets[0] || null;
 
-  const handleAdopt = async (breedId: string) => {
+  const handleAdopt = async (speciesId: string) => {
     setBusy(true);
     try {
       const headers = await getAuthBearerHeaders();
@@ -67,9 +87,10 @@ export const PetsApp: React.FC<PetsAppProps> = ({
         method: 'POST',
         headers,
         body: JSON.stringify({
-          breedId,
-          customName: petNameInput.trim() || undefined,
+          speciesId,
+          petName: petNameInput.trim() || undefined,
           currency: isCanada ? 'CAD' : 'NGN',
+          requestId: `pet_buy_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         }),
       });
       const data = await resp.json();
@@ -84,7 +105,7 @@ export const PetsApp: React.FC<PetsAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           receipts: data.account.receipts,
         });
@@ -92,7 +113,7 @@ export const PetsApp: React.FC<PetsAppProps> = ({
       setPetNameInput('');
       setSelectedPetId(data.pet.id);
       setTab('my_pets');
-      onShowToast?.(`Adopted ${data.pet.name}! Drag to rotate in 3D.`);
+      onShowToast?.(`Adopted ${data.pet.petName}! Drag to rotate in 3D.`);
       triggerSound?.('success');
       loadPets();
     } finally {
@@ -105,10 +126,14 @@ export const PetsApp: React.FC<PetsAppProps> = ({
     setBusy(true);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch(`/api/pets/${activePet.id}/care`, {
+      const resp = await fetch('/api/pets/care', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ action, currency: isCanada ? 'CAD' : 'NGN' }),
+        body: JSON.stringify({
+          petId: activePet.id,
+          action,
+          currency: isCanada ? 'CAD' : 'NGN',
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -122,11 +147,12 @@ export const PetsApp: React.FC<PetsAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           receipts: data.account.receipts,
         });
       }
+      onShowToast?.(`${activePet.petName} enjoyed ${action}!`);
       triggerSound?.('coin');
       loadPets();
     } finally {
@@ -195,7 +221,7 @@ export const PetsApp: React.FC<PetsAppProps> = ({
                       activePet?.id === p.id ? 'bg-orange-500 text-black border-orange-400 font-black' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
                     }`}
                   >
-                    {p.name}
+                    {p.petName}
                   </button>
                 ))}
               </div>
@@ -203,11 +229,11 @@ export const PetsApp: React.FC<PetsAppProps> = ({
 
             {activePet && (
               <>
-                <PetViewport3D breedId={activePet.breedId} happiness={activePet.happiness} />
+                <PetViewport3D breedId={mapSpeciesIdTo3DMesh(activePet.speciesId)} happiness={activePet.happiness} />
 
                 <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-xs font-black text-white">{activePet.name}</span>
+                    <span className="text-xs font-black text-white">{activePet.petName}</span>
                     <span className="text-[10px] font-mono text-orange-300">{activePet.breedName}</span>
                   </div>
                   {[
@@ -230,10 +256,10 @@ export const PetsApp: React.FC<PetsAppProps> = ({
 
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { act: 'feed' as const, label: 'Feed', icon: Utensils, costNGN: 2500, costCAD: 8 },
-                    { act: 'play' as const, label: 'Play', icon: Heart, costNGN: 0, costCAD: 0 },
-                    { act: 'groom' as const, label: 'Groom', icon: Sparkles, costNGN: 4500, costCAD: 15 },
-                    { act: 'vet' as const, label: 'Vet Check', icon: Stethoscope, costNGN: 9000, costCAD: 30 },
+                    { act: 'feed' as const, label: 'Feed', icon: Utensils, costNGN: 3500, costCAD: 8 },
+                    { act: 'play' as const, label: 'Play', icon: Heart, costNGN: 2000, costCAD: 5 },
+                    { act: 'groom' as const, label: 'Groom', icon: Sparkles, costNGN: 8500, costCAD: 22 },
+                    { act: 'vet' as const, label: 'Vet Check', icon: Stethoscope, costNGN: 15000, costCAD: 45 },
                   ].map((b) => {
                     const Icon = b.icon;
                     const c = isCanada ? b.costCAD : b.costNGN;
@@ -249,7 +275,7 @@ export const PetsApp: React.FC<PetsAppProps> = ({
                           <Icon className="w-3.5 h-3.5 text-orange-400" /> {b.label}
                         </span>
                         <span className="text-[10px] font-mono text-zinc-400">
-                          {c === 0 ? 'Free' : isCanada ? formatCAD(c) : formatNaira(c)}
+                          {isCanada ? formatCAD(c) : formatNaira(c)}
                         </span>
                       </button>
                     );
@@ -261,7 +287,7 @@ export const PetsApp: React.FC<PetsAppProps> = ({
         )
       ) : (
         <div className="space-y-3">
-          <PetViewport3D breedId={previewBreedId} happiness={95} />
+          <PetViewport3D breedId={mapSpeciesIdTo3DMesh(previewSpeciesId)} happiness={95} />
           <input
             type="text"
             value={petNameInput}
@@ -273,14 +299,14 @@ export const PetsApp: React.FC<PetsAppProps> = ({
             {catalog.map((item) => (
               <div
                 key={item.id}
-                onClick={() => setPreviewBreedId(item.id)}
-                className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer ${
-                  previewBreedId === item.id ? 'bg-orange-950/30 border-orange-400' : 'bg-zinc-950 border-zinc-800'
+                onClick={() => setPreviewSpeciesId(item.id)}
+                className={`p-3 rounded-2xl border flex items-center justify-between gap-2 cursor-pointer ${
+                  previewSpeciesId === item.id ? 'bg-orange-950/30 border-orange-400' : 'bg-zinc-950 border-zinc-800'
                 }`}
               >
                 <div>
                   <div className="text-xs font-black text-white">{item.name}</div>
-                  <div className="text-[10px] text-zinc-400">{item.category} · {item.desc}</div>
+                  <div className="text-[10px] text-zinc-400">{item.trait} · {item.desc}</div>
                   <div className="text-[10px] font-mono text-orange-300 mt-0.5">
                     {isCanada ? formatCAD(item.priceCAD) : formatNaira(item.priceNGN)}
                   </div>
@@ -292,7 +318,7 @@ export const PetsApp: React.FC<PetsAppProps> = ({
                     e.stopPropagation();
                     handleAdopt(item.id);
                   }}
-                  className="px-3 py-1.5 rounded-xl bg-orange-500 text-black font-black text-xs cursor-pointer"
+                  className="px-3 py-1.5 rounded-xl bg-orange-500 text-black font-black text-xs cursor-pointer shrink-0"
                 >
                   Adopt
                 </button>

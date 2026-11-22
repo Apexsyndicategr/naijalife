@@ -9,13 +9,10 @@ import {
   MessageSquare,
   Flame,
   Send,
-  Sparkles,
   Search,
-  Plus,
   Check,
   CheckCheck,
   Eye,
-  Heart,
   Star,
   UserPlus,
   Users,
@@ -48,75 +45,86 @@ export interface SnapchatAppProps {
 }
 
 interface SnapChatProfile {
-  username: string;
+  usernameLower: string;
+  snapUsername: string;
   displayName: string;
   bio: string;
-  avatarUrl?: string;
   avatarEmoji?: string;
-  themeColor?: string;
-  appIconStyle?: string;
-  chatBgStyle?: string;
   privacyMessages?: 'friends' | 'everyone';
-  privacyStories?: 'friends' | 'public';
+  privacyStories?: 'friends' | 'public' | 'everyone';
   isSnapPlus?: boolean;
   snapPlusExpiresAt?: number;
+  plusCustom?: {
+    profileTheme: 'gold' | 'emerald' | 'obsidian' | 'sunset';
+    appIcon: 'classic' | 'noir' | 'neon_emerald' | 'royal_gold';
+    chatBackground: 'default' | 'lagos_night' | 'toronto_aurora' | 'emerald_grid';
+    storyFrame: 'classic' | 'gold_halo' | 'emerald_pulse';
+  };
   friends: string[];
   blockedUsers: string[];
-  streaks: Record<string, number>;
+  incomingRequests?: Array<{ from: string; createdAt: number }>;
+  outgoingRequests?: Array<{ to: string; createdAt: number }>;
+  streaks: Record<string, { days: number; lastInteracted: number }>;
+}
+
+interface DirectoryUser {
+  username: string;
+  usernameLower: string;
+  displayName: string;
+  bio: string;
+  avatarEmoji?: string;
+  isSnapPlus?: boolean;
+  snapScore?: number;
   online?: boolean;
 }
 
 interface SnapMessage {
   id: string;
-  fromUsername: string;
-  toUsername?: string;
+  threadType: 'dm' | 'group';
+  fromUser: string;
+  toUser?: string;
   groupId?: string;
   text: string;
   mediaDataUrl?: string;
   mediaType?: 'image' | 'video';
   disappearSeconds: number;
-  expiresAt?: number | null;
+  expiresAt?: number;
   replyToStoryId?: string;
-  reactions: Record<string, string[]>;
+  reactions: Array<{ user: string; emoji: string }>;
   deliveredTo: string[];
   readBy: string[];
-  createdAt: number;
+  timestamp: number;
 }
 
 interface SnapGroup {
   id: string;
   name: string;
   members: string[];
-  createdBy: string;
+  creator: string;
   createdAt: number;
 }
 
 interface SnapStory {
   id: string;
-  authorUsername: string;
+  author: string;
   authorDisplayName: string;
   caption: string;
   mediaDataUrl?: string;
   mediaType?: 'image' | 'video';
   audience: 'friends' | 'public';
-  bgTheme?: string;
-  frameStyle?: string;
+  bgGradient?: string;
+  storyStyle?: string;
   viewers: string[];
-  reactions: Record<string, string[]>;
+  reactions: Array<{ user: string; emoji: string }>;
   createdAt: number;
   expiresAt: number;
 }
 
-const SNAP_PLUS_PLANS = [
-  { id: 'monthly', label: '30-Day Snapchat+ Pass', ngn: 4500, cad: 4.99, badge: 'Monthly' },
-  { id: 'yearly', label: '365-Day Founder Pass', ngn: 42000, cad: 45.0, badge: 'Best Value' },
-];
-
-const CHAT_BG_STYLES: Record<string, string> = {
-  obsidian: 'bg-zinc-950',
-  emerald_aura: 'bg-gradient-to-b from-emerald-950/60 via-zinc-950 to-black',
-  gold_royal: 'bg-gradient-to-b from-amber-950/50 via-zinc-950 to-black',
-  neon_cyber: 'bg-gradient-to-b from-purple-950/60 via-zinc-950 to-indigo-950/40',
+const CHAT_BG_STYLES: Record<string, { label: string; cls: string }> = {
+  default: { label: 'Obsidian', cls: 'bg-zinc-950' },
+  lagos_night: { label: 'Lagos Night', cls: 'bg-gradient-to-b from-emerald-950/60 via-zinc-950 to-black' },
+  toronto_aurora: { label: 'Toronto Aurora', cls: 'bg-gradient-to-b from-cyan-950/50 via-zinc-950 to-indigo-950/40' },
+  emerald_grid: { label: 'Emerald Royal', cls: 'bg-gradient-to-b from-amber-950/40 via-zinc-950 to-emerald-950/50' },
 };
 
 const TIMER_OPTIONS = [
@@ -141,9 +149,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
   const [tab, setTab] = useState<'chats' | 'stories' | 'friends' | 'profile' | 'plus'>('chats');
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<SnapChatProfile | null>(null);
-  const [directory, setDirectory] = useState<SnapChatProfile[]>([]);
-  const [incomingRequests, setIncomingRequests] = useState<Array<{ id: string; fromUsername: string; createdAt: number }>>([]);
-  const [outgoingRequests, setOutgoingRequests] = useState<Array<{ id: string; toUsername: string; createdAt: number }>>([]);
+  const [directory, setDirectory] = useState<DirectoryUser[]>([]);
   const [messages, setMessages] = useState<SnapMessage[]>([]);
   const [groups, setGroups] = useState<SnapGroup[]>([]);
   const [stories, setStories] = useState<SnapStory[]>([]);
@@ -169,8 +175,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
   const [storyAudience, setStoryAudience] = useState<'friends' | 'public'>('friends');
   const [storyMediaUrl, setStoryMediaUrl] = useState('');
   const [storyMediaType, setStoryMediaType] = useState<'image' | 'video' | undefined>(undefined);
-  const [storyBg, setStoryBg] = useState('from-amber-600 to-rose-700');
-  const [storyFrame, setStoryFrame] = useState('default');
+  const [storyStyle, setStoryStyle] = useState<'classic' | 'gold_halo' | 'emerald_pulse'>('classic');
   const [viewingStory, setViewingStory] = useState<SnapStory | null>(null);
   const [storyReplyInput, setStoryReplyInput] = useState('');
 
@@ -178,9 +183,8 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
   const [editDisplayName, setEditDisplayName] = useState('');
   const [editBio, setEditBio] = useState('');
   const [editEmoji, setEditEmoji] = useState('😎');
-  const [editAvatarUrl, setEditAvatarUrl] = useState('');
-  const [editPrivacyMsg, setEditPrivacyMsg] = useState<'friends' | 'everyone'>('friends');
-  const [editPrivacyStory, setEditPrivacyStory] = useState<'friends' | 'public'>('friends');
+  const [editPrivacyMsg, setEditPrivacyMsg] = useState<'friends' | 'everyone'>('everyone');
+  const [editPrivacyStory, setEditPrivacyStory] = useState<'friends' | 'everyone'>('everyone');
 
   // Report modal
   const [reportTarget, setReportTarget] = useState<string | null>(null);
@@ -189,34 +193,43 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
   const typingCooldownRef = useRef<number>(0);
 
   const loadState = useCallback(async (quiet = false) => {
+    if (!myUsername) {
+      if (!quiet) setLoading(false);
+      return;
+    }
     if (!quiet) setLoading(true);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/snapchat/state', { headers });
-      const data = await resp.json();
-      if (resp.ok && data.success) {
-        setProfile(data.profile);
-        setDirectory(data.directory || []);
-        setIncomingRequests(data.incomingRequests || []);
-        setOutgoingRequests(data.outgoingRequests || []);
-        setMessages(data.messages || []);
-        setGroups(data.groups || []);
-        setStories(data.stories || []);
-        setOnlineUsers(data.onlineUsers || []);
+      const [stateResp, usersResp] = await Promise.all([
+        fetch(`/api/snapchat/state?username=${encodeURIComponent(myUsername)}`, { headers }),
+        fetch('/api/snapchat/users', { headers }),
+      ]);
+      const stateData = await stateResp.json();
+      const usersData = await usersResp.json();
 
-        if (data.profile && !editDisplayName) {
-          setEditDisplayName(data.profile.displayName || myUsername);
-          setEditBio(data.profile.bio || '');
-          setEditEmoji(data.profile.avatarEmoji || '😎');
-          setEditAvatarUrl(data.profile.avatarUrl || '');
-          setEditPrivacyMsg(data.profile.privacyMessages || 'friends');
-          setEditPrivacyStory(data.profile.privacyStories || 'friends');
+      if (stateResp.ok && stateData.success) {
+        setProfile(stateData.profile || null);
+        setMessages(Array.isArray(stateData.messages) ? stateData.messages : []);
+        setStories(Array.isArray(stateData.stories) ? stateData.stories : []);
+        setGroups(Array.isArray(stateData.groups) ? stateData.groups : []);
+        setOnlineUsers(Array.isArray(stateData.onlineUsers) ? stateData.onlineUsers : []);
+
+        if (stateData.profile && !editDisplayName) {
+          setEditDisplayName(stateData.profile.displayName || myUsername);
+          setEditBio(stateData.profile.bio || '');
+          setEditEmoji(stateData.profile.avatarEmoji || '😎');
+          setEditPrivacyMsg(stateData.profile.privacyMessages || 'everyone');
+          setEditPrivacyStory(stateData.profile.privacyStories === 'friends' ? 'friends' : 'everyone');
         }
 
-        const unread = (data.messages || []).filter(
-          (m: SnapMessage) => m.fromUsername !== myUsername && !(m.readBy || []).includes(myUsername)
+        const unread = (stateData.messages || []).filter(
+          (m: SnapMessage) => m.fromUser !== myUsername && !(m.readBy || []).includes(myUsername)
         ).length;
         onUnreadCountChange?.(unread);
+      }
+
+      if (usersResp.ok && Array.isArray(usersData.users)) {
+        setDirectory(usersData.users);
       }
     } catch {
       // silent retry next cycle
@@ -233,7 +246,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
 
   useEffect(() => {
     const unsub = realtimeClient.subscribe((evt) => {
-      if (evt.type === 'snapchat:message' || evt.type === 'snapchat:story' || evt.type === 'snapchat:friend_update') {
+      if (evt.type?.startsWith('snap:')) {
         loadState(true);
       } else if (evt.type === 'typing:start' && evt.fromUsername) {
         setTypingFrom((prev) => ({ ...prev, [String(evt.fromUsername).toLowerCase()]: Date.now() }));
@@ -252,23 +265,24 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
 
   // Mark active thread messages as read (triggers disappearing timer countdown on server!)
   useEffect(() => {
-    if (!activeDm && !activeGroupId) return;
+    if ((!activeDm && !activeGroupId) || !myUsername) return;
     const markRead = async () => {
       try {
         const headers = await getAuthBearerHeaders();
-        await fetch('/api/snapchat/messages/read', {
+        await fetch('/api/snapchat/read', {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            peerUsername: activeDm || undefined,
-            groupId: activeGroupId || undefined,
+            username: myUsername,
+            peerOrGroupId: activeGroupId || activeDm,
+            isGroup: Boolean(activeGroupId),
           }),
         });
         loadState(true);
       } catch {}
     };
     markRead();
-  }, [activeDm, activeGroupId, messages.length, loadState]);
+  }, [activeDm, activeGroupId, messages.length, myUsername, loadState]);
 
   const handleFilePick = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -297,10 +311,11 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     setBusyAction(true);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/snapchat/messages', {
+      const resp = await fetch('/api/snapchat/send', {
         method: 'POST',
         headers,
         body: JSON.stringify({
+          fromUsername: myUsername,
           toUsername: activeDm || undefined,
           groupId: activeGroupId || undefined,
           text: composerText.trim(),
@@ -331,10 +346,10 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
   const handleReactMessage = async (messageId: string, emoji: string) => {
     try {
       const headers = await getAuthBearerHeaders();
-      await fetch('/api/snapchat/messages/react', {
+      await fetch('/api/snapchat/react', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ messageId, emoji }),
+        body: JSON.stringify({ username: myUsername, messageId, emoji }),
       });
       loadState(true);
     } catch {}
@@ -347,7 +362,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
       const resp = await fetch('/api/snapchat/friend-request', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ toUsername }),
+        body: JSON.stringify({ fromUsername: myUsername, toUsername }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -363,19 +378,19 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     }
   };
 
-  const handleRespondRequest = async (requestId: string, action: 'accept' | 'decline') => {
+  const handleRespondRequest = async (requesterUsername: string, accept: boolean) => {
     setBusyAction(true);
     try {
       const headers = await getAuthBearerHeaders();
       const resp = await fetch('/api/snapchat/friend-respond', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ requestId, action }),
+        body: JSON.stringify({ username: myUsername, requesterUsername, accept }),
       });
       const data = await resp.json();
       if (resp.ok) {
-        onShowToast?.(action === 'accept' ? 'Friend added!' : 'Request declined.');
-        triggerSound?.(action === 'accept' ? 'success' : 'coin');
+        onShowToast?.(accept ? 'Friend added!' : 'Request declined.');
+        triggerSound?.(accept ? 'success' : 'coin');
         loadState(true);
       } else {
         onShowToast?.(data.error || 'Failed to update request.');
@@ -396,7 +411,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
       const resp = await fetch('/api/snapchat/groups', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ name: groupNameInput.trim(), members: groupMemberChecks }),
+        body: JSON.stringify({ creator: myUsername, name: groupNameInput.trim(), members: groupMemberChecks }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -427,12 +442,12 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
         method: 'POST',
         headers,
         body: JSON.stringify({
+          username: myUsername,
           caption: storyCaption.trim(),
           mediaDataUrl: storyMediaUrl || undefined,
           mediaType: storyMediaType,
-          audience: storyAudience,
-          bgTheme: storyBg,
-          frameStyle: isSnapPlusActive ? storyFrame : 'default',
+          audience: storyAudience === 'public' ? 'public' : 'friends',
+          storyStyle: isSnapPlusActive ? storyStyle : 'classic',
         }),
       });
       const data = await resp.json();
@@ -455,7 +470,11 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     setViewingStory(st);
     try {
       const headers = await getAuthBearerHeaders();
-      await fetch(`/api/snapchat/stories/${st.id}/view`, { method: 'POST', headers });
+      await fetch('/api/snapchat/stories/view', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ username: myUsername, storyId: st.id }),
+      });
       loadState(true);
     } catch {}
   };
@@ -465,18 +484,19 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     setBusyAction(true);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/snapchat/messages', {
+      const resp = await fetch('/api/snapchat/send', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          toUsername: viewingStory.authorUsername,
+          fromUsername: myUsername,
+          toUsername: viewingStory.author,
           text: `[Story Reply: "${viewingStory.caption.slice(0, 40)}"] ${storyReplyInput.trim()}`,
           replyToStoryId: viewingStory.id,
           disappearSeconds: 0,
         }),
       });
       if (resp.ok) {
-        onShowToast?.(`Reply delivered to @${viewingStory.authorUsername}`);
+        onShowToast?.(`Reply delivered to @${viewingStory.author}`);
         setStoryReplyInput('');
         triggerSound?.('coin');
         loadState(true);
@@ -494,10 +514,10 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
         method: 'POST',
         headers,
         body: JSON.stringify({
+          username: myUsername,
           displayName: editDisplayName.trim(),
           bio: editBio.trim(),
           avatarEmoji: editEmoji,
-          avatarUrl: editAvatarUrl,
           privacyMessages: editPrivacyMsg,
           privacyStories: editPrivacyStory,
         }),
@@ -516,20 +536,20 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     }
   };
 
-  const handleBuySnapPlus = async (planId: 'monthly' | 'yearly', currency: 'NGN' | 'CAD') => {
-    const plan = SNAP_PLUS_PLANS.find((p) => p.id === planId);
-    if (!plan) return;
+  const handleBuySnapPlus = async (currency: 'NGN' | 'CAD') => {
+    const costNGN = 3500;
+    const costCAD = 5;
     if (currency === 'NGN') {
       const bal = parseMinorString(userProfile?.ngnKobo, moneyNGN);
-      if (bal < majorToMinor(plan.ngn)) {
-        onShowToast?.(`Insufficient NGN balance. Need ${formatNaira(plan.ngn)}.`);
+      if (bal < majorToMinor(costNGN)) {
+        onShowToast?.(`Insufficient NGN balance. Need ${formatNaira(costNGN)}.`);
         triggerSound?.('alert');
         return;
       }
     } else {
       const bal = parseMinorString(userProfile?.cadCents, userProfile?.bankCAD || 0);
-      if (bal < majorToMinor(plan.cad)) {
-        onShowToast?.(`Insufficient CAD balance. Need ${formatCAD(plan.cad)}.`);
+      if (bal < majorToMinor(costCAD)) {
+        onShowToast?.(`Insufficient CAD balance. Need ${formatCAD(costCAD)}.`);
         triggerSound?.('alert');
         return;
       }
@@ -538,10 +558,13 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     setBusyAction(true);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/snapchat/plus/subscribe', {
+      const resp = await fetch('/api/snapchat/plus', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ planId, currency }),
+        body: JSON.stringify({
+          currency,
+          requestId: `snap_plus_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -555,14 +578,14 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           isSnapPlus: true,
-          snapPlusExpiresAt: data.expiresAt,
+          snapPlusExpiresAt: data.profile?.snapPlusExpiresAt || data.account.snapPlusExpiresAt,
           receipts: data.account.receipts || userProfile.receipts,
         });
       }
-      onShowToast?.(`Snapchat+ activated for ${planId === 'yearly' ? '365 days' : '30 days'}!`);
+      onShowToast?.(data.message || 'Snapchat+ activated for 30 days!');
       triggerSound?.('success');
       loadState(true);
     } finally {
@@ -570,17 +593,16 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     }
   };
 
-  const handleToggleBlock = async (targetUsername: string) => {
+  const handleToggleBlock = async (targetUsername: string, currentlyBlocked: boolean) => {
     const headers = await getAuthBearerHeaders();
     const resp = await fetch('/api/snapchat/block', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ targetUsername }),
+      body: JSON.stringify({ username: myUsername, targetUsername, block: !currentlyBlocked }),
     });
-    const data = await resp.json();
     if (resp.ok) {
-      onShowToast?.(data.blocked ? `Blocked @${targetUsername}` : `Unblocked @${targetUsername}`);
-      if (activeDm === targetUsername) setActiveDm(null);
+      onShowToast?.(!currentlyBlocked ? `Blocked @${targetUsername}` : `Unblocked @${targetUsername}`);
+      if (!currentlyBlocked && activeDm === targetUsername) setActiveDm(null);
       loadState(true);
     }
   };
@@ -591,7 +613,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     const resp = await fetch('/api/snapchat/report', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ targetUsername: reportTarget, reason: reportReason.trim() }),
+      body: JSON.stringify({ username: myUsername, targetUsername: reportTarget, reason: reportReason.trim() }),
     });
     if (resp.ok) {
       onShowToast?.(`Report submitted against @${reportTarget} to moderation.`);
@@ -600,21 +622,27 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
     }
   };
 
+  const incomingRequests = profile?.incomingRequests || [];
+  const outgoingRequests = profile?.outgoingRequests || [];
   const isSnapPlusActive = Boolean(
     profile?.isSnapPlus && profile?.snapPlusExpiresAt && profile.snapPlusExpiresAt > Date.now()
   );
 
   const threadMessages = useMemo(() => {
     if (activeGroupId) {
-      return messages.filter((m) => m.groupId === activeGroupId);
+      return [...messages]
+        .filter((m) => m.groupId === activeGroupId)
+        .sort((a, b) => a.timestamp - b.timestamp);
     }
     if (activeDm) {
-      return messages.filter(
-        (m) =>
-          !m.groupId &&
-          ((m.fromUsername === myUsername && m.toUsername === activeDm) ||
-            (m.fromUsername === activeDm && m.toUsername === myUsername))
-      );
+      return [...messages]
+        .filter(
+          (m) =>
+            m.threadType !== 'group' &&
+            ((m.fromUser === myUsername && m.toUser === activeDm) ||
+              (m.fromUser === activeDm && m.toUser === myUsername))
+        )
+        .sort((a, b) => a.timestamp - b.timestamp);
     }
     return [];
   }, [messages, activeDm, activeGroupId, myUsername]);
@@ -622,14 +650,15 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
   const filteredDirectory = useMemo(() => {
     const q = searchQuery.trim().toLowerCase().replace(/^@/, '');
     return directory.filter((u) => {
-      if (u.username === myUsername) return false;
+      if (u.usernameLower === myUsername) return false;
       if (!q) return true;
-      return u.username.includes(q) || (u.displayName || '').toLowerCase().includes(q);
+      return u.usernameLower.includes(q) || (u.displayName || '').toLowerCase().includes(q);
     });
   }, [directory, searchQuery, myUsername]);
 
   const isPeerTyping = activeDm && typingFrom[activeDm] && Date.now() - typingFrom[activeDm] < 5000;
-  const chatBgClass = CHAT_BG_STYLES[profile?.chatBgStyle || 'obsidian'] || CHAT_BG_STYLES.obsidian;
+  const activeBgKey = profile?.plusCustom?.chatBackground || 'default';
+  const chatBgClass = (CHAT_BG_STYLES[activeBgKey] || CHAT_BG_STYLES.default).cls;
 
   if (loading && !profile) {
     return (
@@ -643,9 +672,10 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
   // Active Chat / Group Thread View
   if (activeDm || activeGroupId) {
     const activeGroup = groups.find((g) => g.id === activeGroupId);
-    const peerProfile = directory.find((u) => u.username === activeDm);
+    const peerProfile = directory.find((u) => u.usernameLower === activeDm);
     const peerOnline = activeDm ? onlineUsers.includes(activeDm) : false;
-    const streakCount = activeDm ? profile?.streaks?.[activeDm] || 0 : 0;
+    const streakCount = activeDm ? profile?.streaks?.[activeDm]?.days || 0 : 0;
+    const isPeerBlocked = activeDm ? (profile?.blockedUsers || []).includes(activeDm) : false;
 
     return (
       <div className={`flex flex-col h-[525px] -mx-1 rounded-2xl border border-zinc-800 overflow-hidden ${chatBgClass}`}>
@@ -689,9 +719,9 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => handleToggleBlock(activeDm)}
+                onClick={() => handleToggleBlock(activeDm, isPeerBlocked)}
                 className="p-1.5 rounded-lg bg-zinc-800 hover:bg-rose-900/60 text-zinc-300 hover:text-rose-300 cursor-pointer"
-                title="Block / Unblock User"
+                title={isPeerBlocked ? 'Unblock User' : 'Block User'}
               >
                 <Ban className="w-3.5 h-3.5" />
               </button>
@@ -715,14 +745,14 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
             </div>
           ) : (
             threadMessages.map((m) => {
-              const isMe = m.fromUsername === myUsername;
+              const isMe = m.fromUser === myUsername;
               const isReadByPeer = activeDm
                 ? (m.readBy || []).includes(activeDm)
                 : (m.readBy || []).length > 1;
               return (
                 <div key={m.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                   {!isMe && activeGroupId && (
-                    <span className="text-[9px] text-amber-300 font-mono mb-0.5">@{m.fromUsername}</span>
+                    <span className="text-[9px] text-amber-300 font-mono mb-0.5">@{m.fromUser}</span>
                   )}
                   <div
                     className={`max-w-[82%] rounded-2xl p-2.5 text-xs space-y-1.5 ${
@@ -748,7 +778,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                         )}
                       </span>
                       <span className="flex items-center gap-1">
-                        {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         {isMe && (isReadByPeer ? <CheckCheck className="w-3 h-3 text-sky-200" /> : <Check className="w-3 h-3" />)}
                       </span>
                     </div>
@@ -756,7 +786,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                   {/* Quick Reactions */}
                   <div className="flex items-center gap-1 mt-0.5">
                     {['🔥', '❤️', '😂'].map((em) => {
-                      const count = (m.reactions?.[em] || []).length;
+                      const count = (m.reactions || []).filter((r) => r.emoji === em).length;
                       return (
                         <button
                           key={em}
@@ -936,25 +966,29 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                 className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white"
               />
               <div className="flex flex-wrap gap-1.5">
-                {(profile?.friends || []).map((fr) => {
-                  const selected = groupMemberChecks.includes(fr);
-                  return (
-                    <button
-                      key={fr}
-                      type="button"
-                      onClick={() =>
-                        setGroupMemberChecks((prev) =>
-                          prev.includes(fr) ? prev.filter((x) => x !== fr) : [...prev, fr]
-                        )
-                      }
-                      className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer border ${
-                        selected ? 'bg-emerald-500 text-black border-emerald-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
-                      }`}
-                    >
-                      @{fr}
-                    </button>
-                  );
-                })}
+                {directory
+                  .filter((u) => u.usernameLower !== myUsername)
+                  .map((u) => {
+                    const selected = groupMemberChecks.includes(u.usernameLower);
+                    return (
+                      <button
+                        key={u.usernameLower}
+                        type="button"
+                        onClick={() =>
+                          setGroupMemberChecks((prev) =>
+                            prev.includes(u.usernameLower)
+                              ? prev.filter((x) => x !== u.usernameLower)
+                              : [...prev, u.usernameLower]
+                          )
+                        }
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer border ${
+                          selected ? 'bg-emerald-500 text-black border-emerald-400' : 'bg-zinc-900 text-zinc-300 border-zinc-700'
+                        }`}
+                      >
+                        @{u.usernameLower}
+                      </button>
+                    );
+                  })}
               </div>
               <button
                 type="button"
@@ -989,29 +1023,33 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
             </div>
           ))}
 
-          {/* Friends & Recent DMs */}
+          {/* Friends & Active Citizens */}
           {directory
-            .filter((u) => u.username !== myUsername && !(profile?.blockedUsers || []).includes(u.username))
-            .filter((u) => (profile?.friends || []).includes(u.username) || messages.some((m) => m.fromUsername === u.username || m.toUsername === u.username))
+            .filter((u) => u.usernameLower !== myUsername && !(profile?.blockedUsers || []).includes(u.usernameLower))
+            .filter(
+              (u) =>
+                (profile?.friends || []).includes(u.usernameLower) ||
+                messages.some((m) => m.fromUser === u.usernameLower || m.toUser === u.usernameLower) ||
+                directory.length <= 8
+            )
             .map((u) => {
               const unread = messages.filter(
-                (m) => m.fromUsername === u.username && m.toUsername === myUsername && !(m.readBy || []).includes(myUsername)
+                (m) => m.fromUser === u.usernameLower && m.toUser === myUsername && !(m.readBy || []).includes(myUsername)
               ).length;
-              const lastMsg = [...messages]
-                .reverse()
-                .find(
-                  (m) =>
-                    !m.groupId &&
-                    ((m.fromUsername === u.username && m.toUsername === myUsername) ||
-                      (m.fromUsername === myUsername && m.toUsername === u.username))
-                );
-              const isOnline = onlineUsers.includes(u.username);
+              const lastMsg = messages.find(
+                (m) =>
+                  m.threadType !== 'group' &&
+                  ((m.fromUser === u.usernameLower && m.toUser === myUsername) ||
+                    (m.fromUser === myUsername && m.toUser === u.usernameLower))
+              );
+              const isOnline = onlineUsers.includes(u.usernameLower);
+              const streakDays = profile?.streaks?.[u.usernameLower]?.days || 0;
               return (
                 <div
-                  key={u.username}
+                  key={u.usernameLower}
                   onClick={() => {
                     setActiveGroupId(null);
-                    setActiveDm(u.username);
+                    setActiveDm(u.usernameLower);
                   }}
                   className="p-3 rounded-2xl bg-zinc-950/90 border border-zinc-800 hover:border-yellow-400/50 flex items-center justify-between cursor-pointer"
                 >
@@ -1026,14 +1064,14 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                       <div className="text-xs font-black text-white flex items-center gap-1.5">
                         <span className="truncate">{u.displayName || u.username}</span>
                         {u.isSnapPlus && <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />}
-                        {(profile?.streaks?.[u.username] || 0) > 0 && (
+                        {streakDays > 0 && (
                           <span className="text-[10px] text-amber-400 font-mono">
-                            🔥{profile?.streaks?.[u.username]}
+                            🔥{streakDays}
                           </span>
                         )}
                       </div>
                       <div className="text-[10px] text-zinc-400 truncate">
-                        {lastMsg ? (lastMsg.mediaType ? `📷 Sent a ${lastMsg.mediaType}` : lastMsg.text) : `@${u.username} · Tap to chat`}
+                        {lastMsg ? (lastMsg.mediaType ? `Sent a ${lastMsg.mediaType}` : lastMsg.text) : `@${u.usernameLower} · Tap to chat`}
                       </div>
                     </div>
                   </div>
@@ -1088,13 +1126,13 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
               </label>
               {isSnapPlusActive && (
                 <select
-                  value={storyFrame}
-                  onChange={(e) => setStoryFrame(e.target.value)}
+                  value={storyStyle}
+                  onChange={(e) => setStoryStyle(e.target.value as any)}
                   className="bg-zinc-900 border border-amber-500/40 rounded-lg px-2 py-1 text-[10px] text-amber-300"
                 >
-                  <option value="default">Standard Frame</option>
-                  <option value="gold_crown">Plus Gold Frame</option>
-                  <option value="emerald_glow">Plus Emerald Frame</option>
+                  <option value="classic">Standard Frame</option>
+                  <option value="gold_halo">Plus Gold Frame</option>
+                  <option value="emerald_pulse">Plus Emerald Frame</option>
                 </select>
               )}
               <button
@@ -1119,9 +1157,9 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                   key={st.id}
                   onClick={() => handleOpenStory(st)}
                   className={`p-3 rounded-2xl bg-zinc-950 border cursor-pointer transition-all flex items-center justify-between ${
-                    st.frameStyle === 'gold_crown'
+                    st.storyStyle === 'gold_halo'
                       ? 'border-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.2)]'
-                      : st.frameStyle === 'emerald_glow'
+                      : st.storyStyle === 'emerald_pulse'
                       ? 'border-emerald-400'
                       : 'border-zinc-800 hover:border-yellow-400/50'
                   }`}
@@ -1155,19 +1193,19 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
             <div className="space-y-1.5">
               <span className="text-[10px] font-mono uppercase text-amber-300 font-bold">Pending Friend Requests</span>
               {incomingRequests.map((req) => (
-                <div key={req.id} className="p-2.5 rounded-xl bg-zinc-950 border border-amber-500/40 flex items-center justify-between">
-                  <span className="text-xs font-bold text-white">@{req.fromUsername}</span>
+                <div key={req.from} className="p-2.5 rounded-xl bg-zinc-950 border border-amber-500/40 flex items-center justify-between">
+                  <span className="text-xs font-bold text-white">@{req.from}</span>
                   <div className="flex gap-1.5">
                     <button
                       type="button"
-                      onClick={() => handleRespondRequest(req.id, 'accept')}
+                      onClick={() => handleRespondRequest(req.from, true)}
                       className="px-2.5 py-1 rounded-lg bg-emerald-500 text-black font-black text-[10px] cursor-pointer"
                     >
                       Accept
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleRespondRequest(req.id, 'decline')}
+                      onClick={() => handleRespondRequest(req.from, false)}
                       className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-300 font-bold text-[10px] cursor-pointer"
                     >
                       Decline
@@ -1191,16 +1229,16 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
 
           <div className="space-y-2 max-h-72 overflow-y-auto scrollbar-none">
             {filteredDirectory.map((u) => {
-              const isFriend = (profile?.friends || []).includes(u.username);
-              const isBlocked = (profile?.blockedUsers || []).includes(u.username);
-              const hasOutgoing = outgoingRequests.some((r) => r.toUsername === u.username);
+              const isFriend = (profile?.friends || []).includes(u.usernameLower);
+              const isBlocked = (profile?.blockedUsers || []).includes(u.usernameLower);
+              const hasOutgoing = outgoingRequests.some((r) => r.to === u.usernameLower);
               return (
-                <div key={u.username} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
+                <div key={u.usernameLower} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-lg">{u.avatarEmoji || '😎'}</span>
                     <div className="min-w-0">
                       <div className="text-xs font-bold text-white truncate">{u.displayName}</div>
-                      <div className="text-[10px] text-zinc-400 font-mono">@{u.username}</div>
+                      <div className="text-[10px] text-zinc-400 font-mono">@{u.usernameLower}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
@@ -1208,7 +1246,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          setActiveDm(u.username);
+                          setActiveDm(u.usernameLower);
                           setTab('chats');
                         }}
                         className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold cursor-pointer"
@@ -1220,7 +1258,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                     ) : !isBlocked ? (
                       <button
                         type="button"
-                        onClick={() => handleFriendRequest(u.username)}
+                        onClick={() => handleFriendRequest(u.usernameLower)}
                         className="px-2.5 py-1 rounded-lg bg-yellow-400 text-black font-black text-[10px] cursor-pointer flex items-center gap-1"
                       >
                         <UserPlus className="w-3 h-3" /> Add
@@ -1228,7 +1266,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => handleToggleBlock(u.username)}
+                      onClick={() => handleToggleBlock(u.usernameLower, isBlocked)}
                       className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer ${
                         isBlocked ? 'bg-rose-600 text-white' : 'bg-zinc-900 text-zinc-400'
                       }`}
@@ -1288,19 +1326,19 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                 onChange={(e) => setEditPrivacyMsg(e.target.value as 'friends' | 'everyone')}
                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-white"
               >
-                <option value="friends">Friends Only</option>
                 <option value="everyone">Everyone</option>
+                <option value="friends">Friends Only</option>
               </select>
             </div>
             <div>
               <label className="text-zinc-400 block mb-1">Story Visibility</label>
               <select
                 value={editPrivacyStory}
-                onChange={(e) => setEditPrivacyStory(e.target.value as 'friends' | 'public')}
+                onChange={(e) => setEditPrivacyStory(e.target.value as 'friends' | 'everyone')}
                 className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-white"
               >
+                <option value="everyone">Everyone</option>
                 <option value="friends">Friends Only</option>
-                <option value="public">Public</option>
               </select>
             </div>
           </div>
@@ -1331,10 +1369,10 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
               )}
             </div>
             <p className="text-[11px] text-zinc-300 leading-relaxed">
-              Unlock exclusive chat backgrounds, Plus story frames, golden Plus badge, and custom app icons using your NGN or CAD balance. No silent auto-renewals.
+              Unlock exclusive chat backgrounds, Plus story frames, golden Plus badge, and custom icons using your NGN or CAD balance. No silent auto-renewals.
             </p>
             <div className="grid grid-cols-2 gap-2 pt-1">
-              {Object.keys(CHAT_BG_STYLES).map((bgKey) => (
+              {Object.entries(CHAT_BG_STYLES).map(([bgKey, info]) => (
                 <button
                   key={bgKey}
                   type="button"
@@ -1344,44 +1382,43 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                     await fetch('/api/snapchat/profile', {
                       method: 'POST',
                       headers,
-                      body: JSON.stringify({ chatBgStyle: bgKey }),
+                      body: JSON.stringify({
+                        username: myUsername,
+                        plusCustom: { ...(profile?.plusCustom || {}), chatBackground: bgKey },
+                      }),
                     });
-                    onShowToast?.(`Applied ${bgKey} chat theme!`);
+                    onShowToast?.(`Applied ${info.label} chat theme!`);
                     loadState(true);
                   }}
                   className={`p-2 rounded-xl border text-[10px] font-bold flex items-center gap-1.5 cursor-pointer ${
-                    profile?.chatBgStyle === bgKey
+                    activeBgKey === bgKey
                       ? 'border-amber-400 bg-amber-500/20 text-amber-200'
                       : 'border-zinc-800 bg-zinc-900 text-zinc-400'
                   } ${!isSnapPlusActive ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   <Palette className="w-3.5 h-3.5" />
-                  <span className="capitalize">{bgKey.replace('_', ' ')}</span>
+                  <span>{info.label}</span>
                 </button>
               ))}
             </div>
           </div>
 
-          {SNAP_PLUS_PLANS.map((plan) => (
-            <div key={plan.id} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
-              <div>
-                <div className="text-xs font-black text-white">{plan.label}</div>
-                <div className="text-[10px] text-amber-300 font-mono">
-                  {formatNaira(plan.ngn)} · {formatCAD(plan.cad)}
-                </div>
-              </div>
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  disabled={busyAction}
-                  onClick={() => handleBuySnapPlus(plan.id as 'monthly' | 'yearly', isCanada ? 'CAD' : 'NGN')}
-                  className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-[10px] cursor-pointer"
-                >
-                  {isSnapPlusActive ? 'Extend' : 'Subscribe'}
-                </button>
+          <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-black text-white">30-Day Snapchat+ Pass</div>
+              <div className="text-[10px] text-amber-300 font-mono">
+                {formatNaira(3500)} (Nigeria) · {formatCAD(5)} (Canada)
               </div>
             </div>
-          ))}
+            <button
+              type="button"
+              disabled={busyAction}
+              onClick={() => handleBuySnapPlus(isCanada ? 'CAD' : 'NGN')}
+              className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-[10px] cursor-pointer"
+            >
+              {isSnapPlusActive ? 'Extend 30d' : 'Subscribe'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1392,7 +1429,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
             <div>
               <div className="text-xs font-black text-white">{viewingStory.authorDisplayName}</div>
               <div className="text-[10px] text-zinc-400 font-mono">
-                @{viewingStory.authorUsername} · {viewingStory.viewers.length} views
+                @{viewingStory.author} · {viewingStory.viewers.length} views
               </div>
             </div>
             <button
@@ -1404,7 +1441,7 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
             </button>
           </div>
 
-          <div className={`my-4 flex-1 rounded-3xl bg-gradient-to-br ${viewingStory.bgTheme || 'from-amber-600 to-rose-700'} p-5 flex flex-col items-center justify-center text-center gap-3 overflow-hidden`}>
+          <div className={`my-4 flex-1 rounded-3xl bg-gradient-to-br ${viewingStory.bgGradient || 'from-amber-600 to-rose-700'} p-5 flex flex-col items-center justify-center text-center gap-3 overflow-hidden`}>
             {viewingStory.mediaDataUrl && viewingStory.mediaType === 'image' && (
               <img src={viewingStory.mediaDataUrl} alt="Story" className="max-h-72 rounded-2xl object-contain" />
             )}
@@ -1424,10 +1461,10 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                   type="button"
                   onClick={async () => {
                     const headers = await getAuthBearerHeaders();
-                    await fetch(`/api/snapchat/stories/${viewingStory.id}/react`, {
+                    await fetch('/api/snapchat/stories/react', {
                       method: 'POST',
                       headers,
-                      body: JSON.stringify({ emoji: em }),
+                      body: JSON.stringify({ username: myUsername, storyId: viewingStory.id, emoji: em }),
                     });
                     onShowToast?.(`Reacted ${em} to story!`);
                   }}
@@ -1437,13 +1474,13 @@ export const SnapchatApp: React.FC<SnapchatAppProps> = ({
                 </button>
               ))}
             </div>
-            {viewingStory.authorUsername !== myUsername && (
+            {viewingStory.author !== myUsername && (
               <div className="flex gap-1.5">
                 <input
                   type="text"
                   value={storyReplyInput}
                   onChange={(e) => setStoryReplyInput(e.target.value)}
-                  placeholder={`Reply to @${viewingStory.authorUsername}'s story...`}
+                  placeholder={`Reply to @${viewingStory.author}'s story...`}
                   className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white"
                 />
                 <button

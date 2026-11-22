@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ShieldCheck, FileCheck2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { UserProfile } from '../types/game';
 import { formatNaira, formatCAD } from '../utils/formatNaira';
@@ -11,6 +11,8 @@ import { getAuthBearerHeaders } from '../services/economyService';
 
 export interface InsuranceAppProps {
   userProfile?: UserProfile;
+  ownedProperties?: { id: string; name?: string }[];
+  ownedVehicles?: { id: string; name?: string }[];
   currentStateId?: string;
   onUpdateProfile?: (updatedProfile: UserProfile) => void;
   onShowToast?: (msg: string) => void;
@@ -19,6 +21,8 @@ export interface InsuranceAppProps {
 
 export const InsuranceApp: React.FC<InsuranceAppProps> = ({
   userProfile,
+  ownedProperties = [],
+  ownedVehicles = [],
   currentStateId = 'lagos',
   onUpdateProfile,
   onShowToast,
@@ -29,9 +33,8 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
   const [tab, setTab] = useState<'plans' | 'policies' | 'claims'>('plans');
   const [plans, setPlans] = useState<any[]>([]);
   const [policies, setPolicies] = useState<any[]>([]);
-  const [claims, setClaims] = useState<any[]>([]);
   const [claimPolicyId, setClaimPolicyId] = useState('');
-  const [claimIncidentId, setClaimIncidentId] = useState('inc_' + new Date().toISOString().slice(0, 10));
+  const [claimIncidentKey, setClaimIncidentKey] = useState('inc_' + new Date().toISOString().slice(0, 10));
   const [claimAmount, setClaimAmount] = useState(50000);
   const [claimDesc, setClaimDesc] = useState('');
   const [loading, setLoading] = useState(true);
@@ -43,11 +46,11 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
       const resp = await fetch('/api/insurance/state', { headers });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        setPlans(data.plans || []);
-        setPolicies(data.policies || []);
-        setClaims(data.claims || []);
-        if (data.policies?.length > 0 && !claimPolicyId) {
-          setClaimPolicyId(data.policies[0].id);
+        const polList = Array.isArray(data.policies) ? data.policies : [];
+        setPlans(Array.isArray(data.plans) ? data.plans : []);
+        setPolicies(polList);
+        if (polList.length > 0 && !claimPolicyId) {
+          setClaimPolicyId(polList[0].id);
         }
       }
     } finally {
@@ -59,6 +62,16 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
     loadInsurance();
   }, [loadInsurance]);
 
+  const allClaims = useMemo(() => {
+    const items: Array<any> = [];
+    for (const pol of policies) {
+      for (const cl of pol.claimsHistory || []) {
+        items.push({ ...cl, currency: pol.currency, policyName: pol.name });
+      }
+    }
+    return items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }, [policies]);
+
   const handleBuyPolicy = async (planId: string) => {
     setBusy(true);
     try {
@@ -66,7 +79,11 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
       const resp = await fetch('/api/insurance/buy', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ planId, currency: isCanada ? 'CAD' : 'NGN' }),
+        body: JSON.stringify({
+          planId,
+          currency: isCanada ? 'CAD' : 'NGN',
+          requestId: `ins_buy_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -80,7 +97,7 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           receipts: data.account.receipts,
         });
@@ -101,22 +118,37 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
     }
     setBusy(true);
     try {
+      const selectedPol = policies.find((p) => p.id === claimPolicyId);
+      const hasHomeOrProperty = Boolean(
+        ownedProperties.length > 0 ||
+          Object.keys(userProfile?.houseLayouts || {}).length > 0 ||
+          (userProfile?.ownedBusinesses && userProfile.ownedBusinesses.length > 0)
+      );
+      const hasVehicle = Boolean(ownedVehicles.length > 0);
+      const hasMatchingAsset =
+        selectedPol?.category === 'vehicle'
+          ? hasVehicle
+          : selectedPol?.category === 'business' || selectedPol?.category === 'property'
+          ? hasHomeOrProperty
+          : true;
+
       const headers = await getAuthBearerHeaders();
       const resp = await fetch('/api/insurance/claim', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           policyId: claimPolicyId,
-          incidentId: claimIncidentId.trim() || `inc_${Date.now()}`,
-          description: claimDesc.trim(),
-          claimAmount,
-          hasEligibleAsset: true,
+          incidentKey: claimIncidentKey.trim() || `inc_${Date.now()}`,
+          reason: claimDesc.trim(),
+          requestedMajor: claimAmount,
+          hasMatchingAsset,
         }),
       });
       const data = await resp.json();
       if (!resp.ok) {
         onShowToast?.(data.error || 'Claim denied.');
         triggerSound?.('alert');
+        loadInsurance();
         return;
       }
       if (data.account && userProfile && onUpdateProfile) {
@@ -125,7 +157,7 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           receipts: data.account.receipts,
         });
@@ -180,13 +212,13 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
         <div className="space-y-2">
           {plans.map((p) => {
             const prem = isCanada ? formatCAD(p.premiumCAD) : formatNaira(p.premiumNGN);
-            const cov = isCanada ? formatCAD(p.coverageCAD) : formatNaira(p.coverageNGN);
+            const cov = isCanada ? formatCAD(p.coverageCapCAD) : formatNaira(p.coverageCapNGN);
             return (
               <div key={p.id} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
                 <div>
                   <div className="text-xs font-black text-white">{p.name}</div>
                   <div className="text-[10px] text-zinc-400 font-mono">
-                    Covers up to {cov} · {p.durationDays} days
+                    Covers up to {cov} · {p.durationDays} days · {p.provider}
                   </div>
                 </div>
                 <button
@@ -212,12 +244,12 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
               <div key={pol.id} className="p-3 rounded-2xl bg-zinc-950 border border-emerald-500/30 space-y-1">
                 <div className="flex justify-between items-center text-xs font-black text-white">
                   <span className="flex items-center gap-1.5">
-                    <FileCheck2 className="w-4 h-4 text-emerald-400" /> {pol.planName}
+                    <FileCheck2 className="w-4 h-4 text-emerald-400" /> {pol.name}
                   </span>
-                  <span className="text-[10px] font-mono text-emerald-300 uppercase">{pol.type}</span>
+                  <span className="text-[10px] font-mono text-emerald-300 uppercase">{pol.category}</span>
                 </div>
                 <div className="text-[10px] text-zinc-400 font-mono">
-                  Coverage Cap: {pol.currency === 'CAD' ? formatCAD(pol.coverageCap) : formatNaira(pol.coverageCap)} · Expires{' '}
+                  Coverage Cap: {pol.currency === 'CAD' ? formatCAD(pol.coverageCapMajor) : formatNaira(pol.coverageCapMajor)} · Expires{' '}
                   {new Date(pol.expiresAt).toLocaleDateString()}
                 </div>
               </div>
@@ -235,14 +267,14 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
               <option value="">Select active policy...</option>
               {policies.map((pol) => (
                 <option key={pol.id} value={pol.id}>
-                  {pol.planName} ({pol.currency})
+                  {pol.name} ({pol.currency})
                 </option>
               ))}
             </select>
             <input
               type="text"
-              value={claimIncidentId}
-              onChange={(e) => setClaimIncidentId(e.target.value)}
+              value={claimIncidentKey}
+              onChange={(e) => setClaimIncidentKey(e.target.value)}
               placeholder="Incident reference ID"
               className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
             />
@@ -270,17 +302,21 @@ export const InsuranceApp: React.FC<InsuranceAppProps> = ({
             </button>
           </div>
 
-          {claims.map((cl) => (
+          {allClaims.map((cl) => (
             <div key={cl.id} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 flex justify-between items-center text-xs">
               <div>
                 <div className="font-bold text-white flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{cl.description}</span>
+                  <AlertTriangle className={`w-3.5 h-3.5 ${cl.status === 'APPROVED' ? 'text-emerald-400' : 'text-rose-400'}`} />
+                  <span>{cl.reason}</span>
                 </div>
-                <div className="text-[10px] text-zinc-500 font-mono">Incident: {cl.incidentId}</div>
+                <div className="text-[10px] text-zinc-500 font-mono">
+                  {cl.status} · {cl.incidentKey} · {cl.note}
+                </div>
               </div>
-              <span className="font-mono font-bold text-emerald-400">
-                +{cl.currency === 'CAD' ? formatCAD(cl.payoutAmount) : formatNaira(cl.payoutAmount)}
+              <span className={`font-mono font-bold ${cl.status === 'APPROVED' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {cl.status === 'APPROVED'
+                  ? `+${cl.currency === 'CAD' ? formatCAD(cl.payoutMajor) : formatNaira(cl.payoutMajor)}`
+                  : 'DENIED'}
               </span>
             </div>
           ))}

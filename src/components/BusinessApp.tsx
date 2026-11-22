@@ -29,31 +29,32 @@ export interface BusinessAppProps {
 interface ServerBiz {
   id: string;
   name: string;
+  typeId: string;
+  typeName: string;
   country: 'nigeria' | 'canada';
-  stateId: string;
-  category: string;
-  startupCostMinor: string;
-  dailyGrossMinor: string;
-  dailyExpenseMinor: string;
-  staffCount: number;
-  upgradeLevel: number;
+  registeredDate: string;
+  level: number;
+  dailyRevenueMinor: string;
+  dailyExpensesMinor: string;
+  employeesCount: number;
+  upgrades: string[];
   lastSettledWatDate?: string;
-  createdAt: number;
+  totalCollectedMinor: string;
 }
 
 const NIGERIA_CATALOG = [
-  { name: 'Lekki Specialty Coffee & Pastry Bar', category: 'Food & Hospitality', cost: 450000, gross: 55000, expense: 18000 },
-  { name: 'Victoria Island Cloud Logistics Hub', category: 'Logistics', cost: 1200000, gross: 145000, expense: 48000 },
-  { name: 'Abuja Clean Solar Mini-Grid', category: 'Energy', cost: 2800000, gross: 310000, expense: 90000 },
-  { name: 'Yaba SaaS Engineering Studio', category: 'Technology', cost: 1850000, gross: 240000, expense: 72000 },
-  { name: 'Wuse Retail Supermart', category: 'Retail', cost: 950000, gross: 112000, expense: 36000 },
+  { typeId: 'coffee_bar', name: 'Lekki Specialty Coffee & Pastry Bar', category: 'Food & Hospitality', cost: 450000, gross: 55000, expense: 18000 },
+  { typeId: 'logistics_hub', name: 'Victoria Island Cloud Logistics Hub', category: 'Logistics', cost: 1200000, gross: 145000, expense: 48000 },
+  { typeId: 'solar_grid', name: 'Abuja Clean Solar Mini-Grid', category: 'Energy', cost: 2800000, gross: 310000, expense: 90000 },
+  { typeId: 'tech_studio', name: 'Yaba SaaS Engineering Studio', category: 'Technology', cost: 1850000, gross: 240000, expense: 72000 },
+  { typeId: 'supermart', name: 'Wuse Retail Supermart', category: 'Retail', cost: 950000, gross: 112000, expense: 36000 },
 ];
 
 const CANADA_CATALOG = [
-  { name: 'Toronto Downtown Tim-Style Roastery', category: 'Food & Hospitality', cost: 1800, gross: 240, expense: 85 },
-  { name: 'Mississauga Cold-Chain Freight', category: 'Logistics', cost: 4500, gross: 560, expense: 190 },
-  { name: 'Waterloo AI Security Consultancy', category: 'Technology', cost: 6200, gross: 790, expense: 230 },
-  { name: 'Brampton Afro-Caribbean Grocery', category: 'Retail', cost: 3400, gross: 430, expense: 145 },
+  { typeId: 'ca_roastery', name: 'Toronto Downtown Artisan Roastery', category: 'Food & Hospitality', cost: 1800, gross: 240, expense: 85 },
+  { typeId: 'ca_freight', name: 'Mississauga Cold-Chain Freight', category: 'Logistics', cost: 4500, gross: 560, expense: 190 },
+  { typeId: 'ca_ai_sec', name: 'Waterloo AI Security Consultancy', category: 'Technology', cost: 6200, gross: 790, expense: 230 },
+  { typeId: 'ca_grocery', name: 'Brampton Afro-Caribbean Grocery', category: 'Retail', cost: 3400, gross: 430, expense: 145 },
 ];
 
 function getWatCountdownText(): { watTimeStr: string; countdownStr: string } {
@@ -104,7 +105,7 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
   const loadBusinesses = useCallback(async () => {
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/businesses/list', { headers });
+      const resp = await fetch('/api/business/state', { headers });
       const data = await resp.json();
       if (resp.ok && data.success) {
         setBusinesses(data.businesses || []);
@@ -114,7 +115,7 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
             ngnKobo: data.account.ngnKobo,
             cadCents: data.account.cadCents,
             bankNaira: data.account.bankNaira,
-            cashNaira: 0,
+            cashNaira: data.account.cashNaira ?? 0,
             bankCAD: data.account.bankCAD,
             receipts: data.account.receipts,
           });
@@ -140,17 +141,18 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
     setBusyId(`launch_${idx}`);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/businesses/create', {
+      const resp = await fetch('/api/business/create', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           name: (customNames[idx] || '').trim() || item.name,
+          typeId: item.typeId,
+          typeName: item.category,
           country,
-          stateId: country === 'canada' ? 'canada' : currentStateId || 'lagos',
-          category: item.category,
           startupCost: item.cost,
-          dailyGross: item.gross,
-          dailyExpense: item.expense,
+          dailyRevenue: item.gross,
+          dailyExpenses: item.expense,
+          requestId: `biz_create_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         }),
       });
       const data = await resp.json();
@@ -165,7 +167,7 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           receipts: data.account.receipts,
         });
@@ -179,14 +181,19 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
     }
   };
 
-  const handleManage = async (businessId: string, action: 'hire_staff' | 'upgrade') => {
+  const handleManage = async (businessId: string, action: 'hire' | 'upgrade') => {
     setBusyId(`${businessId}_${action}`);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch(`/api/businesses/${businessId}/manage`, {
+      const resp = await fetch('/api/business/action', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({
+          businessId,
+          action,
+          upgradeName: action === 'upgrade' ? 'Automation & Capacity Expansion' : undefined,
+          requestId: `biz_act_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -200,12 +207,12 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           receipts: data.account.receipts,
         });
       }
-      onShowToast?.(action === 'hire_staff' ? 'Hired +1 Employee!' : 'Business capacity upgraded!');
+      onShowToast?.(action === 'hire' ? 'Hired +1 Employee (+18% daily output)!' : 'Business tier upgraded (+32% daily output)!');
       triggerSound?.('coin');
       loadBusinesses();
     } finally {
@@ -288,23 +295,23 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
           ) : (
             businesses.map((biz) => {
               const isCad = biz.country === 'canada';
-              const gross = minorToMajorNumber(parseMinorString(biz.dailyGrossMinor));
-              const exp = minorToMajorNumber(parseMinorString(biz.dailyExpenseMinor));
+              const gross = minorToMajorNumber(parseMinorString(biz.dailyRevenueMinor));
+              const exp = minorToMajorNumber(parseMinorString(biz.dailyExpensesMinor));
               const net = Math.max(0, gross - exp);
               const fmt = (n: number) => (isCad ? formatCAD(n) : formatNaira(n));
-              const staffCost = isCad ? 250 : 95000;
-              const upgCost = isCad ? 400 * biz.upgradeLevel : 180000 * biz.upgradeLevel;
+              const staffCost = isCad ? 600 : 120000;
+              const upgCost = isCad ? 1400 : 300000;
 
               return (
                 <div key={biz.id} className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2.5">
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="text-xs font-black text-white flex items-center gap-1.5">
-                        <span>{isCad ? '🍁' : '🇳🇬'}</span>
+                        <span>{isCad ? '[CA]' : '[NG]'}</span>
                         <span>{biz.name}</span>
                       </div>
                       <div className="text-[10px] text-zinc-400 font-mono">
-                        {biz.category} · Tier {biz.upgradeLevel} · {biz.staffCount} Staff
+                        {biz.typeName} · Tier {biz.level} · {biz.employeesCount} Staff
                       </div>
                     </div>
                     <span className="text-[10px] font-mono text-emerald-400 font-bold">
@@ -331,11 +338,11 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
                     <button
                       type="button"
                       disabled={busyId !== null}
-                      onClick={() => handleManage(biz.id, 'hire_staff')}
+                      onClick={() => handleManage(biz.id, 'hire')}
                       className="py-1.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 text-[10px] font-bold cursor-pointer flex items-center justify-center gap-1"
                     >
                       <Users className="w-3 h-3 text-amber-400" />
-                      <span>Hire Staff ({fmt(staffCost)})</span>
+                      <span>Hire ({fmt(staffCost)})</span>
                     </button>
                     <button
                       type="button"
@@ -376,7 +383,7 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
                     : 'bg-zinc-950 text-zinc-400 border-zinc-800'
                 }`}
               >
-                {c === 'canada' ? '🍁 Canada (CAD $)' : '🇳🇬 Nigeria (NGN ₦)'}
+                {c === 'canada' ? 'Canada (CAD $)' : 'Nigeria (NGN ₦)'}
               </button>
             ))}
           </div>
@@ -385,7 +392,7 @@ export const BusinessApp: React.FC<BusinessAppProps> = ({
             const isCad = countryFilter === 'canada';
             const fmt = (n: number) => (isCad ? formatCAD(n) : formatNaira(n));
             return (
-              <div key={item.name} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
+              <div key={item.typeId} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="text-xs font-black text-white">{item.name}</div>

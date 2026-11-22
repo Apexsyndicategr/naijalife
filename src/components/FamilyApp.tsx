@@ -15,6 +15,7 @@ import {
   GitBranch,
   Activity,
   RefreshCw,
+  LogOut,
 } from 'lucide-react';
 import { UserProfile } from '../types/game';
 import { getAuthBearerHeaders } from '../services/economyService';
@@ -27,6 +28,7 @@ export interface FamilyAppProps {
 
 interface FamilyMember {
   username: string;
+  displayName?: string;
   role: 'Head' | 'Spouse' | 'Child' | 'Parent' | 'Sibling' | 'Member';
   joinedAt: number;
   spouseUsername?: string;
@@ -39,14 +41,14 @@ interface FamilyRecord {
   motto: string;
   headUsername: string;
   members: FamilyMember[];
-  activities: Array<{ id: string; actor: string; summary: string; createdAt: number }>;
+  activitiesLog: Array<{ id: string; actor: string; summary: string; timestamp: number }>;
   events: Array<{
     id: string;
     title: string;
-    dateIso: string;
-    location: string;
+    activityType: 'dinner' | 'road_trip' | 'celebration' | 'house_chore' | 'game_night';
+    scheduledDateTime: string;
     createdBy: string;
-    rsvps: Record<string, 'attending' | 'maybe' | 'declined'>;
+    rsvps: Record<string, 'going' | 'maybe' | 'declined'>;
   }>;
 }
 
@@ -56,8 +58,9 @@ interface FamilyInvitation {
   familyName: string;
   fromUsername: string;
   toUsername: string;
-  type: 'membership' | 'marriage';
+  isMarriageProposal: boolean;
   proposedRole: FamilyMember['role'];
+  message: string;
   status: 'pending' | 'accepted' | 'declined';
   createdAt: number;
 }
@@ -71,7 +74,9 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
   const [tab, setTab] = useState<'overview' | 'tree' | 'events' | 'invites'>('overview');
   const [loading, setLoading] = useState(true);
   const [family, setFamily] = useState<FamilyRecord | null>(null);
-  const [invitations, setInvitations] = useState<FamilyInvitation[]>([]);
+  const [incomingInvites, setIncomingInvites] = useState<FamilyInvitation[]>([]);
+  const [outgoingInvites, setOutgoingInvites] = useState<FamilyInvitation[]>([]);
+  const [citizens, setCitizens] = useState<Array<{ username: string; usernameLower: string; state: string }>>([]);
 
   // Forms
   const [newFamName, setNewFamName] = useState('');
@@ -82,25 +87,27 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
 
   const [eventTitle, setEventTitle] = useState('');
   const [eventDate, setEventDate] = useState('');
-  const [eventLocation, setEventLocation] = useState('Victoria Island Residence');
+  const [eventType, setEventType] = useState<'dinner' | 'road_trip' | 'celebration' | 'house_chore' | 'game_night'>('dinner');
   const [busy, setBusy] = useState(false);
 
   const loadFamily = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/family/state', { headers });
+      const resp = await fetch(`/api/family/state?username=${encodeURIComponent(myUsername)}`, { headers });
       const data = await resp.json();
       if (resp.ok && data.success) {
         setFamily(data.family || null);
-        setInvitations(data.invitations || []);
+        setIncomingInvites(Array.isArray(data.incomingInvites) ? data.incomingInvites : []);
+        setOutgoingInvites(Array.isArray(data.outgoingInvites) ? data.outgoingInvites : []);
+        setCitizens(Array.isArray(data.citizens) ? data.citizens : []);
       }
     } catch {
       // silent retry
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, []);
+  }, [myUsername]);
 
   useEffect(() => {
     loadFamily(false);
@@ -117,7 +124,10 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
       const resp = await fetch('/api/family/create', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ name: newFamName.trim(), motto: newFamMotto.trim() }),
+        body: JSON.stringify({
+          familyName: newFamName.trim(),
+          motto: newFamMotto.trim(),
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -126,8 +136,11 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
         return;
       }
       setFamily(data.family);
+      setNewFamName('');
+      setNewFamMotto('');
       onShowToast?.(`${data.family.name} household established!`);
       triggerSound?.('success');
+      loadFamily(true);
     } finally {
       setBusy(false);
     }
@@ -148,7 +161,7 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
         body: JSON.stringify({
           toUsername: clean,
           proposedRole: inviteType === 'marriage' ? 'Spouse' : inviteRole,
-          type: inviteType,
+          isMarriageProposal: inviteType === 'marriage',
         }),
       });
       const data = await resp.json();
@@ -170,22 +183,22 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
     }
   };
 
-  const handleRespondInvite = async (invitationId: string, action: 'accept' | 'decline') => {
+  const handleRespondInvite = async (inviteId: string, accept: boolean) => {
     setBusy(true);
     try {
       const headers = await getAuthBearerHeaders();
       const resp = await fetch('/api/family/respond', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ invitationId, action }),
+        body: JSON.stringify({ inviteId, accept }),
       });
       const data = await resp.json();
       if (!resp.ok) {
         onShowToast?.(data.error || 'Failed to respond.');
         return;
       }
-      onShowToast?.(action === 'accept' ? 'Joined family!' : 'Invitation declined.');
-      triggerSound?.(action === 'accept' ? 'success' : 'coin');
+      onShowToast?.(accept ? 'Joined family!' : 'Invitation declined.');
+      triggerSound?.(accept ? 'success' : 'coin');
       loadFamily(true);
     } finally {
       setBusy(false);
@@ -211,33 +224,39 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
   };
 
   const handleCreateEvent = async () => {
-    if (!eventTitle.trim()) return;
+    if (!eventTitle.trim()) {
+      onShowToast?.('Enter an event title.');
+      return;
+    }
     setBusy(true);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/family/events', {
+      const resp = await fetch('/api/family/event', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           title: eventTitle.trim(),
-          dateIso: eventDate || new Date(Date.now() + 86400000).toISOString().slice(0, 10),
-          location: eventLocation.trim() || 'Family Compound',
+          activityType: eventType,
+          scheduledDateTime: eventDate || new Date(Date.now() + 86400000).toISOString().slice(0, 10),
         }),
       });
-      if (resp.ok) {
+      const data = await resp.json();
+      if (resp.ok && data.success) {
         setEventTitle('');
         onShowToast?.('Family event scheduled!');
         triggerSound?.('success');
         loadFamily(true);
+      } else {
+        onShowToast?.(data.error || 'Could not schedule event.');
       }
     } finally {
       setBusy(false);
     }
   };
 
-  const handleRsvp = async (eventId: string, status: 'attending' | 'maybe' | 'declined') => {
+  const handleRsvp = async (eventId: string, status: 'going' | 'maybe' | 'declined') => {
     const headers = await getAuthBearerHeaders();
-    const resp = await fetch('/api/family/events/rsvp', {
+    const resp = await fetch('/api/family/rsvp', {
       method: 'POST',
       headers,
       body: JSON.stringify({ eventId, status }),
@@ -245,6 +264,21 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
     if (resp.ok) {
       onShowToast?.(`RSVP updated: ${status}`);
       loadFamily(true);
+    }
+  };
+
+  const handleLeaveFamily = async () => {
+    setBusy(true);
+    try {
+      const headers = await getAuthBearerHeaders();
+      const resp = await fetch('/api/family/leave', { method: 'POST', headers });
+      if (resp.ok) {
+        setFamily(null);
+        onShowToast?.('You left the household.');
+        loadFamily(true);
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -274,13 +308,13 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
             </p>
           </div>
         </div>
-        {invitations.length > 0 && (
+        {incomingInvites.length > 0 && (
           <button
             type="button"
             onClick={() => setTab('invites')}
             className="px-2 py-1 rounded-lg bg-rose-500 text-white text-[10px] font-black cursor-pointer"
           >
-            {invitations.length} Invite{invitations.length > 1 ? 's' : ''}
+            {incomingInvites.length} Invite{incomingInvites.length > 1 ? 's' : ''}
           </button>
         )}
       </div>
@@ -291,7 +325,7 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
           { id: 'overview', label: 'Household' },
           { id: 'tree', label: 'Tree' },
           { id: 'events', label: 'Events' },
-          { id: 'invites', label: `Invites${invitations.length ? ` (${invitations.length})` : ''}` },
+          { id: 'invites', label: `Invites${incomingInvites.length ? ` (${incomingInvites.length})` : ''}` },
         ].map((t) => (
           <button
             key={t.id}
@@ -353,7 +387,7 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                 className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-[10px] text-white"
               >
                 <option value="membership">Family Invite</option>
-                <option value="marriage">💍 Marriage Proposal</option>
+                <option value="marriage">Marriage Proposal</option>
               </select>
             </div>
             <div className="flex gap-1.5">
@@ -386,11 +420,38 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                 Send
               </button>
             </div>
+            {citizens.filter((c) => c.usernameLower !== myUsername).length > 0 && (
+              <div className="flex gap-1 overflow-x-auto pb-0.5 scrollbar-none">
+                {citizens
+                  .filter((c) => c.usernameLower !== myUsername)
+                  .slice(0, 6)
+                  .map((c) => (
+                    <button
+                      key={c.usernameLower}
+                      type="button"
+                      onClick={() => setInviteTarget(c.username)}
+                      className="px-2 py-0.5 rounded-lg bg-zinc-900 border border-zinc-700 text-[9px] text-zinc-300 cursor-pointer shrink-0"
+                    >
+                      @{c.username}
+                    </button>
+                  ))}
+              </div>
+            )}
           </div>
 
           {/* Members list */}
           <div className="space-y-1.5">
-            <span className="text-[10px] font-mono uppercase text-zinc-400 font-bold">Members &amp; Roles</span>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-mono uppercase text-zinc-400 font-bold">Members &amp; Roles</span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={handleLeaveFamily}
+                className="px-2 py-0.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[9px] text-rose-300 flex items-center gap-1 cursor-pointer"
+              >
+                <LogOut className="w-2.5 h-2.5" /> Leave
+              </button>
+            </div>
             {family.members.map((m) => (
               <div key={m.username} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
                 <div>
@@ -398,7 +459,7 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                     <span>@{m.username}</span>
                     {m.role === 'Head' && <Crown className="w-3.5 h-3.5 text-amber-400" />}
                     {m.spouseUsername && (
-                      <span className="text-[9px] text-rose-300 font-mono">💍 @{m.spouseUsername}</span>
+                      <span className="text-[9px] text-rose-300 font-mono">Spouse: @{m.spouseUsername}</span>
                     )}
                   </div>
                   <div className="text-[10px] text-zinc-400">Role: {m.role}</div>
@@ -425,11 +486,11 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
             <span className="text-[10px] font-mono uppercase text-zinc-400 font-bold flex items-center gap-1">
               <Activity className="w-3 h-3 text-rose-400" /> Recent Family Activities
             </span>
-            {family.activities.slice(0, 6).map((act) => (
-              <div key={act.id} className="p-2 rounded-xl bg-zinc-950/70 border border-zinc-800/80 text-[11px] text-zinc-300 flex justify-between">
+            {(family.activitiesLog || []).slice(0, 6).map((act) => (
+              <div key={act.id} className="p-2 rounded-xl bg-zinc-950/70 border border-zinc-800/80 text-[11px] text-zinc-300 flex justify-between gap-2">
                 <span>{act.summary}</span>
-                <span className="text-[9px] text-zinc-500 font-mono">
-                  {new Date(act.createdAt).toLocaleDateString()}
+                <span className="text-[9px] text-zinc-500 font-mono shrink-0">
+                  {new Date(act.timestamp).toLocaleDateString()}
                 </span>
               </div>
             ))}
@@ -460,7 +521,7 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                       <Users className="w-3.5 h-3.5 text-rose-400" />
                       <span>@{m.username}</span>
                       {m.spouseUsername && (
-                        <span className="text-[9px] text-pink-300 font-mono">↔ @{m.spouseUsername}</span>
+                        <span className="text-[9px] text-pink-300 font-mono">&harr; @{m.spouseUsername}</span>
                       )}
                     </div>
                   ))}
@@ -490,13 +551,17 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                 onChange={(e) => setEventDate(e.target.value)}
                 className="bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-[10px] text-white"
               />
-              <input
-                type="text"
-                value={eventLocation}
-                onChange={(e) => setEventLocation(e.target.value)}
-                placeholder="Location"
+              <select
+                value={eventType}
+                onChange={(e) => setEventType(e.target.value as any)}
                 className="bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-[10px] text-white"
-              />
+              >
+                <option value="dinner">Family Dinner</option>
+                <option value="road_trip">Road Trip</option>
+                <option value="celebration">Celebration</option>
+                <option value="game_night">Game Night</option>
+                <option value="house_chore">House Chore</option>
+              </select>
             </div>
             <button
               type="button"
@@ -510,7 +575,7 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
 
           {family.events.map((ev) => {
             const myRsvp = ev.rsvps?.[myUsername];
-            const goingCount = Object.values(ev.rsvps || {}).filter((v) => v === 'attending').length;
+            const goingCount = Object.values(ev.rsvps || {}).filter((v) => v === 'going').length;
             return (
               <div key={ev.id} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
                 <div className="flex items-start justify-between">
@@ -520,12 +585,12 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                       <span>{ev.title}</span>
                     </div>
                     <div className="text-[10px] text-zinc-400 font-mono">
-                      {ev.dateIso} · {ev.location} · {goingCount} attending
+                      {ev.scheduledDateTime} · {ev.activityType.replace('_', ' ')} · {goingCount} going
                     </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5 text-[10px]">
-                  {(['attending', 'maybe', 'declined'] as const).map((status) => (
+                  {(['going', 'maybe', 'declined'] as const).map((status) => (
                     <button
                       key={status}
                       type="button"
@@ -548,16 +613,16 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
 
       {/* TAB: INVITATIONS */}
       {tab === 'invites' && (
-        <div className="space-y-2">
-          {invitations.length === 0 ? (
+        <div className="space-y-2.5">
+          {incomingInvites.length === 0 ? (
             <div className="p-6 text-center text-xs text-zinc-500 rounded-2xl bg-zinc-950 border border-zinc-800">
-              No pending family invitations or marriage proposals.
+              No pending incoming invitations or marriage proposals.
             </div>
           ) : (
-            invitations.map((inv) => (
+            incomingInvites.map((inv) => (
               <div key={inv.id} className="p-3 rounded-2xl bg-zinc-950 border border-rose-500/40 space-y-2">
                 <div className="text-xs font-black text-white">
-                  {inv.type === 'marriage' ? '💍 Marriage Proposal' : '🏠 Family Invitation'} from @{inv.fromUsername}
+                  {inv.isMarriageProposal ? 'Marriage Proposal' : 'Family Invitation'} from @{inv.fromUsername}
                 </div>
                 <div className="text-[11px] text-zinc-300">
                   Household: <strong>{inv.familyName}</strong> · Role: <strong>{inv.proposedRole}</strong>
@@ -566,7 +631,7 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => handleRespondInvite(inv.id, 'accept')}
+                    onClick={() => handleRespondInvite(inv.id, true)}
                     className="flex-1 py-1.5 rounded-xl bg-emerald-500 text-black font-black text-xs cursor-pointer flex items-center justify-center gap-1"
                   >
                     <Check className="w-3.5 h-3.5" /> Accept
@@ -574,7 +639,7 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => handleRespondInvite(inv.id, 'decline')}
+                    onClick={() => handleRespondInvite(inv.id, false)}
                     className="flex-1 py-1.5 rounded-xl bg-zinc-800 text-zinc-300 font-bold text-xs cursor-pointer flex items-center justify-center gap-1"
                   >
                     <X className="w-3.5 h-3.5" /> Decline
@@ -582,6 +647,20 @@ export const FamilyApp: React.FC<FamilyAppProps> = ({
                 </div>
               </div>
             ))
+          )}
+
+          {outgoingInvites.length > 0 && (
+            <div className="space-y-1.5 pt-2">
+              <span className="text-[10px] font-mono uppercase text-zinc-400 font-bold">Sent Invites</span>
+              {outgoingInvites.map((inv) => (
+                <div key={inv.id} className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-300 flex justify-between">
+                  <span>
+                    To @{inv.toUsername} ({inv.proposedRole})
+                  </span>
+                  <span className="text-amber-300 font-mono">Pending</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

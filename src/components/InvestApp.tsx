@@ -22,16 +22,21 @@ interface MarketAsset {
   name: string;
   market: 'NGX' | 'TSX' | 'FX';
   currency: 'NGN' | 'CAD';
-  price: number;
-  changePct: number;
-  history: number[];
+  basePrice: number;
+  currentPrice: number;
+  desc: string;
+  series: Array<{ t: string; price: number }>;
 }
 
 interface Holding {
   symbol: string;
+  currency: 'NGN' | 'CAD';
   quantity: number;
   avgCost: number;
   realizedPnl: number;
+  currentPrice: number;
+  marketValue: number;
+  unrealizedPnl: number;
 }
 
 interface MarketOrder {
@@ -39,11 +44,11 @@ interface MarketOrder {
   symbol: string;
   side: 'buy' | 'sell';
   quantity: number;
-  price: number;
-  total: number;
+  unitPrice: number;
+  totalMajor: number;
   currency: 'NGN' | 'CAD';
-  pnl?: number;
-  createdAt: number;
+  pnlMajor?: number;
+  timestamp: number;
 }
 
 function PriceSparkline({ points, positive }: { points: number[]; positive: boolean }) {
@@ -68,6 +73,12 @@ function PriceSparkline({ points, positive }: { points: number[]; positive: bool
   );
 }
 
+function getChangePct(asset: MarketAsset): number {
+  const first = asset.series?.[0]?.price || asset.basePrice || asset.currentPrice;
+  if (!first) return 0;
+  return Number((((asset.currentPrice - first) / first) * 100).toFixed(2));
+}
+
 export const InvestApp: React.FC<InvestAppProps> = ({
   userProfile,
   onUpdateProfile,
@@ -77,7 +88,7 @@ export const InvestApp: React.FC<InvestAppProps> = ({
   const [tab, setTab] = useState<'markets' | 'portfolio' | 'orders'>('markets');
   const [marketFilter, setMarketFilter] = useState<'ALL' | 'NGX' | 'TSX' | 'FX'>('ALL');
   const [assets, setAssets] = useState<MarketAsset[]>([]);
-  const [holdings, setHoldings] = useState<Record<string, Holding>>({});
+  const [holdings, setHoldings] = useState<Holding[]>([]);
   const [orders, setOrders] = useState<MarketOrder[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('MTNN');
   const [orderSide, setOrderSide] = useState<'buy' | 'sell'>('buy');
@@ -88,12 +99,12 @@ export const InvestApp: React.FC<InvestAppProps> = ({
   const loadMarket = useCallback(async () => {
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/market/state', { headers });
+      const resp = await fetch('/api/invest/snapshot', { headers });
       const data = await resp.json();
       if (resp.ok && data.success) {
-        setAssets(data.assets || []);
-        setHoldings(data.holdings || {});
-        setOrders(data.orders || []);
+        setAssets(Array.isArray(data.quotes) ? data.quotes : []);
+        setHoldings(Array.isArray(data.holdings) ? data.holdings : []);
+        setOrders(Array.isArray(data.orders) ? data.orders : []);
       }
     } finally {
       setLoading(false);
@@ -111,6 +122,12 @@ export const InvestApp: React.FC<InvestAppProps> = ({
     [assets, selectedSymbol]
   );
 
+  const holdingsBySymbol = useMemo(() => {
+    const map: Record<string, Holding> = {};
+    for (const h of holdings) map[h.symbol] = h;
+    return map;
+  }, [holdings]);
+
   const handleOrder = async () => {
     if (!selectedAsset) return;
     if (!Number.isFinite(qtyInput) || qtyInput <= 0) {
@@ -120,13 +137,14 @@ export const InvestApp: React.FC<InvestAppProps> = ({
     setBusy(true);
     try {
       const headers = await getAuthBearerHeaders();
-      const resp = await fetch('/api/market/order', {
+      const resp = await fetch('/api/invest/trade', {
         method: 'POST',
         headers,
         body: JSON.stringify({
           symbol: selectedAsset.symbol,
           side: orderSide,
           quantity: qtyInput,
+          requestId: `inv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         }),
       });
       const data = await resp.json();
@@ -141,25 +159,29 @@ export const InvestApp: React.FC<InvestAppProps> = ({
           ngnKobo: data.account.ngnKobo,
           cadCents: data.account.cadCents,
           bankNaira: data.account.bankNaira,
-          cashNaira: 0,
+          cashNaira: data.account.cashNaira ?? 0,
           bankCAD: data.account.bankCAD,
           receipts: data.account.receipts,
         });
       }
+      if (data.snapshot) {
+        setAssets(data.snapshot.quotes || []);
+        setHoldings(data.snapshot.holdings || []);
+        setOrders(data.snapshot.orders || []);
+      }
       onShowToast?.(
         `${orderSide === 'buy' ? 'Bought' : 'Sold'} ${qtyInput} ${selectedAsset.symbol} @ ${
-          selectedAsset.currency === 'CAD' ? formatCAD(selectedAsset.price) : formatNaira(selectedAsset.price)
+          selectedAsset.currency === 'CAD' ? formatCAD(selectedAsset.currentPrice) : formatNaira(selectedAsset.currentPrice)
         }`
       );
       triggerSound?.('coin');
-      loadMarket();
     } finally {
       setBusy(false);
     }
   };
 
   const filteredAssets = assets.filter((a) => marketFilter === 'ALL' || a.market === marketFilter);
-  const holdingsList = Object.values(holdings).filter((h) => h.quantity > 0 || h.realizedPnl !== 0);
+  const holdingsList = holdings.filter((h) => h.quantity > 0 || h.realizedPnl !== 0);
 
   return (
     <div className="space-y-3">
@@ -209,71 +231,75 @@ export const InvestApp: React.FC<InvestAppProps> = ({
       {!loading && tab === 'markets' && (
         <div className="space-y-3">
           {/* Selected Asset Chart & Order Box */}
-          {selectedAsset && (
-            <div className="p-3.5 rounded-2xl bg-zinc-950 border border-cyan-500/30 space-y-2.5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-xs font-black text-white">
-                    {selectedAsset.symbol} · {selectedAsset.name}
+          {selectedAsset && (() => {
+            const changePct = getChangePct(selectedAsset);
+            const seriesNums = (selectedAsset.series || []).map((pt) => pt.price);
+            return (
+              <div className="p-3.5 rounded-2xl bg-zinc-950 border border-cyan-500/30 space-y-2.5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs font-black text-white">
+                      {selectedAsset.symbol} · {selectedAsset.name}
+                    </div>
+                    <div className="text-[10px] text-zinc-400 font-mono">{selectedAsset.market} ({selectedAsset.currency})</div>
                   </div>
-                  <div className="text-[10px] text-zinc-400 font-mono">{selectedAsset.market} ({selectedAsset.currency})</div>
+                  <div className="text-right">
+                    <div className="text-sm font-mono font-black text-white">
+                      {selectedAsset.currency === 'CAD' ? formatCAD(selectedAsset.currentPrice) : formatNaira(selectedAsset.currentPrice)}
+                    </div>
+                    <div className={`text-[10px] font-mono font-bold flex items-center justify-end ${changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {changePct >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                      {changePct >= 0 ? '+' : ''}
+                      {changePct}%
+                    </div>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-sm font-mono font-black text-white">
-                    {selectedAsset.currency === 'CAD' ? formatCAD(selectedAsset.price) : formatNaira(selectedAsset.price)}
-                  </div>
-                  <div className={`text-[10px] font-mono font-bold flex items-center justify-end ${selectedAsset.changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {selectedAsset.changePct >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                    {selectedAsset.changePct >= 0 ? '+' : ''}
-                    {selectedAsset.changePct}%
-                  </div>
+
+                <PriceSparkline points={seriesNums} positive={changePct >= 0} />
+
+                <div className="grid grid-cols-2 gap-1 bg-zinc-900 p-1 rounded-xl text-[10px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setOrderSide('buy')}
+                    className={`py-1 rounded-lg cursor-pointer ${orderSide === 'buy' ? 'bg-emerald-500 text-black font-black' : 'text-zinc-400'}`}
+                  >
+                    BUY {selectedAsset.symbol}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOrderSide('sell')}
+                    className={`py-1 rounded-lg cursor-pointer ${orderSide === 'sell' ? 'bg-rose-500 text-white font-black' : 'text-zinc-400'}`}
+                  >
+                    SELL ({holdingsBySymbol[selectedAsset.symbol]?.quantity || 0} owned)
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    step="any"
+                    value={qtyInput}
+                    onChange={(e) => setQtyInput(Number(e.target.value))}
+                    className="w-24 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={handleOrder}
+                    className={`flex-1 py-2 rounded-xl font-black text-xs cursor-pointer ${
+                      orderSide === 'buy' ? 'bg-emerald-500 text-black' : 'bg-rose-600 text-white'
+                    }`}
+                  >
+                    {orderSide === 'buy' ? 'Buy' : 'Sell'}{' '}
+                    {selectedAsset.currency === 'CAD'
+                      ? formatCAD(qtyInput * selectedAsset.currentPrice)
+                      : formatNaira(qtyInput * selectedAsset.currentPrice)}
+                  </button>
                 </div>
               </div>
-
-              <PriceSparkline points={selectedAsset.history} positive={selectedAsset.changePct >= 0} />
-
-              <div className="grid grid-cols-2 gap-1 bg-zinc-900 p-1 rounded-xl text-[10px] font-bold">
-                <button
-                  type="button"
-                  onClick={() => setOrderSide('buy')}
-                  className={`py-1 rounded-lg cursor-pointer ${orderSide === 'buy' ? 'bg-emerald-500 text-black font-black' : 'text-zinc-400'}`}
-                >
-                  BUY {selectedAsset.symbol}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOrderSide('sell')}
-                  className={`py-1 rounded-lg cursor-pointer ${orderSide === 'sell' ? 'bg-rose-500 text-white font-black' : 'text-zinc-400'}`}
-                >
-                  SELL ({holdings[selectedAsset.symbol]?.quantity || 0} owned)
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  step="any"
-                  value={qtyInput}
-                  onChange={(e) => setQtyInput(Number(e.target.value))}
-                  className="w-24 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
-                />
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleOrder}
-                  className={`flex-1 py-2 rounded-xl font-black text-xs cursor-pointer ${
-                    orderSide === 'buy' ? 'bg-emerald-500 text-black' : 'bg-rose-600 text-white'
-                  }`}
-                >
-                  {orderSide === 'buy' ? 'Buy' : 'Sell'}{' '}
-                  {selectedAsset.currency === 'CAD'
-                    ? formatCAD(qtyInput * selectedAsset.price)
-                    : formatNaira(qtyInput * selectedAsset.price)}
-                </button>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Exchange Filters */}
           <div className="flex gap-1.5">
@@ -292,33 +318,36 @@ export const InvestApp: React.FC<InvestAppProps> = ({
           </div>
 
           <div className="space-y-1.5">
-            {filteredAssets.map((a) => (
-              <div
-                key={a.symbol}
-                onClick={() => setSelectedSymbol(a.symbol)}
-                className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer ${
-                  selectedAsset?.symbol === a.symbol
-                    ? 'bg-cyan-950/30 border-cyan-400/60'
-                    : 'bg-zinc-950 border-zinc-800 hover:border-zinc-600'
-                }`}
-              >
-                <div>
-                  <div className="text-xs font-black text-white">
-                    {a.symbol} <span className="text-[9px] text-zinc-400 font-mono">({a.market})</span>
+            {filteredAssets.map((a) => {
+              const changePct = getChangePct(a);
+              return (
+                <div
+                  key={a.symbol}
+                  onClick={() => setSelectedSymbol(a.symbol)}
+                  className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer ${
+                    selectedAsset?.symbol === a.symbol
+                      ? 'bg-cyan-950/30 border-cyan-400/60'
+                      : 'bg-zinc-950 border-zinc-800 hover:border-zinc-600'
+                  }`}
+                >
+                  <div>
+                    <div className="text-xs font-black text-white">
+                      {a.symbol} <span className="text-[9px] text-zinc-400 font-mono">({a.market})</span>
+                    </div>
+                    <div className="text-[10px] text-zinc-400">{a.name}</div>
                   </div>
-                  <div className="text-[10px] text-zinc-400">{a.name}</div>
+                  <div className="text-right font-mono">
+                    <div className="text-xs font-bold text-white">
+                      {a.currency === 'CAD' ? formatCAD(a.currentPrice) : formatNaira(a.currentPrice)}
+                    </div>
+                    <div className={`text-[10px] ${changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {changePct >= 0 ? '+' : ''}
+                      {changePct}%
+                    </div>
+                  </div>
                 </div>
-                <div className="text-right font-mono">
-                  <div className="text-xs font-bold text-white">
-                    {a.currency === 'CAD' ? formatCAD(a.price) : formatNaira(a.price)}
-                  </div>
-                  <div className={`text-[10px] ${a.changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {a.changePct >= 0 ? '+' : ''}
-                    {a.changePct}%
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -332,10 +361,7 @@ export const InvestApp: React.FC<InvestAppProps> = ({
             </div>
           ) : (
             holdingsList.map((h) => {
-              const live = assets.find((a) => a.symbol === h.symbol);
-              const curPrice = live?.price || h.avgCost;
-              const unrealized = (curPrice - h.avgCost) * h.quantity;
-              const fmt = (n: number) => (live?.currency === 'CAD' ? formatCAD(n) : formatNaira(n));
+              const fmt = (n: number) => (h.currency === 'CAD' ? formatCAD(n) : formatNaira(n));
               return (
                 <div key={h.symbol} className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
                   <div className="flex justify-between items-center">
@@ -347,7 +373,7 @@ export const InvestApp: React.FC<InvestAppProps> = ({
                       onClick={() => {
                         setSelectedSymbol(h.symbol);
                         setOrderSide('sell');
-                        setQtyInput(h.quantity);
+                        setQtyInput(Math.max(1, h.quantity));
                         setTab('markets');
                       }}
                       className="px-2 py-0.5 rounded-lg bg-rose-600/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold cursor-pointer"
@@ -357,8 +383,8 @@ export const InvestApp: React.FC<InvestAppProps> = ({
                   </div>
                   <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-zinc-400">
                     <span>Avg: {fmt(h.avgCost)}</span>
-                    <span className={unrealized >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                      Unreal: {unrealized >= 0 ? '+' : ''}{fmt(unrealized)}
+                    <span className={h.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                      Unreal: {h.unrealizedPnl >= 0 ? '+' : ''}{fmt(h.unrealizedPnl)}
                     </span>
                     <span className={h.realizedPnl >= 0 ? 'text-emerald-300' : 'text-rose-300'}>
                       Realized: {fmt(h.realizedPnl)}
@@ -386,11 +412,11 @@ export const InvestApp: React.FC<InvestAppProps> = ({
                     {o.side} {o.quantity} {o.symbol}
                   </div>
                   <div className="text-[10px] text-zinc-500 font-mono">
-                    {new Date(o.createdAt).toLocaleString()}
+                    {new Date(o.timestamp).toLocaleString()}
                   </div>
                 </div>
                 <span className="font-mono font-bold text-cyan-300">
-                  {o.currency === 'CAD' ? formatCAD(o.total) : formatNaira(o.total)}
+                  {o.currency === 'CAD' ? formatCAD(o.totalMajor) : formatNaira(o.totalMajor)}
                 </span>
               </div>
             ))
