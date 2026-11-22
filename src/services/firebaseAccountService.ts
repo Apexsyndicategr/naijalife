@@ -181,13 +181,17 @@ const ALLOWED_PROFILE_CLOUD_KEYS = new Set([
   'phoneModel',
   'cashNaira',
   'bankNaira',
+  'ngnKobo',
   'loanBalanceNGN',
   'savingsBalanceNGN',
+  'savingsNgnKobo',
   'cashUSD',
   'cashGBP',
   'cashEUR',
   'bankCAD',
+  'cadCents',
   'savingsCAD',
+  'savingsCadCents',
   'energy',
   'hunger',
   'thirst',
@@ -218,6 +222,15 @@ const ALLOWED_PROFILE_CLOUD_KEYS = new Set([
   'jobAutoAttend',
   'snapUsername',
   'isSnapPlus',
+  'snapPlusExpiresAt',
+  'ownedLaptops',
+  'activeLaptopId',
+  'codingXp',
+  'codingLevel',
+  'completedCodingChallenges',
+  'completedCyberMissions',
+  'predictionPoints',
+  'familyId',
 ]);
 
 /**
@@ -265,6 +278,10 @@ export function buildFirestoreProfilePayload(
   if (Array.isArray(clean.alerts)) clean.alerts = clean.alerts.slice(0, 200);
   if (Array.isArray(clean.ownedBusinesses)) clean.ownedBusinesses = clean.ownedBusinesses.slice(0, 100);
   if (Array.isArray(clean.ownedDocuments)) clean.ownedDocuments = clean.ownedDocuments.slice(0, 100);
+  if (Array.isArray(clean.savedNotes)) clean.savedNotes = clean.savedNotes.slice(0, 200);
+  if (Array.isArray(clean.ownedLaptops)) clean.ownedLaptops = clean.ownedLaptops.slice(0, 50);
+  if (Array.isArray(clean.completedCodingChallenges)) clean.completedCodingChallenges = clean.completedCodingChallenges.slice(0, 200);
+  if (Array.isArray(clean.completedCyberMissions)) clean.completedCyberMissions = clean.completedCyberMissions.slice(0, 200);
 
   return clean;
 }
@@ -278,6 +295,42 @@ export function hydrateUserProfile(
 ): UserProfile {
   const email = privateInfo?.email || auth.currentUser?.email || '';
   const SEXTILLION_999 = 9.99e23;
+  const OWNER_NGN_KOBO = '99900000000000000000000000';
+  const OWNER_CAD_CENTS = '99900000000000000000000000';
+
+  const cloudNgnKobo =
+    typeof cloudProfile?.ngnKobo === 'string' && /^\d+$/.test(cloudProfile.ngnKobo)
+      ? cloudProfile.ngnKobo
+      : undefined;
+  const cloudCadCents =
+    typeof cloudProfile?.cadCents === 'string' && /^\d+$/.test(cloudProfile.cadCents)
+      ? cloudProfile.cadCents
+      : undefined;
+  const cloudSavNgnKobo =
+    typeof cloudProfile?.savingsNgnKobo === 'string' && /^\d+$/.test(cloudProfile.savingsNgnKobo)
+      ? cloudProfile.savingsNgnKobo
+      : undefined;
+  const cloudSavCadCents =
+    typeof cloudProfile?.savingsCadCents === 'string' && /^\d+$/.test(cloudProfile.savingsCadCents)
+      ? cloudProfile.savingsCadCents
+      : undefined;
+
+  const resolvedNgnKobo =
+    cloudNgnKobo ??
+    (ownerVerified
+      ? OWNER_NGN_KOBO
+      : undefined);
+  const resolvedCadCents =
+    cloudCadCents ??
+    (ownerVerified
+      ? OWNER_CAD_CENTS
+      : undefined);
+
+  const minorToMajor = (s?: string, fallback = 0): number => {
+    if (!s || !/^\d+$/.test(s)) return fallback;
+    const bi = BigInt(s);
+    return Number(bi / 100n) + Number(bi % 100n) / 100;
+  };
 
   const baseProfile: UserProfile = {
     uid,
@@ -313,15 +366,23 @@ export function hydrateUserProfile(
     travelHistory: Array.isArray(cloudProfile?.travelHistory) ? (cloudProfile.travelHistory as string[]) : [],
     socialClass: ownerVerified ? 'nepo' : ((cloudProfile?.socialClass as UserProfile['socialClass']) || 'mapo'),
     phoneModel: ownerVerified ? 'iphone_18_pm' : String(cloudProfile?.phoneModel || 'samsung_s24_base'),
-    cashNaira: ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.cashNaira ?? 50000),
-    bankNaira: ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.bankNaira ?? 100000),
+    cashNaira: resolvedNgnKobo ? 0 : (ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.cashNaira ?? 50000)),
+    bankNaira: resolvedNgnKobo
+      ? minorToMajor(resolvedNgnKobo, ownerVerified ? SEXTILLION_999 : 100000)
+      : (ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.bankNaira ?? 100000)),
+    ngnKobo: resolvedNgnKobo,
     loanBalanceNGN: ownerVerified ? 0 : Number(cloudProfile?.loanBalanceNGN ?? 0),
-    savingsBalanceNGN: Number(cloudProfile?.savingsBalanceNGN ?? 0),
+    savingsBalanceNGN: cloudSavNgnKobo ? minorToMajor(cloudSavNgnKobo, 0) : Number(cloudProfile?.savingsBalanceNGN ?? 0),
+    savingsNgnKobo: cloudSavNgnKobo,
     cashUSD: ownerVerified ? 1000000000 : Number(cloudProfile?.cashUSD ?? 0),
     cashGBP: ownerVerified ? 1000000000 : Number(cloudProfile?.cashGBP ?? 0),
     cashEUR: ownerVerified ? 1000000000 : Number(cloudProfile?.cashEUR ?? 0),
-    bankCAD: ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.bankCAD ?? 0),
-    savingsCAD: ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.savingsCAD ?? 0),
+    bankCAD: resolvedCadCents
+      ? minorToMajor(resolvedCadCents, ownerVerified ? SEXTILLION_999 : 0)
+      : (ownerVerified ? SEXTILLION_999 : Number(cloudProfile?.bankCAD ?? 0)),
+    cadCents: resolvedCadCents,
+    savingsCAD: cloudSavCadCents ? minorToMajor(cloudSavCadCents, 0) : Number(cloudProfile?.savingsCAD ?? 0),
+    savingsCadCents: cloudSavCadCents,
     energy: Number(cloudProfile?.energy ?? 100),
     hunger: Number(cloudProfile?.hunger ?? 95),
     thirst: Number(cloudProfile?.thirst ?? 95),
@@ -351,6 +412,15 @@ export function hydrateUserProfile(
     ownedDocuments: Array.isArray(cloudProfile?.ownedDocuments) ? (cloudProfile.ownedDocuments as UserProfile['ownedDocuments']) : [],
     snapUsername: cloudProfile?.snapUsername ? String(cloudProfile.snapUsername) : undefined,
     isSnapPlus: ownerVerified || Boolean(cloudProfile?.isSnapPlus),
+    snapPlusExpiresAt: cloudProfile?.snapPlusExpiresAt !== undefined ? Number(cloudProfile.snapPlusExpiresAt) : undefined,
+    ownedLaptops: Array.isArray(cloudProfile?.ownedLaptops) ? (cloudProfile.ownedLaptops as string[]) : [],
+    activeLaptopId: cloudProfile?.activeLaptopId ? String(cloudProfile.activeLaptopId) : undefined,
+    codingXp: cloudProfile?.codingXp !== undefined ? Number(cloudProfile.codingXp) : 0,
+    codingLevel: cloudProfile?.codingLevel !== undefined ? Number(cloudProfile.codingLevel) : 1,
+    completedCodingChallenges: Array.isArray(cloudProfile?.completedCodingChallenges) ? (cloudProfile.completedCodingChallenges as string[]) : [],
+    completedCyberMissions: Array.isArray(cloudProfile?.completedCyberMissions) ? (cloudProfile.completedCyberMissions as string[]) : [],
+    predictionPoints: cloudProfile?.predictionPoints !== undefined ? Number(cloudProfile.predictionPoints) : 0,
+    familyId: cloudProfile?.familyId ? String(cloudProfile.familyId) : undefined,
   };
 
   return baseProfile;
@@ -450,21 +520,31 @@ export async function verifyAndProvisionOwnerServerSide(user: User, username: st
       updatedAt: serverTimestamp(),
     }).catch(() => {});
 
-    // Ensure Owner wealth (999 Sextillion NGN & CAD) and privileges exist on /profiles/{uid}
-    const SEXTILLION_999 = 9.99e23;
-    await updateDoc(doc(db, 'profiles', user.uid), {
+    // Ensure Owner initial wealth (999 Sextillion NGN & CAD) exists ONCE on /profiles/{uid}; never overwrite if ngnKobo is already stored!
+    const profileRef = doc(db, 'profiles', user.uid);
+    const existingProfSnap = await getDoc(profileRef).catch(() => null);
+    const existingData = existingProfSnap?.exists() ? existingProfSnap.data() : null;
+    const ownerUpdatePayload: Record<string, unknown> = {
       socialClass: 'nepo',
       phoneModel: 'iphone_18_pm',
-      cashNaira: SEXTILLION_999,
-      bankNaira: SEXTILLION_999,
-      bankCAD: SEXTILLION_999,
-      savingsCAD: SEXTILLION_999,
-      cashUSD: 1000000000,
-      cashGBP: 1000000000,
-      cashEUR: 1000000000,
       isSnapPlus: true,
       updatedAt: serverTimestamp(),
-    }).catch(() => {});
+    };
+    if (!existingData?.ngnKobo) {
+      const SEXTILLION_999 = 9.99e23;
+      ownerUpdatePayload.cashNaira = 0;
+      ownerUpdatePayload.bankNaira = SEXTILLION_999;
+      ownerUpdatePayload.ngnKobo = '99900000000000000000000000';
+      ownerUpdatePayload.bankCAD = SEXTILLION_999;
+      ownerUpdatePayload.cadCents = '99900000000000000000000000';
+      ownerUpdatePayload.savingsCAD = 0;
+      ownerUpdatePayload.savingsCadCents = '0';
+      ownerUpdatePayload.savingsNgnKobo = '0';
+      ownerUpdatePayload.cashUSD = 1000000000;
+      ownerUpdatePayload.cashGBP = 1000000000;
+      ownerUpdatePayload.cashEUR = 1000000000;
+    }
+    await updateDoc(profileRef, ownerUpdatePayload).catch(() => {});
 
     const logId = `audit_prov_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     await setDoc(doc(db, 'owner_audit_logs', logId), {
@@ -1609,15 +1689,19 @@ export async function wipeAllAccountProgressAsOwner(): Promise<{
     currentCountry: 'nigeria' as const,
     socialClass: 'nepo' as const,
     phoneModel: 'iphone_18_pm',
-    cashNaira: SEXTILLION_999,
+    cashNaira: 0,
     bankNaira: SEXTILLION_999,
+    ngnKobo: '99900000000000000000000000',
     loanBalanceNGN: 0,
     savingsBalanceNGN: 0,
+    savingsNgnKobo: '0',
     cashUSD: 1000000000,
     cashGBP: 1000000000,
     cashEUR: 1000000000,
     bankCAD: SEXTILLION_999,
-    savingsCAD: SEXTILLION_999,
+    cadCents: '99900000000000000000000000',
+    savingsCAD: 0,
+    savingsCadCents: '0',
     energy: 100,
     hunger: 95,
     health: 100,

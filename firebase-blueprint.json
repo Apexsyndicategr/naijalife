@@ -199,6 +199,10 @@
           "minLength": 2,
           "maxLength": 32
         },
+        "currentCountry": {
+          "type": "string",
+          "maxLength": 32
+        },
         "walletAccountNumber": {
           "type": "string",
           "maxLength": 24
@@ -219,11 +223,50 @@
         "bankNaira": {
           "type": "number"
         },
+        "ngnKobo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9]+$"
+        },
+        "loanBalanceNGN": {
+          "type": "number"
+        },
+        "savingsBalanceNGN": {
+          "type": "number"
+        },
+        "savingsNgnKobo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9]+$"
+        },
         "cashUSD": {
+          "type": "number"
+        },
+        "cashGBP": {
+          "type": "number"
+        },
+        "cashEUR": {
           "type": "number"
         },
         "bankCAD": {
           "type": "number"
+        },
+        "cadCents": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9]+$"
+        },
+        "savingsCAD": {
+          "type": "number"
+        },
+        "savingsCadCents": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9]+$"
         },
         "energy": {
           "type": "number"
@@ -238,6 +281,9 @@
           "type": "number"
         },
         "happiness": {
+          "type": "number"
+        },
+        "fatherRentSubsidyPct": {
           "type": "number"
         },
         "avatar": {
@@ -263,6 +309,88 @@
         },
         "furnitureBought": {
           "type": "array"
+        },
+        "receipts": {
+          "type": "array"
+        },
+        "alerts": {
+          "type": "array"
+        },
+        "ownedBusinesses": {
+          "type": "array"
+        },
+        "ownedDocuments": {
+          "type": "array"
+        },
+        "phoneWallpaper": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "savedNotes": {
+          "type": "array"
+        },
+        "academyProgress": {
+          "type": "object"
+        },
+        "activeJobId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "jobTitle": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "jobLevel": {
+          "type": "number"
+        },
+        "jobRank": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "jobShiftsWorked": {
+          "type": "number"
+        },
+        "jobWeeklySalaryNGN": {
+          "type": "number"
+        },
+        "jobAutoAttend": {
+          "type": "boolean"
+        },
+        "snapUsername": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "isSnapPlus": {
+          "type": "boolean"
+        },
+        "snapPlusExpiresAt": {
+          "type": "number"
+        },
+        "ownedLaptops": {
+          "type": "array"
+        },
+        "activeLaptopId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "codingXp": {
+          "type": "number"
+        },
+        "codingLevel": {
+          "type": "number"
+        },
+        "completedCodingChallenges": {
+          "type": "array"
+        },
+        "completedCyberMissions": {
+          "type": "array"
+        },
+        "predictionPoints": {
+          "type": "number"
+        },
+        "familyId": {
+          "type": "string",
+          "maxLength": 64
         },
         "createdAt": {
           "type": "string",

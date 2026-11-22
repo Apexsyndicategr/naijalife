@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
@@ -6,6 +7,35 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import {
+  CANADA_VISA_FEE_NGN,
+  EconomyEngine,
+  ServerEconomyAccount,
+  ensureAccountMinorUnits,
+  syncNumericMirrors,
+} from './src/server/economyEngine.ts';
+import { SnapchatEngine } from './src/server/snapchatEngine.ts';
+import { FamilyEngine } from './src/server/familyEngine.ts';
+import {
+  CANADA_PROVINCES_TERRITORIES_GOV,
+  CivicAndMarketEngine,
+  NIGERIA_STATES_GOV,
+} from './src/server/civicAndMarketEngine.ts';
+import {
+  INSURANCE_PLANS,
+  LAPTOP_CATALOG,
+  LifestyleEngine,
+  PET_CATALOG,
+  RIDE_COMPANIES,
+} from './src/server/lifestyleEngine.ts';
+import { realtimeHub } from './src/server/realtimeHub.ts';
+import { getWatClock } from './src/server/watTime.ts';
+import {
+  OWNER_INITIAL_CAD_CENTS,
+  OWNER_INITIAL_NGN_KOBO,
+  majorToMinor,
+  minorToMajorNumber,
+} from './src/utils/bigMoney.ts';
 
 dotenv.config();
 
@@ -858,121 +888,24 @@ app.post('/api/nepa/toggle', async (req, res) => {
 });
 
 // =========================================================================
-// 7. AUTHORITATIVE SERVER ECONOMY, UNIQUE ACCOUNT IDS, TRANSFERS & IMMIGRATION
+// 7. AUTHORITATIVE SERVER ECONOMY, BIGINT MINOR UNITS, TRANSFERS & IMMIGRATION
 // =========================================================================
-const ECONOMY_FILE = path.resolve(DB_DIR, 'economy_state.json');
-const CAD_TO_NGN_RATE = 960.54;
-const NGN_TO_CAD_SPREAD = 0.992;
-const CANADA_VISA_FEE_NGN = 2500000;
-const SEXTILLION_999_SERVER = 9.99e23;
+const economyEngine = new EconomyEngine(DB_DIR);
+const snapchatEngine = new SnapchatEngine(DB_DIR);
+const familyEngine = new FamilyEngine(DB_DIR);
+const civicMarketEngine = new CivicAndMarketEngine(DB_DIR);
+const lifestyleEngine = new LifestyleEngine(DB_DIR);
 
-interface ServerEconomyAccount {
-  uid: string;
-  username: string;
-  usernameLower: string;
-  walletAccountNumber: string;
-  isOwner: boolean;
-  bankNaira: number;
-  cashNaira: number;
-  bankCAD: number;
-  savingsBalanceNGN: number;
-  savingsCAD: number;
-  loanBalanceNGN: number;
-  spawnStateId: string;
-  lastLocationStateId: string;
-  currentCountry: string;
-  migratedToNigeriaOriginalStateV1: boolean;
-  immigrationStatus: string;
-  ownedClothing: string[];
-  ownedHairstyles: string[];
-  furnitureBought: string[];
-  ownedDocuments: any[];
-  receipts: any[];
-  alerts: any[];
-  lastBusinessCollectByDate: Record<string, string>;
-  updatedAt: string;
-}
-
-interface EconomyStore {
-  accountsByUid: Record<string, ServerEconomyAccount>;
-  uidByUsername: Record<string, string>;
-  uidByAccountNumber: Record<string, string>;
-  processedRequestIds: Record<string, { createdAt: number; response: any }>;
-}
-
-function loadEconomyStore(): EconomyStore {
+// Periodic authoritative Nigeria WAT (Africa/Lagos) scheduler for 8:00 PM Predictions & 8:30 PM Empire Biz
+setInterval(() => {
   try {
-    if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
-    if (fs.existsSync(ECONOMY_FILE)) {
-      const parsed = JSON.parse(fs.readFileSync(ECONOMY_FILE, 'utf-8'));
-      return {
-        accountsByUid: parsed.accountsByUid || {},
-        uidByUsername: parsed.uidByUsername || {},
-        uidByAccountNumber: parsed.uidByAccountNumber || {},
-        processedRequestIds: parsed.processedRequestIds || {},
-      };
-    }
+    civicMarketEngine.ensureFixturesForToday();
+    civicMarketEngine.settlePredictionsAt800Wat(Date.now(), economyEngine);
+    economyEngine.settleAllBusinessesAt830Wat(Date.now());
   } catch (err) {
-    console.error('Error loading economy store:', err);
+    console.error('WAT scheduler tick error:', err);
   }
-  return {
-    accountsByUid: {},
-    uidByUsername: {},
-    uidByAccountNumber: {},
-    processedRequestIds: {},
-  };
-}
-
-let economyStore: EconomyStore = loadEconomyStore();
-
-function saveEconomyStore(): void {
-  try {
-    if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
-    // Trim idempotency cache if above 2500 entries
-    const reqKeys = Object.keys(economyStore.processedRequestIds);
-    if (reqKeys.length > 2500) {
-      reqKeys.sort(
-        (a, b) =>
-          (economyStore.processedRequestIds[a]?.createdAt || 0) -
-          (economyStore.processedRequestIds[b]?.createdAt || 0)
-      );
-      for (const k of reqKeys.slice(0, reqKeys.length - 1500)) {
-        delete economyStore.processedRequestIds[k];
-      }
-    }
-    const tmpFile = `${ECONOMY_FILE}.tmp`;
-    fs.writeFileSync(tmpFile, JSON.stringify(economyStore, null, 2), 'utf-8');
-    fs.renameSync(tmpFile, ECONOMY_FILE);
-  } catch (err) {
-    console.error('Error saving economy store:', err);
-  }
-}
-
-function generateServerAccountNumber(seed: string, existingMap: Record<string, string>): string {
-  let hash = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  let attempt = 0;
-  while (attempt < 50) {
-    const val = (Math.abs(hash + attempt * 7919) % 90000000) + 10000000;
-    const candidate = `30${val}`;
-    if (!existingMap[candidate]) return candidate;
-    attempt++;
-  }
-  return `30${Math.floor(10000000 + Math.random() * 89999999)}`;
-}
-
-function normalizeOwnerBalances(acc: ServerEconomyAccount): void {
-  if (acc.isOwner) {
-    acc.cashNaira = SEXTILLION_999_SERVER;
-    acc.bankNaira = SEXTILLION_999_SERVER;
-    acc.bankCAD = SEXTILLION_999_SERVER;
-    acc.savingsCAD = SEXTILLION_999_SERVER;
-    acc.loanBalanceNGN = 0;
-  }
-}
+}, 30 * 1000);
 
 function mirrorAccountToCitizensDB(acc: ServerEconomyAccount): void {
   if (!acc.usernameLower) return;
@@ -983,6 +916,10 @@ function mirrorAccountToCitizensDB(acc: ServerEconomyAccount): void {
       uid: acc.uid,
       username: acc.username,
       walletAccountNumber: acc.walletAccountNumber,
+      ngnKobo: acc.ngnKobo,
+      cadCents: acc.cadCents,
+      savingsNgnKobo: acc.savingsNgnKobo,
+      savingsCadCents: acc.savingsCadCents,
       cashNaira: acc.cashNaira,
       bankNaira: acc.bankNaira,
       bankCAD: acc.bankCAD,
@@ -995,6 +932,12 @@ function mirrorAccountToCitizensDB(acc: ServerEconomyAccount): void {
       migratedToNigeriaOriginalStateV1: acc.migratedToNigeriaOriginalStateV1,
       immigrationStatus: acc.immigrationStatus,
       ownedDocuments: acc.ownedDocuments,
+      ownedLaptops: acc.ownedLaptops,
+      activeLaptopId: acc.activeLaptopId,
+      codingXp: acc.codingXp,
+      codingLevel: acc.codingLevel,
+      snapPlusExpiresAt: acc.snapPlusExpiresAt,
+      predictionPoints: acc.predictionPoints,
       receipts: acc.receipts.slice(0, 200),
       alerts: acc.alerts.slice(0, 100),
     },
@@ -1017,24 +960,52 @@ app.post('/api/economy/sync-account', async (req, res) => {
     email === OWNER_EMAIL &&
     (userDoc?.usernameLower === OWNER_USERNAME || usernameLower === OWNER_USERNAME);
 
-  let acc = economyStore.accountsByUid[uid];
+  let acc = economyEngine.store.accountsByUid[uid];
   if (!acc) {
     const legacyCitizen = citizensDB[usernameLower]?.profile;
     const acctNum =
       String(clientProfile.walletAccountNumber || legacyCitizen?.walletAccountNumber || '').trim() ||
-      generateServerAccountNumber(uid, economyStore.uidByAccountNumber);
+      economyEngine.generateAccountNumber(uid);
     const spawnState = String(clientProfile.spawnStateId || legacyCitizen?.spawnStateId || 'lagos');
+
+    const initialNgnKobo = isOwner
+      ? typeof clientProfile.ngnKobo === 'string' && /^\d+$/.test(clientProfile.ngnKobo)
+        ? clientProfile.ngnKobo
+        : OWNER_INITIAL_NGN_KOBO
+      : typeof clientProfile.ngnKobo === 'string' && /^\d+$/.test(clientProfile.ngnKobo)
+      ? clientProfile.ngnKobo
+      : typeof legacyCitizen?.ngnKobo === 'string' && /^\d+$/.test(legacyCitizen.ngnKobo)
+      ? legacyCitizen.ngnKobo
+      : (
+          majorToMinor(legacyCitizen?.bankNaira ?? clientProfile.bankNaira ?? 100000) +
+          majorToMinor(legacyCitizen?.cashNaira ?? clientProfile.cashNaira ?? 50000)
+        ).toString();
+
+    const initialCadCents = isOwner
+      ? typeof clientProfile.cadCents === 'string' && /^\d+$/.test(clientProfile.cadCents)
+        ? clientProfile.cadCents
+        : OWNER_INITIAL_CAD_CENTS
+      : typeof clientProfile.cadCents === 'string' && /^\d+$/.test(clientProfile.cadCents)
+      ? clientProfile.cadCents
+      : typeof legacyCitizen?.cadCents === 'string' && /^\d+$/.test(legacyCitizen.cadCents)
+      ? legacyCitizen.cadCents
+      : majorToMinor(legacyCitizen?.bankCAD ?? clientProfile.bankCAD ?? 0).toString();
+
     acc = {
       uid,
       username: usernameRaw,
       usernameLower,
       walletAccountNumber: acctNum,
       isOwner,
-      bankNaira: Number(legacyCitizen?.bankNaira ?? clientProfile.bankNaira ?? 100000),
-      cashNaira: Number(legacyCitizen?.cashNaira ?? clientProfile.cashNaira ?? 50000),
-      bankCAD: Number(legacyCitizen?.bankCAD ?? clientProfile.bankCAD ?? 0),
-      savingsBalanceNGN: Number(legacyCitizen?.savingsBalanceNGN ?? clientProfile.savingsBalanceNGN ?? 0),
-      savingsCAD: Number(legacyCitizen?.savingsCAD ?? clientProfile.savingsCAD ?? 0),
+      ngnKobo: initialNgnKobo,
+      cadCents: initialCadCents,
+      savingsNgnKobo: majorToMinor(legacyCitizen?.savingsBalanceNGN ?? clientProfile.savingsBalanceNGN ?? 0).toString(),
+      savingsCadCents: majorToMinor(legacyCitizen?.savingsCAD ?? clientProfile.savingsCAD ?? 0).toString(),
+      bankNaira: 0,
+      cashNaira: 0,
+      bankCAD: 0,
+      savingsBalanceNGN: 0,
+      savingsCAD: 0,
       loanBalanceNGN: Number(legacyCitizen?.loanBalanceNGN ?? clientProfile.loanBalanceNGN ?? 0),
       spawnStateId: spawnState,
       lastLocationStateId: String(clientProfile.lastLocationStateId || legacyCitizen?.lastLocationStateId || spawnState),
@@ -1045,9 +1016,18 @@ app.post('/api/economy/sync-account', async (req, res) => {
       ownedHairstyles: Array.isArray(clientProfile.ownedHairstyles) ? clientProfile.ownedHairstyles : [],
       furnitureBought: Array.isArray(clientProfile.furnitureBought) ? clientProfile.furnitureBought : [],
       ownedDocuments: Array.isArray(clientProfile.ownedDocuments) ? clientProfile.ownedDocuments : [],
+      ownedLaptops: Array.isArray(clientProfile.ownedLaptops) ? clientProfile.ownedLaptops : [],
+      activeLaptopId: String(clientProfile.activeLaptopId || ''),
+      codingXp: Number(clientProfile.codingXp || 0),
+      codingLevel: Number(clientProfile.codingLevel || 1),
+      completedCodingChallenges: Array.isArray(clientProfile.completedCodingChallenges) ? clientProfile.completedCodingChallenges : [],
+      completedCyberMissions: Array.isArray(clientProfile.completedCyberMissions) ? clientProfile.completedCyberMissions : [],
+      businesses: [],
       receipts: Array.isArray(clientProfile.receipts) ? clientProfile.receipts.slice(0, 200) : [],
       alerts: Array.isArray(clientProfile.alerts) ? clientProfile.alerts.slice(0, 100) : [],
       lastBusinessCollectByDate: {},
+      snapPlusExpiresAt: Number(clientProfile.snapPlusExpiresAt || 0),
+      predictionPoints: Number(clientProfile.predictionPoints || 0),
       updatedAt: new Date().toISOString(),
     };
   } else {
@@ -1056,7 +1036,6 @@ app.post('/api/economy/sync-account', async (req, res) => {
       acc.username = usernameRaw;
       acc.usernameLower = usernameLower;
     }
-    // Reconcile any newly minted local starter grants or documents if server had zero
     if (Array.isArray(clientProfile.ownedClothing) && clientProfile.ownedClothing.length > acc.ownedClothing.length) {
       acc.ownedClothing = Array.from(new Set([...acc.ownedClothing, ...clientProfile.ownedClothing]));
     }
@@ -1072,9 +1051,6 @@ app.post('/api/economy/sync-account', async (req, res) => {
     }
   }
 
-  // One-Time Existing-Player Restoration Migration:
-  // If user was placed abroad (uk, usa, germany, uae, ghana, canada) before this update and hasn't migrated yet,
-  // return them cleanly to Nigeria in their original spawnStateId while keeping ALL money, houses, inventory, businesses & docs.
   let restoredToNigeria = false;
   if (!acc.migratedToNigeriaOriginalStateV1) {
     const loc = String(acc.lastLocationStateId || '').toLowerCase();
@@ -1088,156 +1064,108 @@ app.post('/api/economy/sync-account', async (req, res) => {
     acc.migratedToNigeriaOriginalStateV1 = true;
   }
 
-  normalizeOwnerBalances(acc);
+  ensureAccountMinorUnits(acc, isOwner);
+  economyEngine.store.accountsByUid[uid] = acc;
+  economyEngine.store.uidByUsername[acc.usernameLower] = uid;
+  economyEngine.store.uidByAccountNumber[acc.walletAccountNumber] = uid;
+
+  // Settle any overdue 8:30 PM WAT business dividends on offline return
+  const watBizSettlements = economyEngine.settleAllBusinessesAt830Wat(Date.now()).find((r) => r.uid === uid)?.settlements || [];
+  syncNumericMirrors(acc);
   acc.updatedAt = new Date().toISOString();
 
-  economyStore.accountsByUid[uid] = acc;
-  economyStore.uidByUsername[acc.usernameLower] = uid;
-  economyStore.uidByAccountNumber[acc.walletAccountNumber] = uid;
   mirrorAccountToCitizensDB(acc);
-  saveEconomyStore();
+  economyEngine.save();
   saveCitizensDB(citizensDB);
+  snapchatEngine.ensureAccount(acc.usernameLower, clientProfile.citizenName || acc.username, isOwner);
 
   return res.json({
     success: true,
     restoredToNigeria,
+    watBizSettlements,
     account: acc,
   });
 });
 
-// Authentic Server-Authoritative Citizen-to-Citizen Transfers (supports @username OR 10-digit Account ID)
 app.post('/api/bank/transfer', async (req, res) => {
   const tokenRes = await verifyFirebaseIdToken(req);
-  const {
-    requestId,
-    senderUsername,
-    recipientIdentifier,
-    recipientUsername,
-    amount,
-    currency = 'NGN',
-    note = 'Naija Pay Transfer',
-  } = req.body || {};
-
-  const reqKey = requestId ? String(requestId).trim() : '';
-  if (reqKey && economyStore.processedRequestIds[reqKey]) {
-    return res.json({
-      ...economyStore.processedRequestIds[reqKey].response,
-      duplicate: true,
-    });
+  if (!tokenRes.ok || !tokenRes.user) {
+    return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
   }
+  const { requestId, recipientIdentifier, recipientUsername, amount, currency = 'NGN', note = 'Naija Pay Transfer' } = req.body || {};
 
   const targetInput = String(recipientIdentifier || recipientUsername || '').replace(/^@/, '').trim();
-  const numAmount = Math.round(Number(amount));
-  if (!targetInput || !Number.isFinite(numAmount) || numAmount <= 0) {
+  const amountMinor = majorToMinor(amount);
+  if (!targetInput || amountMinor <= 0n) {
     return res.status(400).json({ error: 'Valid recipient (@username or Account ID) and positive amount are required.' });
   }
 
-  let senderAcc: ServerEconomyAccount | undefined;
-  if (tokenRes.ok && tokenRes.user) {
-    senderAcc = economyStore.accountsByUid[tokenRes.user.uid];
-  }
-  if (!senderAcc && senderUsername) {
-    const cleanSender = String(senderUsername).toLowerCase().replace(/^@/, '').trim();
-    const mappedUid = economyStore.uidByUsername[cleanSender];
-    if (mappedUid) senderAcc = economyStore.accountsByUid[mappedUid];
-  }
-
+  const senderAcc = economyEngine.store.accountsByUid[tokenRes.user.uid];
   if (!senderAcc) {
     return res.status(401).json({ error: 'Authenticated sender account not initialized yet. Please retry.' });
   }
-  if (tokenRes.ok && tokenRes.user && senderAcc.uid !== tokenRes.user.uid) {
-    return res.status(403).json({ error: 'Sender identity mismatch.' });
-  }
 
+  let recipientAcc = economyEngine.resolveAccount(targetInput);
   const targetLower = targetInput.toLowerCase();
-  const targetUid =
-    economyStore.uidByAccountNumber[targetInput] ||
-    economyStore.uidByUsername[targetLower];
 
-  let recipientAcc = targetUid ? economyStore.accountsByUid[targetUid] : undefined;
-
-  // Fallback: check legacy citizensDB or Firestore username index to hydrate recipient record
-  if (!recipientAcc) {
-    const legacyRec = citizensDB[targetLower];
-    if (legacyRec?.profile) {
-      const recUid = String(legacyRec.profile.uid || `legacy_${targetLower}`);
-      const acctNum =
-        String(legacyRec.profile.walletAccountNumber || '') ||
-        generateServerAccountNumber(recUid, economyStore.uidByAccountNumber);
-      recipientAcc = {
-        uid: recUid,
-        username: String(legacyRec.profile.username || targetLower),
-        usernameLower: targetLower,
-        walletAccountNumber: acctNum,
-        isOwner: false,
-        bankNaira: Number(legacyRec.profile.bankNaira ?? 100000),
-        cashNaira: Number(legacyRec.profile.cashNaira ?? 0),
-        bankCAD: Number(legacyRec.profile.bankCAD ?? 0),
-        savingsBalanceNGN: Number(legacyRec.profile.savingsBalanceNGN ?? 0),
-        savingsCAD: Number(legacyRec.profile.savingsCAD ?? 0),
-        loanBalanceNGN: Number(legacyRec.profile.loanBalanceNGN ?? 0),
-        spawnStateId: String(legacyRec.profile.spawnStateId || 'lagos'),
-        lastLocationStateId: String(legacyRec.profile.lastLocationStateId || 'lagos'),
-        currentCountry: String(legacyRec.profile.currentCountry || 'nigeria'),
-        migratedToNigeriaOriginalStateV1: true,
-        immigrationStatus: 'NIGERIA_RESIDENT',
-        ownedClothing: [],
-        ownedHairstyles: [],
-        furnitureBought: [],
-        ownedDocuments: [],
-        receipts: Array.isArray(legacyRec.profile.receipts) ? legacyRec.profile.receipts : [],
-        alerts: Array.isArray(legacyRec.profile.alerts) ? legacyRec.profile.alerts : [],
-        lastBusinessCollectByDate: {},
-        updatedAt: new Date().toISOString(),
-      };
-      economyStore.accountsByUid[recUid] = recipientAcc;
-      economyStore.uidByUsername[targetLower] = recUid;
-      economyStore.uidByAccountNumber[acctNum] = recUid;
-    } else if (FIREBASE_CONFIG.projectId) {
-      try {
-        const dbId = encodeURIComponent(FIREBASE_CONFIG.firestoreDatabaseId || '(default)');
-        const uResp = await fetch(
-          `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/${dbId}/documents/usernames/${encodeURIComponent(targetLower)}`
-        );
-        if (uResp.ok) {
-          const uJson = (await uResp.json()) as { fields?: { uid?: { stringValue?: string }; username?: { stringValue?: string } } };
-          const fUid = uJson.fields?.uid?.stringValue;
-          const fUsername = uJson.fields?.username?.stringValue || targetInput;
-          if (fUid) {
-            const acctNum = generateServerAccountNumber(fUid, economyStore.uidByAccountNumber);
-            recipientAcc = {
-              uid: fUid,
-              username: fUsername,
-              usernameLower: targetLower,
-              walletAccountNumber: acctNum,
-              isOwner: false,
-              bankNaira: 100000,
-              cashNaira: 50000,
-              bankCAD: 0,
-              savingsBalanceNGN: 0,
-              savingsCAD: 0,
-              loanBalanceNGN: 0,
-              spawnStateId: 'lagos',
-              lastLocationStateId: 'lagos',
-              currentCountry: 'nigeria',
-              migratedToNigeriaOriginalStateV1: true,
-              immigrationStatus: 'NIGERIA_RESIDENT',
-              ownedClothing: [],
-              ownedHairstyles: [],
-              furnitureBought: [],
-              ownedDocuments: [],
-              receipts: [],
-              alerts: [],
-              lastBusinessCollectByDate: {},
-              updatedAt: new Date().toISOString(),
-            };
-            economyStore.accountsByUid[fUid] = recipientAcc;
-            economyStore.uidByUsername[targetLower] = fUid;
-            economyStore.uidByAccountNumber[acctNum] = fUid;
-          }
+  if (!recipientAcc && FIREBASE_CONFIG.projectId) {
+    try {
+      const dbId = encodeURIComponent(FIREBASE_CONFIG.firestoreDatabaseId || '(default)');
+      const uResp = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/${dbId}/documents/usernames/${encodeURIComponent(targetLower)}`
+      );
+      if (uResp.ok) {
+        const uJson = (await uResp.json()) as { fields?: { uid?: { stringValue?: string }; username?: { stringValue?: string } } };
+        const fUid = uJson.fields?.uid?.stringValue;
+        const fUsername = uJson.fields?.username?.stringValue || targetInput;
+        if (fUid) {
+          const isRecOwner = fUsername.toLowerCase() === OWNER_USERNAME;
+          const acctNum = economyEngine.generateAccountNumber(fUid);
+          recipientAcc = {
+            uid: fUid,
+            username: fUsername,
+            usernameLower: targetLower,
+            walletAccountNumber: acctNum,
+            isOwner: isRecOwner,
+            ngnKobo: isRecOwner ? OWNER_INITIAL_NGN_KOBO : majorToMinor(150000).toString(),
+            cadCents: isRecOwner ? OWNER_INITIAL_CAD_CENTS : '0',
+            savingsNgnKobo: '0',
+            savingsCadCents: '0',
+            bankNaira: isRecOwner ? 9.99e23 : 150000,
+            cashNaira: 0,
+            bankCAD: isRecOwner ? 9.99e23 : 0,
+            savingsBalanceNGN: 0,
+            savingsCAD: 0,
+            loanBalanceNGN: 0,
+            spawnStateId: 'lagos',
+            lastLocationStateId: 'lagos',
+            currentCountry: 'nigeria',
+            migratedToNigeriaOriginalStateV1: true,
+            immigrationStatus: 'NIGERIA_RESIDENT',
+            ownedClothing: [],
+            ownedHairstyles: [],
+            furnitureBought: [],
+            ownedDocuments: [],
+            ownedLaptops: [],
+            activeLaptopId: '',
+            codingXp: 0,
+            codingLevel: 1,
+            completedCodingChallenges: [],
+            completedCyberMissions: [],
+            businesses: [],
+            receipts: [],
+            alerts: [],
+            lastBusinessCollectByDate: {},
+            predictionPoints: 0,
+            updatedAt: new Date().toISOString(),
+          };
+          ensureAccountMinorUnits(recipientAcc, isRecOwner);
+          economyEngine.store.accountsByUid[fUid] = recipientAcc;
+          economyEngine.store.uidByUsername[targetLower] = fUid;
+          economyEngine.store.uidByAccountNumber[acctNum] = fUid;
         }
-      } catch {}
-    }
+      }
+    } catch {}
   }
 
   if (!recipientAcc) {
@@ -1246,90 +1174,24 @@ app.post('/api/bank/transfer', async (req, res) => {
     });
   }
 
-  if (recipientAcc.uid === senderAcc.uid) {
-    return res.status(400).json({ error: 'Cannot transfer funds to your own account.' });
+  const txResult = economyEngine.atomicTransfer({
+    senderUid: senderAcc.uid,
+    recipientUid: recipientAcc.uid,
+    currency: currency === 'CAD' ? 'CAD' : 'NGN',
+    amountMinor,
+    note,
+    requestId,
+  });
+
+  if (!txResult.success) {
+    return res.status(txResult.status || 400).json({ error: txResult.error });
   }
-
-  const transferCurrency = currency === 'CAD' ? 'CAD' : 'NGN';
-  if (transferCurrency === 'CAD') {
-    if (!senderAcc.isOwner && senderAcc.bankCAD < numAmount) {
-      return res.status(400).json({ error: `Insufficient CAD balance ($${senderAcc.bankCAD.toLocaleString()} CAD available).` });
-    }
-    if (!senderAcc.isOwner) senderAcc.bankCAD -= numAmount;
-    if (!recipientAcc.isOwner) recipientAcc.bankCAD += numAmount;
-  } else {
-    if (!senderAcc.isOwner && senderAcc.bankNaira < numAmount) {
-      return res.status(400).json({ error: `Insufficient NGN balance (₦${senderAcc.bankNaira.toLocaleString()} available).` });
-    }
-    if (!senderAcc.isOwner) senderAcc.bankNaira -= numAmount;
-    if (!recipientAcc.isOwner) recipientAcc.bankNaira += numAmount;
-  }
-
-  normalizeOwnerBalances(senderAcc);
-  normalizeOwnerBalances(recipientAcc);
-
-  const txId = `NLTX_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-  const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const debitReceipt = {
-    id: txId,
-    title: `Transfer to @${recipientAcc.username} (${recipientAcc.walletAccountNumber})`,
-    category: 'transfer',
-    amount: numAmount,
-    date: nowStr,
-    type: 'debit',
-    currency: transferCurrency,
-    recipientOrSender: `${recipientAcc.username} • ${recipientAcc.walletAccountNumber}`,
-    referenceNo: txId,
-  };
-  const creditReceipt = {
-    id: `NLRX_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-    title: `Transfer from @${senderAcc.username} (${note})`,
-    category: 'transfer',
-    amount: numAmount,
-    date: nowStr,
-    type: 'credit',
-    currency: transferCurrency,
-    recipientOrSender: `${senderAcc.username} • ${senderAcc.walletAccountNumber}`,
-    referenceNo: txId,
-  };
-
-  senderAcc.receipts = [debitReceipt, ...senderAcc.receipts].slice(0, 200);
-  recipientAcc.receipts = [creditReceipt, ...recipientAcc.receipts].slice(0, 200);
-  recipientAcc.alerts = [
-    {
-      id: `ALT_${Date.now()}`,
-      text: `CREDIT ALERT: Received ${transferCurrency === 'CAD' ? '$' : '₦'}${numAmount.toLocaleString()} ${transferCurrency} from @${senderAcc.username}. Ref: ${txId}`,
-      amount: numAmount,
-      date: nowStr,
-      type: 'credit',
-      senderOrRecipient: senderAcc.username,
-    },
-    ...recipientAcc.alerts,
-  ].slice(0, 100);
-
-  senderAcc.updatedAt = new Date().toISOString();
-  recipientAcc.updatedAt = new Date().toISOString();
 
   mirrorAccountToCitizensDB(senderAcc);
   mirrorAccountToCitizensDB(recipientAcc);
-
-  const responsePayload = {
-    success: true,
-    referenceNo: txId,
-    message: `Transferred ${transferCurrency === 'CAD' ? '$' : '₦'}${numAmount.toLocaleString()} ${transferCurrency} to @${recipientAcc.username} (${recipientAcc.walletAccountNumber}).`,
-    receipt: debitReceipt,
-    senderProfile: senderAcc,
-  };
-
-  if (reqKey) {
-    economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: responsePayload };
-  }
-
   globalRefreshCounter++;
-  saveEconomyStore();
   saveCitizensDB(citizensDB);
-
-  return res.json(responsePayload);
+  return res.json(txResult);
 });
 
 app.post('/api/economy/fx-exchange', async (req, res) => {
@@ -1338,85 +1200,60 @@ app.post('/api/economy/fx-exchange', async (req, res) => {
     return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
   }
   const { requestId, direction, amount } = req.body || {};
-  const reqKey = requestId ? String(requestId).trim() : '';
-  if (reqKey && economyStore.processedRequestIds[reqKey]) {
-    return res.json({ ...economyStore.processedRequestIds[reqKey].response, duplicate: true });
+  const amountMinor = majorToMinor(amount);
+  const fxRes = economyEngine.atomicFxExchange({
+    uid: tokenRes.user.uid,
+    direction,
+    amountMinor,
+    requestId,
+  });
+  if (!fxRes.success) {
+    return res.status(fxRes.status || 400).json({ error: fxRes.error });
   }
-
-  const acc = economyStore.accountsByUid[tokenRes.user.uid];
-  if (!acc) {
-    return res.status(404).json({ error: 'Account not initialized.' });
-  }
-
-  const numAmount = Number(amount);
-  if (!Number.isFinite(numAmount) || numAmount <= 0) {
-    return res.status(400).json({ error: 'Positive exchange amount required.' });
-  }
-
-  const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const refId = `FX_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-  let message = '';
-  let converted = 0;
-
-  if (direction === 'CAD_TO_NGN') {
-    if (!acc.isOwner && acc.bankCAD < numAmount) {
-      return res.status(400).json({ error: `Insufficient CAD funds ($${acc.bankCAD.toLocaleString()} CAD available).` });
-    }
-    converted = Math.round(numAmount * CAD_TO_NGN_RATE);
-    if (!acc.isOwner) {
-      acc.bankCAD -= numAmount;
-      acc.bankNaira += converted;
-    }
-    message = `Exchanged $${numAmount.toLocaleString()} CAD -> ₦${converted.toLocaleString()} NGN`;
-    acc.receipts = [
-      {
-        id: refId,
-        title: `FX Conversion: CAD -> NGN`,
-        category: 'transfer',
-        amount: converted,
-        date: nowStr,
-        type: 'credit',
-        currency: 'NGN',
-        recipientOrSender: 'CBN / Royal Bank FX Desk',
-        referenceNo: refId,
-      },
-      ...acc.receipts,
-    ].slice(0, 200);
-  } else {
-    if (!acc.isOwner && acc.bankNaira < numAmount) {
-      return res.status(400).json({ error: `Insufficient NGN funds (₦${acc.bankNaira.toLocaleString()} available).` });
-    }
-    converted = Number(((numAmount / CAD_TO_NGN_RATE) * NGN_TO_CAD_SPREAD).toFixed(2));
-    if (!acc.isOwner) {
-      acc.bankNaira -= numAmount;
-      acc.bankCAD += converted;
-    }
-    message = `Exchanged ₦${numAmount.toLocaleString()} NGN -> $${converted.toLocaleString()} CAD`;
-    acc.receipts = [
-      {
-        id: refId,
-        title: `FX Conversion: NGN -> CAD ($${converted.toLocaleString()})`,
-        category: 'transfer',
-        amount: numAmount,
-        date: nowStr,
-        type: 'debit',
-        currency: 'NGN',
-        recipientOrSender: 'CBN / Royal Bank FX Desk',
-        referenceNo: refId,
-      },
-      ...acc.receipts,
-    ].slice(0, 200);
-  }
-
-  normalizeOwnerBalances(acc);
-  acc.updatedAt = new Date().toISOString();
-  mirrorAccountToCitizensDB(acc);
-  const resp = { success: true, converted, message, account: acc, referenceNo: refId };
-  if (reqKey) economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: resp };
-  saveEconomyStore();
+  if (fxRes.account) mirrorAccountToCitizensDB(fxRes.account);
   saveCitizensDB(citizensDB);
-  return res.json(resp);
+  return res.json(fxRes);
+});
+
+app.post('/api/economy/savings', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) {
+    return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
+  }
+  const { requestId, currency = 'NGN', action = 'deposit', amount } = req.body || {};
+  const resSav = economyEngine.atomicSavingsTransfer({
+    uid: tokenRes.user.uid,
+    currency: currency === 'CAD' ? 'CAD' : 'NGN',
+    action: action === 'withdraw' ? 'withdraw' : 'deposit',
+    amountMinor: majorToMinor(amount),
+    requestId,
+  });
+  if (!resSav.success) {
+    return res.status(resSav.status || 400).json({ error: resSav.error });
+  }
+  if (resSav.account) mirrorAccountToCitizensDB(resSav.account);
+  saveCitizensDB(citizensDB);
+  return res.json(resSav);
+});
+
+app.post('/api/economy/spend', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) {
+    return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
+  }
+  const { requestId, currency = 'NGN', amount, title = 'Game Purchase', category = 'general' } = req.body || {};
+  const deb = economyEngine.debitMinor({
+    uid: tokenRes.user.uid,
+    currency: currency === 'CAD' ? 'CAD' : 'NGN',
+    amountMinor: majorToMinor(amount),
+    title: String(title),
+    category: String(category),
+    requestId,
+  });
+  if (!deb.ok) return res.status(400).json({ error: deb.error });
+  if (deb.account) mirrorAccountToCitizensDB(deb.account);
+  saveCitizensDB(citizensDB);
+  return res.json({ success: true, receipt: deb.receipt, account: deb.account, duplicate: deb.duplicate });
 });
 
 app.post('/api/economy/purchase', async (req, res) => {
@@ -1425,29 +1262,19 @@ app.post('/api/economy/purchase', async (req, res) => {
     return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
   }
   const { requestId, itemId, title, category, amountNGN, unlockKey, unlockType } = req.body || {};
-  const reqKey = requestId ? String(requestId).trim() : '';
-  if (reqKey && economyStore.processedRequestIds[reqKey]) {
-    return res.json({ ...economyStore.processedRequestIds[reqKey].response, duplicate: true });
-  }
+  const deb = economyEngine.debitMinor({
+    uid: tokenRes.user.uid,
+    currency: 'NGN',
+    amountMinor: majorToMinor(amountNGN || 0),
+    title: String(title || itemId || 'Merchant Purchase'),
+    category: String(category || 'general'),
+    recipientOrSender: 'Naija Life Merchant Network',
+    requestId,
+    persist: false,
+  });
+  if (!deb.ok || !deb.account) return res.status(400).json({ error: deb.error });
 
-  const acc = economyStore.accountsByUid[tokenRes.user.uid];
-  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
-
-  const cost = Math.max(0, Math.round(Number(amountNGN || 0)));
-  if (!acc.isOwner && acc.bankNaira + acc.cashNaira < cost) {
-    return res.status(400).json({ error: `Insufficient funds! Need ₦${cost.toLocaleString()}.` });
-  }
-
-  if (!acc.isOwner && cost > 0) {
-    if (acc.bankNaira >= cost) {
-      acc.bankNaira -= cost;
-    } else {
-      const rem = cost - acc.bankNaira;
-      acc.bankNaira = 0;
-      acc.cashNaira = Math.max(0, acc.cashNaira - rem);
-    }
-  }
-
+  const acc = deb.account;
   if (unlockType === 'clothing' && unlockKey && !acc.ownedClothing.includes(unlockKey)) {
     acc.ownedClothing.push(unlockKey);
   } else if (unlockType === 'hairstyle' && unlockKey && !acc.ownedHairstyles.includes(unlockKey)) {
@@ -1455,32 +1282,10 @@ app.post('/api/economy/purchase', async (req, res) => {
   } else if (unlockType === 'furniture' && unlockKey && !acc.furnitureBought.includes(unlockKey)) {
     acc.furnitureBought.push(unlockKey);
   }
-
-  const refId = `BUY_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-  const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const receipt = {
-    id: refId,
-    title: String(title || itemId || 'Merchant Purchase'),
-    category: String(category || 'general'),
-    amount: cost,
-    date: nowStr,
-    type: 'debit',
-    currency: 'NGN',
-    recipientOrSender: 'Naija Life Merchant Network',
-    referenceNo: refId,
-  };
-  if (cost > 0) {
-    acc.receipts = [receipt, ...acc.receipts].slice(0, 200);
-  }
-  normalizeOwnerBalances(acc);
-  acc.updatedAt = new Date().toISOString();
+  economyEngine.save();
   mirrorAccountToCitizensDB(acc);
-
-  const resp = { success: true, receipt, account: acc };
-  if (reqKey) economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: resp };
-  saveEconomyStore();
   saveCitizensDB(citizensDB);
-  return res.json(resp);
+  return res.json({ success: true, receipt: deb.receipt, account: acc, duplicate: deb.duplicate });
 });
 
 app.post('/api/economy/business-collect', async (req, res) => {
@@ -1488,56 +1293,38 @@ app.post('/api/economy/business-collect', async (req, res) => {
   if (!tokenRes.ok || !tokenRes.user) {
     return res.status(tokenRes.status || 401).json({ error: tokenRes.error || 'Authentication required.' });
   }
-  const { requestId, businessId, businessName, dailyRevenueNGN } = req.body || {};
-  const reqKey = requestId ? String(requestId).trim() : '';
-  if (reqKey && economyStore.processedRequestIds[reqKey]) {
-    return res.json({ ...economyStore.processedRequestIds[reqKey].response, duplicate: true });
-  }
-
-  const acc = economyStore.accountsByUid[tokenRes.user.uid];
+  const { requestId, businessId, businessName, dailyRevenueNGN, currency = 'NGN' } = req.body || {};
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
   if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
 
   const bizKey = String(businessId || '').trim();
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayWat = getWatClock().dateStr;
   if (!bizKey || !Number.isFinite(Number(dailyRevenueNGN)) || Number(dailyRevenueNGN) <= 0) {
     return res.status(400).json({ error: 'Invalid business payout request.' });
   }
-  if (!acc.isOwner && acc.lastBusinessCollectByDate[bizKey] === todayKey) {
-    return res.status(429).json({ error: 'Daily revenue for this venture has already been settled today.' });
+  if (acc.lastBusinessCollectByDate[bizKey] === todayWat) {
+    return res.status(429).json({ error: 'Daily revenue for this venture has already been settled for today (WAT).' });
   }
 
   const payout = Math.round(Number(dailyRevenueNGN));
-  if (!acc.isOwner) {
-    acc.bankNaira += payout;
-  }
-  acc.lastBusinessCollectByDate[bizKey] = todayKey;
-
-  const refId = `BIZ_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-  const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const receipt = {
-    id: refId,
+  const cred = economyEngine.creditMinor({
+    uid: acc.uid,
+    currency: currency === 'CAD' ? 'CAD' : 'NGN',
+    amountMinor: majorToMinor(payout),
     title: `Business Dividend: ${String(businessName || bizKey)}`,
     category: 'business',
-    amount: payout,
-    date: nowStr,
-    type: 'credit',
-    currency: 'NGN',
     recipientOrSender: 'Corporate Treasury Settlement',
-    referenceNo: refId,
-  };
-  acc.receipts = [receipt, ...acc.receipts].slice(0, 200);
-  normalizeOwnerBalances(acc);
-  acc.updatedAt = new Date().toISOString();
+    requestId,
+    persist: false,
+  });
+  if (!cred.ok) return res.status(400).json({ error: cred.error });
+  acc.lastBusinessCollectByDate[bizKey] = todayWat;
+  economyEngine.save();
   mirrorAccountToCitizensDB(acc);
-
-  const resp = { success: true, payout, receipt, account: acc, collectedDate: todayKey };
-  if (reqKey) economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: resp };
-  saveEconomyStore();
   saveCitizensDB(citizensDB);
-  return res.json(resp);
+  return res.json({ success: true, payout, receipt: cred.receipt, account: acc, collectedDate: todayWat });
 });
 
-// Instant Canada Visa & Nigerian Passport Processing Endpoint (0 wait timer)
 app.post('/api/immigration/apply-canada', async (req, res) => {
   const tokenRes = await verifyFirebaseIdToken(req);
   if (!tokenRes.ok || !tokenRes.user) {
@@ -1554,14 +1341,6 @@ app.post('/api/immigration/apply-canada', async (req, res) => {
     financialInfo,
   } = req.body || {};
 
-  const reqKey = requestId ? String(requestId).trim() : '';
-  if (reqKey && economyStore.processedRequestIds[reqKey]) {
-    return res.json({ ...economyStore.processedRequestIds[reqKey].response, duplicate: true });
-  }
-
-  const acc = economyStore.accountsByUid[tokenRes.user.uid];
-  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
-
   const cleanName = String(fullName || '').trim();
   const numAge = Number(age);
   if (cleanName.length < 3) {
@@ -1574,26 +1353,22 @@ app.post('/api/immigration/apply-canada', async (req, res) => {
     return res.status(400).json({ error: 'All Canada Visa application fields must be completed.' });
   }
 
-  if (!acc.isOwner && acc.bankNaira + acc.cashNaira < CANADA_VISA_FEE_NGN) {
-    return res.status(400).json({
-      error: `Insufficient funds for Canada Visa Processing Fee (₦${CANADA_VISA_FEE_NGN.toLocaleString()}).`,
-    });
-  }
+  const deb = economyEngine.debitMinor({
+    uid: tokenRes.user.uid,
+    currency: 'NGN',
+    amountMinor: majorToMinor(CANADA_VISA_FEE_NGN),
+    title: `Canada Visa & Passport Processing (${travelPurpose})`,
+    category: 'immigration',
+    recipientOrSender: 'IRCC Canada High Commission',
+    requestId,
+    persist: false,
+  });
+  if (!deb.ok || !deb.account) return res.status(400).json({ error: deb.error });
 
-  if (!acc.isOwner) {
-    if (acc.bankNaira >= CANADA_VISA_FEE_NGN) {
-      acc.bankNaira -= CANADA_VISA_FEE_NGN;
-    } else {
-      const rem = CANADA_VISA_FEE_NGN - acc.bankNaira;
-      acc.bankNaira = 0;
-      acc.cashNaira = Math.max(0, acc.cashNaira - rem);
-    }
-  }
-
+  const acc = deb.account;
   const nowStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   const docsToAdd: any[] = [];
-  const hasPassport = acc.ownedDocuments.some((d) => d.type === 'passport' && d.country === 'Nigeria');
-  if (!hasPassport) {
+  if (!acc.ownedDocuments.some((d) => d.type === 'passport' && d.country === 'Nigeria')) {
     docsToAdd.push({
       id: `doc_ngp_${Date.now()}`,
       type: 'passport',
@@ -1606,8 +1381,7 @@ app.post('/api/immigration/apply-canada', async (req, res) => {
       desc: `Issued to ${cleanName} (${currentNigerianState} Origin) by Nigeria Immigration Service.`,
     });
   }
-
-  const visaDoc = {
+  docsToAdd.push({
     id: `doc_can_${Date.now()}`,
     type: 'visa',
     title: `Canada ${String(travelPurpose)} Visa (IRCC Electronic Travel Approval)`,
@@ -1618,43 +1392,142 @@ app.post('/api/immigration/apply-canada', async (req, res) => {
     status: 'Active',
     visaType: String(travelPurpose),
     desc: `Applicant: ${cleanName} (Age ${numAge}) • Origin: ${currentNigerianState} • Status: ${employmentStatus} • Funds Verified: ${financialInfo}`,
-  };
-  docsToAdd.push(visaDoc);
+  });
 
   acc.ownedDocuments = [...acc.ownedDocuments.filter((d) => !(d.country === 'Canada' && d.type === 'visa')), ...docsToAdd];
   acc.immigrationStatus = 'CANADA_VISA_APPROVED';
-
-  const refId = `IRCC_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-  const receipt = {
-    id: refId,
-    title: `Canada Visa & Passport Processing (${travelPurpose})`,
-    category: 'immigration',
-    amount: CANADA_VISA_FEE_NGN,
-    date: nowStr,
-    type: 'debit',
-    currency: 'NGN',
-    recipientOrSender: 'IRCC Canada High Commission',
-    referenceNo: refId,
-  };
-  acc.receipts = [receipt, ...acc.receipts].slice(0, 200);
-  normalizeOwnerBalances(acc);
-  acc.updatedAt = new Date().toISOString();
+  economyEngine.save();
   mirrorAccountToCitizensDB(acc);
+  saveCitizensDB(citizensDB);
 
-  const resp = {
+  return res.json({
     success: true,
     approved: true,
     issuedDocuments: docsToAdd,
-    receipt,
+    receipt: deb.receipt,
     account: acc,
     message: 'Canada Visa & Nigerian Passport APPROVED immediately! You are cleared for flight booking to Toronto, Canada.',
-  };
-  if (reqKey) economyStore.processedRequestIds[reqKey] = { createdAt: Date.now(), response: resp };
-  saveEconomyStore();
-  saveCitizensDB(citizensDB);
-  return res.json(resp);
+  });
 });
 
+// =========================================================================
+// 7B. EMPIRE BIZ MANAGEMENT & 8:30 PM WAT SETTLEMENT ENDPOINTS
+// =========================================================================
+app.get('/api/business/state', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const watClock = getWatClock();
+  const settlements = economyEngine.settleAllBusinessesAt830Wat().find((r) => r.uid === acc.uid)?.settlements || [];
+  return res.json({
+    success: true,
+    watClock,
+    businesses: acc.businesses,
+    watSettlements: settlements,
+    account: acc,
+  });
+});
+
+app.post('/api/business/create', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const { name, typeId, typeName, country = 'nigeria', startupCost, dailyRevenue, dailyExpenses = 0, requestId } = req.body || {};
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const cleanName = String(name || '').trim().slice(0, 60);
+  if (cleanName.length < 2) return res.status(400).json({ error: 'Business name is required.' });
+  const region: 'nigeria' | 'canada' = country === 'canada' ? 'canada' : 'nigeria';
+  const currency: 'NGN' | 'CAD' = region === 'canada' ? 'CAD' : 'NGN';
+  const deb = economyEngine.debitMinor({
+    uid: acc.uid,
+    currency,
+    amountMinor: majorToMinor(startupCost),
+    title: `Register Empire Venture: ${cleanName}`,
+    category: 'business',
+    recipientOrSender: region === 'canada' ? 'Corporations Canada' : 'CAC Business Registry',
+    requestId,
+    persist: false,
+  });
+  if (!deb.ok) return res.status(400).json({ error: deb.error });
+
+  const biz = {
+    id: `biz_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+    name: cleanName,
+    typeId: String(typeId || 'venture'),
+    typeName: String(typeName || 'Commercial Venture'),
+    country: region,
+    registeredDate: getWatClock().dateStr,
+    level: 1,
+    dailyRevenueMinor: majorToMinor(dailyRevenue).toString(),
+    dailyExpensesMinor: majorToMinor(dailyExpenses).toString(),
+    employeesCount: 1,
+    upgrades: [],
+    totalCollectedMinor: '0',
+  };
+  acc.businesses.unshift(biz);
+  economyEngine.save();
+  mirrorAccountToCitizensDB(acc);
+  saveCitizensDB(citizensDB);
+  return res.json({ success: true, business: biz, account: acc });
+});
+
+app.post('/api/business/action', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const { businessId, action, upgradeName, requestId } = req.body || {};
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const biz = acc.businesses.find((b) => b.id === businessId);
+  if (!biz) return res.status(404).json({ error: 'Business not found.' });
+
+  const currency: 'NGN' | 'CAD' = biz.country === 'canada' ? 'CAD' : 'NGN';
+  const baseRevMajor = minorToMajorNumber(biz.dailyRevenueMinor);
+  let costMajor = 0;
+  let title = '';
+  if (action === 'hire') {
+    costMajor = currency === 'CAD' ? 600 : 120000;
+    title = `Hire Staff for ${biz.name}`;
+  } else if (action === 'upgrade') {
+    costMajor = currency === 'CAD' ? 1400 : 300000;
+    title = `Upgrade ${biz.name} (${upgradeName || 'Automation'})`;
+  } else {
+    return res.status(400).json({ error: 'Unknown business operation.' });
+  }
+
+  const deb = economyEngine.debitMinor({
+    uid: acc.uid,
+    currency,
+    amountMinor: majorToMinor(costMajor),
+    title,
+    category: 'business',
+    recipientOrSender: biz.name,
+    requestId,
+    persist: false,
+  });
+  if (!deb.ok) return res.status(400).json({ error: deb.error });
+
+  if (action === 'hire') {
+    biz.employeesCount += 1;
+    biz.dailyRevenueMinor = majorToMinor(Math.round(baseRevMajor * 1.18)).toString();
+  } else if (action === 'upgrade') {
+    biz.level += 1;
+    if (upgradeName) biz.upgrades.push(String(upgradeName));
+    biz.dailyRevenueMinor = majorToMinor(Math.round(baseRevMajor * 1.32)).toString();
+  }
+  economyEngine.save();
+  return res.json({ success: true, business: biz, account: acc });
+});
+
+app.post('/api/business/settle-wat', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const nowMs = req.body?.simulatedNowMs ? Number(req.body.simulatedNowMs) : Date.now();
+  const resList = economyEngine.settleAllBusinessesAt830Wat(nowMs);
+  const mine = resList.find((r) => r.uid === tokenRes.user!.uid)?.settlements || [];
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  return res.json({ success: true, settlements: mine, account: acc });
+});
 
 
 // =========================================================================
@@ -1941,148 +1814,613 @@ app.delete('/api/broadcast/music', async (req, res) => {
 });
 
 
-// GET real registered players on Snapchat
+// =========================================================================
+// 8. FULL SNAPCHAT ECOSYSTEM, FAMILY, INVEST, GOV, PREDICTIONS, LAPTOPS, RIDE, PETS, INSURANCE
+// =========================================================================
+
+// ---- SNAPCHAT & SNAPCHAT PLUS ----
 app.get('/api/snapchat/users', (req, res) => {
-  citizensDB = loadCitizensDB();
-  const allCitizens = Object.values(citizensDB).map((c) => ({
-    username: c.profile.username,
-    firstName: c.profile.firstName,
-    lastName: c.profile.lastName,
-    avatar: c.profile.avatar,
-    state: c.profile.spawnStateId || 'lagos',
-  }));
+  const onlineSet = new Set(realtimeHub.getOnlineUsernames());
+  const byUsername = new Map<string, any>();
 
-  const snapAccounts = Object.values(snapchatUsersDB).map((s) => ({
-    snapUsername: s.snapUsername,
-    displayName: s.displayName,
-    citizenUsername: s.citizenUsername,
-    isSnapPlus: !!s.isSnapPlus,
-    snapScore: s.snapScore,
-  }));
-
-  return res.json({ citizens: allCitizens, snapUsers: snapAccounts });
+  for (const acc of Object.values(economyEngine.store.accountsByUid)) {
+    const snap = snapchatEngine.ensureAccount(acc.usernameLower, acc.username, acc.isOwner);
+    byUsername.set(acc.usernameLower, {
+      username: acc.username,
+      usernameLower: acc.usernameLower,
+      displayName: snap.displayName,
+      bio: snap.bio,
+      avatarEmoji: snap.avatarEmoji,
+      isSnapPlus: snap.isSnapPlus && snap.snapPlusExpiresAt > Date.now(),
+      snapScore: snap.snapScore,
+      online: onlineSet.has(acc.usernameLower),
+      country: acc.currentCountry,
+      state: acc.lastLocationStateId || acc.spawnStateId || 'lagos',
+    });
+  }
+  for (const s of Object.values(snapchatEngine.state.accounts)) {
+    if (!byUsername.has(s.usernameLower)) {
+      byUsername.set(s.usernameLower, {
+        username: s.snapUsername,
+        usernameLower: s.usernameLower,
+        displayName: s.displayName,
+        bio: s.bio,
+        avatarEmoji: s.avatarEmoji,
+        isSnapPlus: s.isSnapPlus && s.snapPlusExpiresAt > Date.now(),
+        snapScore: s.snapScore,
+        online: onlineSet.has(s.usernameLower),
+        country: 'nigeria',
+        state: 'lagos',
+      });
+    }
+  }
+  const users = Array.from(byUsername.values());
+  return res.json({ users, citizens: users, snapUsers: users });
 });
 
-// Register or Login to Snapchat
-app.post('/api/snapchat/auth', (req, res) => {
-  const { snapUsername, displayName, password, citizenUsername, isLogin } = req.body;
-  const cleanSnapUser = String(snapUsername || '').toLowerCase().trim();
-  const cleanCitizen = String(citizenUsername || '').toLowerCase().trim();
-
-  if (!cleanSnapUser) {
-    return res.status(400).json({ error: 'Snapchat username is required' });
-  }
-
-  if (isLogin) {
-    const existing = snapchatUsersDB[cleanSnapUser];
-    if (!existing) {
-      return res.status(404).json({ error: 'Snapchat account not found. Please sign up!' });
-    }
-    if (existing.password && existing.password !== password) {
-      return res.status(401).json({ error: 'Incorrect Snapchat password.' });
-    }
-    return res.json({ success: true, account: existing });
-  }
-
-  // Sign up
-  if (snapchatUsersDB[cleanSnapUser]) {
-    return res.status(400).json({ error: 'That Snapchat username is already taken! Choose another.' });
-  }
-
-  snapchatUsersDB[cleanSnapUser] = {
-    snapUsername: cleanSnapUser,
-    displayName: String(displayName || snapUsername).trim(),
-    citizenUsername: cleanCitizen,
-    password: String(password || ''),
-    isSnapPlus: cleanCitizen === 'chiboy_52',
-    snapScore: cleanCitizen === 'chiboy_52' ? 999999999 : 150,
-    streaks: {},
-  };
-  saveSnapUsers(snapchatUsersDB);
-
-  return res.json({ success: true, account: snapchatUsersDB[cleanSnapUser] });
+app.get('/api/snapchat/state', (req, res) => {
+  const username = String(req.query.username || '').toLowerCase().trim();
+  if (!username) return res.status(400).json({ error: 'username required' });
+  const profile = snapchatEngine.ensureAccount(username);
+  const messages = snapchatEngine.getMessagesForUser(username);
+  const stories = snapchatEngine.getVisibleStories(username);
+  const groups = Object.values(snapchatEngine.state.groups).filter((g) => g.members.includes(username));
+  const onlineUsers = realtimeHub.getOnlineUsernames();
+  return res.json({ success: true, profile, messages, stories, groups, onlineUsers });
 });
 
-// GET messages/snaps for a user
+app.post('/api/snapchat/profile', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const uname = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  if (!uname) return res.status(400).json({ error: 'Username required.' });
+  const updated = snapchatEngine.updateProfile(uname, req.body || {});
+  return res.json({ success: true, profile: updated });
+});
+
+app.post('/api/snapchat/friend-request', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const fromUser = acc?.usernameLower || String(req.body?.fromUsername || '').toLowerCase().trim();
+  const resFr = snapchatEngine.sendFriendRequest(fromUser, String(req.body?.toUsername || ''));
+  if (!resFr.ok) return res.status(400).json({ error: resFr.error });
+  return res.json({ success: true, profile: resFr.fromAcc });
+});
+
+app.post('/api/snapchat/friend-respond', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const actorUser = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  const resRsp = snapchatEngine.respondFriendRequest(actorUser, String(req.body?.requesterUsername || ''), Boolean(req.body?.accept));
+  return res.json({ success: true, profile: resRsp.fromAcc });
+});
+
+app.post('/api/snapchat/block', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const actorUser = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  const updated = snapchatEngine.toggleBlock(actorUser, String(req.body?.targetUsername || ''), Boolean(req.body?.block));
+  return res.json({ success: true, profile: updated });
+});
+
+app.post('/api/snapchat/report', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const reporter = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  const rep = snapchatEngine.fileReport(reporter, String(req.body?.targetUsername || ''), String(req.body?.reason || ''));
+  return res.json({ success: true, report: rep });
+});
+
+app.post('/api/snapchat/groups', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const creator = acc?.usernameLower || String(req.body?.creator || '').toLowerCase().trim();
+  const resGrp = snapchatEngine.createGroup(creator, String(req.body?.name || ''), Array.isArray(req.body?.members) ? req.body.members : []);
+  if (!resGrp.ok) return res.status(400).json({ error: resGrp.error });
+  return res.json({ success: true, group: resGrp.group });
+});
+
 app.get('/api/snapchat/messages', (req, res) => {
   const username = String(req.query.username || '').toLowerCase().trim();
   if (!username) return res.json({ messages: [] });
-  const userMessages = snapMessagesDB.filter((m) => m.toUser === username || m.fromUser === username);
-  return res.json({ messages: userMessages });
+  return res.json({ messages: snapchatEngine.getMessagesForUser(username) });
 });
 
-// Send Snap / Message
-app.post('/api/snapchat/send', (req, res) => {
-  const { fromUser, toUser, caption, filterUsed } = req.body;
-  const cleanFrom = String(fromUser || '').toLowerCase().trim();
-  const cleanTo = String(toUser || '').toLowerCase().trim();
-
-  if (!cleanFrom || !cleanTo) {
-    return res.status(400).json({ error: 'Sender and recipient required' });
-  }
-
-  const newMsg = {
-    id: `snap_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-    fromUser: cleanFrom,
-    toUser: cleanTo,
-    caption: String(caption || '').trim(),
-    filterUsed: filterUsed || '',
-    timestamp: Date.now(),
-    timeStr: 'Just now',
-    isOpened: false,
-  };
-  snapMessagesDB.unshift(newMsg);
-
-  // Update streaks
-  if (snapchatUsersDB[cleanFrom]) {
-    snapchatUsersDB[cleanFrom].snapScore += 10;
-    if (!snapchatUsersDB[cleanFrom].streaks) snapchatUsersDB[cleanFrom].streaks = {};
-    const curStreak = snapchatUsersDB[cleanFrom].streaks[cleanTo]?.days || 0;
-    snapchatUsersDB[cleanFrom].streaks[cleanTo] = { days: curStreak + 1, lastInteracted: Date.now() };
-  }
-  if (snapchatUsersDB[cleanTo]) {
-    if (!snapchatUsersDB[cleanTo].streaks) snapchatUsersDB[cleanTo].streaks = {};
-    const curStreak = snapchatUsersDB[cleanTo].streaks[cleanFrom]?.days || 0;
-    snapchatUsersDB[cleanTo].streaks[cleanFrom] = { days: curStreak + 1, lastInteracted: Date.now() };
-  }
-
-  saveSnapUsers(snapchatUsersDB);
-  saveSnapMessages(snapMessagesDB);
-
-  return res.json({ success: true, message: newMsg });
+app.post('/api/snapchat/send', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const fromUser = acc?.usernameLower || String(req.body?.fromUsername || req.body?.fromUser || '').toLowerCase().trim();
+  const sendRes = snapchatEngine.sendMessage({
+    fromUser,
+    toUser: req.body?.toUsername || req.body?.toUser,
+    groupId: req.body?.groupId,
+    text: req.body?.text ?? req.body?.caption,
+    mediaDataUrl: req.body?.mediaDataUrl,
+    mediaType: req.body?.mediaType,
+    filterUsed: req.body?.filterUsed,
+    disappearSeconds: req.body?.disappearSeconds,
+    replyToStoryId: req.body?.replyToStoryId,
+  });
+  if (!sendRes.ok) return res.status(400).json({ error: sendRes.error });
+  return res.json({ success: true, message: sendRes.message });
 });
 
-// Buy Snap Plus with in-game money
-app.post('/api/snapchat/plus', (req, res) => {
-  const { snapUsername, citizenUsername } = req.body;
-  const cleanSnap = String(snapUsername || '').toLowerCase().trim();
-  const cleanCitizen = String(citizenUsername || '').toLowerCase().trim();
+app.post('/api/snapchat/read', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const reader = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  const messages = snapchatEngine.markThreadRead(reader, String(req.body?.peerOrGroupId || ''), Boolean(req.body?.isGroup));
+  return res.json({ success: true, messages });
+});
 
-  citizensDB = loadCitizensDB();
-  const userRecord = citizensDB[cleanCitizen];
-  if (!userRecord || !userRecord.profile) {
-    return res.status(404).json({ error: 'Citizen not found' });
-  }
+app.post('/api/snapchat/react', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const actor = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  const resReact = snapchatEngine.reactMessage(actor, String(req.body?.messageId || ''), String(req.body?.emoji || '❤️'));
+  if (!resReact.ok) return res.status(404).json({ error: 'Message not found' });
+  return res.json({ success: true, message: resReact.message });
+});
 
-  const costNGN = 3500;
-  if (Number(userRecord.profile.bankNaira || 0) < costNGN && Number(userRecord.profile.cashNaira || 0) < costNGN) {
-    return res.status(400).json({ error: 'Insufficient funds for Snapchat+ (₦3,500/mo)' });
-  }
+app.post('/api/snapchat/stories', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const author = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  const resSty = snapchatEngine.postStory({
+    author,
+    caption: String(req.body?.caption || ''),
+    mediaDataUrl: req.body?.mediaDataUrl,
+    mediaType: req.body?.mediaType,
+    bgGradient: req.body?.bgGradient,
+    audience: req.body?.audience,
+    storyStyle: req.body?.storyStyle,
+  });
+  if (!resSty.ok) return res.status(400).json({ error: resSty.error });
+  return res.json({ success: true, story: resSty.story });
+});
 
-  if (Number(userRecord.profile.bankNaira || 0) >= costNGN) {
-    userRecord.profile.bankNaira = Number(userRecord.profile.bankNaira) - costNGN;
-  } else {
-    userRecord.profile.cashNaira = Number(userRecord.profile.cashNaira) - costNGN;
-  }
+app.post('/api/snapchat/stories/view', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const viewer = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  const story = snapchatEngine.viewStory(viewer, String(req.body?.storyId || ''));
+  return res.json({ success: true, story });
+});
 
-  if (snapchatUsersDB[cleanSnap]) {
-    snapchatUsersDB[cleanSnap].isSnapPlus = true;
-    snapchatUsersDB[cleanSnap].snapScore += 500;
-  }
-  saveSnapUsers(snapchatUsersDB);
+app.post('/api/snapchat/stories/react', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const viewer = acc?.usernameLower || String(req.body?.username || '').toLowerCase().trim();
+  const story = snapchatEngine.reactStory(viewer, String(req.body?.storyId || ''), String(req.body?.emoji || '🔥'));
+  return res.json({ success: true, story });
+});
+
+app.post('/api/snapchat/plus', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const currency: 'NGN' | 'CAD' = req.body?.currency === 'CAD' ? 'CAD' : 'NGN';
+  const sub = snapchatEngine.subscribeSnapPlus({
+    uid: acc.uid,
+    username: acc.usernameLower,
+    currency,
+    economy: economyEngine,
+    requestId: req.body?.requestId,
+  });
+  if (!sub.ok) return res.status(400).json({ error: sub.error });
+  mirrorAccountToCitizensDB(acc);
   saveCitizensDB(citizensDB);
+  return res.json({
+    success: true,
+    profile: sub.account,
+    account: sub.economyAccount,
+    message: sub.message,
+  });
+});
 
-  return res.json({ success: true, message: 'Snapchat+ Activated! ⭐️ Gold Star Badge & VIP Features Unlocked!' });
+// ---- FAMILY APP ----
+app.get('/api/family/state', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const uname = acc?.usernameLower || String(req.query.username || '').toLowerCase().trim();
+  const bundle = familyEngine.getUserFamilyBundle(uname);
+  const allCitizens = Object.values(economyEngine.store.accountsByUid).map((c) => ({
+    username: c.username,
+    usernameLower: c.usernameLower,
+    state: c.lastLocationStateId || 'lagos',
+  }));
+  return res.json({ success: true, ...bundle, citizens: allCitizens });
+});
+
+app.post('/api/family/create', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const resCreate = familyEngine.createFamily({
+    username: acc.usernameLower,
+    displayName: acc.username,
+    familyName: String(req.body?.familyName || ''),
+    motto: req.body?.motto,
+    householdHomeId: req.body?.householdHomeId,
+  });
+  if (!resCreate.ok) return res.status(400).json({ error: resCreate.error });
+  return res.json({ success: true, family: resCreate.family });
+});
+
+app.post('/api/family/invite', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const resInv = familyEngine.sendInvite({
+    fromUsername: acc.usernameLower,
+    toUsername: String(req.body?.toUsername || ''),
+    proposedRole: req.body?.proposedRole || 'Member',
+    isMarriageProposal: Boolean(req.body?.isMarriageProposal),
+    message: req.body?.message,
+  });
+  if (!resInv.ok) return res.status(400).json({ error: resInv.error });
+  return res.json({ success: true, invite: resInv.invite });
+});
+
+app.post('/api/family/respond', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const resRsp = familyEngine.respondInvite({
+    actorUsername: acc.usernameLower,
+    actorDisplayName: acc.username,
+    inviteId: String(req.body?.inviteId || ''),
+    accept: Boolean(req.body?.accept),
+  });
+  if (!resRsp.ok) return res.status(400).json({ error: resRsp.error });
+  return res.json({ success: true, family: resRsp.family });
+});
+
+app.post('/api/family/role', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const resRole = familyEngine.updateMemberRole(acc.usernameLower, String(req.body?.targetUsername || ''), req.body?.role);
+  if (!resRole.ok) return res.status(400).json({ error: resRole.error });
+  return res.json({ success: true, family: resRole.family });
+});
+
+app.post('/api/family/event', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const resEvt = familyEngine.addActivityOrEvent({
+    actorUsername: acc.usernameLower,
+    title: String(req.body?.title || ''),
+    activityType: req.body?.activityType || 'dinner',
+    scheduledDateTime: String(req.body?.scheduledDateTime || ''),
+  });
+  if (!resEvt.ok) return res.status(400).json({ error: resEvt.error });
+  return res.json({ success: true, family: resEvt.family });
+});
+
+app.post('/api/family/rsvp', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const resRsvp = familyEngine.rsvpEvent(acc.usernameLower, String(req.body?.eventId || ''), req.body?.status || 'going');
+  if (!resRsvp.ok) return res.status(400).json({ error: resRsvp.error });
+  return res.json({ success: true, family: resRsvp.family });
+});
+
+app.post('/api/family/leave', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  familyEngine.leaveFamily(acc.usernameLower);
+  return res.json({ success: true });
+});
+
+// ---- INVEST SIMULATOR ----
+app.get('/api/invest/snapshot', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  return res.json({ success: true, ...civicMarketEngine.getMarketSnapshot(tokenRes.user.uid) });
+});
+
+app.post('/api/invest/trade', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resTrade = civicMarketEngine.executeTrade({
+    uid: tokenRes.user.uid,
+    symbol: String(req.body?.symbol || ''),
+    side: req.body?.side === 'sell' ? 'sell' : 'buy',
+    quantity: Number(req.body?.quantity || 0),
+    economy: economyEngine,
+    requestId: req.body?.requestId,
+  });
+  if (!resTrade.ok) return res.status(400).json({ error: resTrade.error });
+  return res.json({
+    success: true,
+    order: resTrade.order,
+    account: resTrade.account,
+    snapshot: civicMarketEngine.getMarketSnapshot(tokenRes.user.uid),
+  });
+});
+
+// ---- GOVERNMENT & ELECTIONS ----
+app.get('/api/gov/elections', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  const uid = tokenRes.ok && tokenRes.user ? tokenRes.user.uid : '';
+  return res.json({
+    success: true,
+    nigeriaJurisdictions: NIGERIA_STATES_GOV,
+    canadaJurisdictions: CANADA_PROVINCES_TERRITORIES_GOV,
+    elections: civicMarketEngine.state.elections.map((e) => ({
+      ...e,
+      hasVoted: Boolean(uid && e.votersByUid[uid]),
+      myVoteCandidateId: uid ? e.votersByUid[uid] || null : null,
+    })),
+  });
+});
+
+app.post('/api/gov/declare', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const resDecl = civicMarketEngine.declareCandidacy({
+    uid: acc.uid,
+    username: acc.username,
+    displayName: acc.username,
+    country: req.body?.country === 'canada' ? 'canada' : 'nigeria',
+    jurisdiction: String(req.body?.jurisdiction || ''),
+    party: String(req.body?.party || ''),
+    manifesto: String(req.body?.manifesto || ''),
+    economy: economyEngine,
+    requestId: req.body?.requestId,
+  });
+  if (!resDecl.ok) return res.status(400).json({ error: resDecl.error });
+  return res.json({ success: true, election: resDecl.election, account: resDecl.account });
+});
+
+app.post('/api/gov/announce', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resAnn = civicMarketEngine.publishCampaignAnnouncement(tokenRes.user.uid, String(req.body?.electionId || ''), String(req.body?.text || ''));
+  if (!resAnn.ok) return res.status(400).json({ error: resAnn.error });
+  return res.json({ success: true, election: resAnn.election });
+});
+
+app.post('/api/gov/vote', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resVote = civicMarketEngine.castVote(tokenRes.user.uid, String(req.body?.electionId || ''), String(req.body?.candidateId || ''));
+  if (!resVote.ok) return res.status(400).json({ error: resVote.error });
+  return res.json({ success: true, election: resVote.election });
+});
+
+app.post('/api/gov/conclude', async (req, res) => {
+  const ownerCheck = await verifyStrictOwnerToken(req);
+  if (!ownerCheck.ok) return res.status(403).json({ error: 'Owner verification required to close election early.' });
+  const resEnd = civicMarketEngine.concludeElection(String(req.body?.electionId || ''));
+  if (!resEnd.ok) return res.status(404).json({ error: resEnd.error });
+  return res.json({ success: true, election: resEnd.election });
+});
+
+// ---- NAIJA BET FREE SPORTS PREDICTIONS (8:00 PM WAT) ----
+app.get('/api/predictions/state', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  const uid = tokenRes.ok && tokenRes.user ? tokenRes.user.uid : '';
+  civicMarketEngine.ensureFixturesForToday();
+  civicMarketEngine.settlePredictionsAt800Wat(Date.now(), economyEngine);
+  const leaderboard = Object.values(civicMarketEngine.state.leaderboardPoints).sort((a, b) => b.points - a.points).slice(0, 30);
+  return res.json({
+    success: true,
+    watClock: getWatClock(),
+    fixtures: civicMarketEngine.state.fixtures,
+    myPredictions: uid ? civicMarketEngine.state.predictions.filter((p) => p.uid === uid) : [],
+    leaderboard,
+  });
+});
+
+app.post('/api/predictions/submit', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  const resSub = civicMarketEngine.submitFreePrediction({
+    uid: acc.uid,
+    username: acc.username,
+    fixtureId: String(req.body?.fixtureId || ''),
+    pick: req.body?.pick,
+  });
+  if (!resSub.ok) return res.status(400).json({ error: resSub.error });
+  return res.json({ success: true, prediction: resSub.prediction });
+});
+
+// ---- LAPTOPS & CODING CAREER (LEVEL 7 CYBERSECURITY DEFENSE) ----
+app.get('/api/laptops/state', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  if (!acc) return res.status(404).json({ error: 'Account not initialized.' });
+  return res.json({
+    success: true,
+    catalog: LAPTOP_CATALOG,
+    ownedLaptops: acc.ownedLaptops,
+    activeLaptopId: acc.activeLaptopId,
+    codingXp: acc.codingXp,
+    codingLevel: acc.codingLevel,
+    completedCodingChallenges: acc.completedCodingChallenges,
+    completedCyberMissions: acc.completedCyberMissions,
+    cyberUnlocked: acc.codingLevel >= 7,
+  });
+});
+
+app.post('/api/laptops/buy', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resBuy = lifestyleEngine.buyLaptop({
+    uid: tokenRes.user.uid,
+    laptopId: String(req.body?.laptopId || ''),
+    currency: req.body?.currency === 'CAD' ? 'CAD' : 'NGN',
+    economy: economyEngine,
+    requestId: req.body?.requestId,
+  });
+  if (!resBuy.ok) return res.status(400).json({ error: resBuy.error });
+  return res.json({ success: true, account: resBuy.account });
+});
+
+app.post('/api/laptops/coding-complete', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resCode = lifestyleEngine.recordCodingCompletion({
+    uid: tokenRes.user.uid,
+    challengeId: String(req.body?.challengeId || ''),
+    xpGain: Number(req.body?.xpGain || 75),
+    isCyberMission: Boolean(req.body?.isCyberMission),
+    currency: req.body?.currency === 'CAD' ? 'CAD' : 'NGN',
+    rewardNGN: Number(req.body?.rewardNGN || 180000),
+    rewardCAD: Number(req.body?.rewardCAD || 350),
+    economy: economyEngine,
+  });
+  if (!resCode.ok) return res.status(400).json({ error: resCode.error });
+  return res.json({ success: true, ...resCode });
+});
+
+// ---- NAIJA RIDE ----
+app.get('/api/rides/state', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  return res.json({
+    success: true,
+    companies: RIDE_COMPANIES,
+    history: lifestyleEngine.state.rides.filter((r) => r.uid === tokenRes.user!.uid).slice(0, 40),
+  });
+});
+
+app.post('/api/rides/book', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resBook = lifestyleEngine.bookRide({
+    uid: tokenRes.user.uid,
+    companyId: req.body?.companyId,
+    pickup: String(req.body?.pickup || ''),
+    destination: String(req.body?.destination || ''),
+    distanceKm: Number(req.body?.distanceKm || 6),
+    country: req.body?.country === 'canada' ? 'canada' : 'nigeria',
+    economy: economyEngine,
+    requestId: req.body?.requestId,
+  });
+  if (!resBook.ok) return res.status(400).json({ error: resBook.error });
+  return res.json({ success: true, ride: resBook.ride, account: resBook.account });
+});
+
+app.post('/api/rides/status', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resSt = lifestyleEngine.advanceRideStatus(tokenRes.user.uid, String(req.body?.rideId || ''), req.body?.status);
+  if (!resSt.ok) return res.status(404).json({ error: 'Ride not found.' });
+  return res.json({ success: true, ride: resSt.ride });
+});
+
+// ---- INTERACTIVE 3D PETS ----
+app.get('/api/pets/state', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  return res.json({
+    success: true,
+    catalog: PET_CATALOG,
+    ownedPets: lifestyleEngine.state.pets.filter((p) => p.uid === tokenRes.user!.uid),
+  });
+});
+
+app.post('/api/pets/buy', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resBuy = lifestyleEngine.buyPet({
+    uid: tokenRes.user.uid,
+    speciesId: String(req.body?.speciesId || ''),
+    petName: String(req.body?.petName || ''),
+    currency: req.body?.currency === 'CAD' ? 'CAD' : 'NGN',
+    economy: economyEngine,
+    requestId: req.body?.requestId,
+  });
+  if (!resBuy.ok) return res.status(400).json({ error: resBuy.error });
+  return res.json({ success: true, pet: resBuy.pet, account: resBuy.account });
+});
+
+app.post('/api/pets/care', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resCare = lifestyleEngine.carePet({
+    uid: tokenRes.user.uid,
+    petId: String(req.body?.petId || ''),
+    action: req.body?.action || 'feed',
+    currency: req.body?.currency === 'CAD' ? 'CAD' : 'NGN',
+    economy: economyEngine,
+  });
+  if (!resCare.ok) return res.status(400).json({ error: resCare.error });
+  return res.json({ success: true, pet: resCare.pet, account: resCare.account });
+});
+
+// ---- INSURANCE ----
+app.get('/api/insurance/state', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  return res.json({
+    success: true,
+    plans: INSURANCE_PLANS,
+    policies: lifestyleEngine.state.policies.filter((p) => p.uid === tokenRes.user!.uid),
+  });
+});
+
+app.post('/api/insurance/buy', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const resBuy = lifestyleEngine.buyPolicy({
+    uid: tokenRes.user.uid,
+    planId: String(req.body?.planId || ''),
+    currency: req.body?.currency === 'CAD' ? 'CAD' : 'NGN',
+    economy: economyEngine,
+    requestId: req.body?.requestId,
+  });
+  if (!resBuy.ok) return res.status(400).json({ error: resBuy.error });
+  return res.json({ success: true, policy: resBuy.policy, account: resBuy.account });
+});
+
+app.post('/api/insurance/claim', async (req, res) => {
+  const tokenRes = await verifyFirebaseIdToken(req);
+  if (!tokenRes.ok || !tokenRes.user) return res.status(401).json({ error: 'Authentication required.' });
+  const acc = economyEngine.store.accountsByUid[tokenRes.user.uid];
+  const resClaim = lifestyleEngine.submitClaim({
+    uid: tokenRes.user.uid,
+    policyId: String(req.body?.policyId || ''),
+    incidentKey: String(req.body?.incidentKey || ''),
+    reason: String(req.body?.reason || ''),
+    requestedMajor: Number(req.body?.requestedMajor || 0),
+    hasMatchingAsset: Boolean(req.body?.hasMatchingAsset) || Boolean(acc && acc.businesses.length > 0),
+    economy: economyEngine,
+  });
+  if (!resClaim.ok) return res.status(400).json({ error: resClaim.error, policy: resClaim.policy });
+  return res.json({ success: true, payoutMajor: resClaim.payoutMajor, policy: resClaim.policy, account: resClaim.account });
 });
 
 // Real-time meteorological cache (keyed by lat/lon, 10-min TTL)
@@ -2175,7 +2513,13 @@ app.get('/api/weather', async (req, res) => {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', citizensCount: Object.keys(citizensDB).length, time: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    citizensCount: Object.keys(economyEngine.store.accountsByUid).length,
+    onlineWsCount: realtimeHub.getOnlineUsernames().length,
+    watClock: getWatClock(),
+    time: new Date().toISOString(),
+  });
 });
 
 async function startServer() {
@@ -2192,11 +2536,14 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server listening on port ${PORT}`);
+  const server = http.createServer(app);
+  realtimeHub.attach(server);
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server + WebSocket Hub listening on port ${PORT}`);
   });
 }
 
 startServer().catch((err) => {
   console.error('Failed to start server:', err);
 });
+

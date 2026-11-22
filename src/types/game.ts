@@ -153,13 +153,17 @@ export interface UserProfile {
   phoneModel: string;
   cashNaira: number;
   bankNaira: number;
+  ngnKobo?: string;
   loanBalanceNGN: number;
   savingsBalanceNGN: number;
+  savingsNgnKobo?: string;
   cashUSD: number;
   cashGBP?: number;
   cashEUR?: number;
   bankCAD?: number;
+  cadCents?: string;
   savingsCAD?: number;
+  savingsCadCents?: string;
   currentCountry?: 'nigeria' | 'canada' | string;
   ownedDocuments?: UserDocument[];
   energy: number;
@@ -190,6 +194,15 @@ export interface UserProfile {
   ownedBusinesses?: BusinessVenture[];
   snapUsername?: string;
   isSnapPlus?: boolean;
+  snapPlusExpiresAt?: number;
+  ownedLaptops?: string[];
+  activeLaptopId?: string;
+  codingXp?: number;
+  codingLevel?: number;
+  completedCodingChallenges?: string[];
+  completedCyberMissions?: string[];
+  predictionPoints?: number;
+  familyId?: string;
 }
 
 export interface BusinessVenture {

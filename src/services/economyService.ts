@@ -6,14 +6,14 @@
 import { auth } from '../firebase';
 import { BankReceipt, UserDocument, UserProfile } from '../types/game';
 
-function createRequestId(prefix = 'req'): string {
+export function createRequestId(prefix = 'req'): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}_${crypto.randomUUID()}`;
   }
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function getBearerHeaders(): Promise<Record<string, string>> {
+export async function getAuthBearerHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
     const token = await auth.currentUser?.getIdToken?.();
@@ -27,9 +27,20 @@ async function getBearerHeaders(): Promise<Record<string, string>> {
 export interface ServerEconomySyncResult {
   success: boolean;
   restoredToNigeria?: boolean;
+  watBizSettlements?: Array<{
+    businessId: string;
+    businessName: string;
+    country: 'nigeria' | 'canada';
+    watDate: string;
+    netMinor: string;
+  }>;
   account?: {
     uid: string;
     walletAccountNumber: string;
+    ngnKobo: string;
+    cadCents: string;
+    savingsNgnKobo: string;
+    savingsCadCents: string;
     bankNaira: number;
     cashNaira: number;
     bankCAD: number;
@@ -43,6 +54,14 @@ export interface ServerEconomySyncResult {
     ownedHairstyles: string[];
     furnitureBought: string[];
     ownedDocuments: UserDocument[];
+    ownedLaptops: string[];
+    activeLaptopId: string;
+    codingXp: number;
+    codingLevel: number;
+    completedCodingChallenges: string[];
+    completedCyberMissions: string[];
+    snapPlusExpiresAt?: number;
+    predictionPoints: number;
     receipts: BankReceipt[];
     alerts: UserProfile['alerts'];
   };
@@ -51,7 +70,7 @@ export interface ServerEconomySyncResult {
 
 export async function syncEconomyAccount(profile: Partial<UserProfile>): Promise<ServerEconomySyncResult> {
   try {
-    const headers = await getBearerHeaders();
+    const headers = await getAuthBearerHeaders();
     if (!headers.Authorization) {
       return { success: false, error: 'Offline / unauthenticated session' };
     }
@@ -73,7 +92,7 @@ export async function syncEconomyAccount(profile: Partial<UserProfile>): Promise
 export async function executeServerTransfer(params: {
   senderUsername: string;
   recipientIdentifier: string;
-  amount: number;
+  amount: number | string;
   currency: 'NGN' | 'CAD';
   note?: string;
 }): Promise<{
@@ -85,7 +104,8 @@ export async function executeServerTransfer(params: {
   error?: string;
 }> {
   try {
-    const headers = await getBearerHeaders();
+    const headers = await getAuthBearerHeaders();
+    if (!headers.Authorization) return { success: false, error: 'Authentication required to transfer funds.' };
     const resp = await fetch('/api/bank/transfer', {
       method: 'POST',
       headers,
@@ -106,17 +126,19 @@ export async function executeServerTransfer(params: {
 
 export async function executeServerFxExchange(params: {
   direction: 'NGN_TO_CAD' | 'CAD_TO_NGN';
-  amount: number;
+  amount: number | string;
 }): Promise<{
   success: boolean;
   converted?: number;
+  convertedMinor?: string;
+  sourceMinor?: string;
   message?: string;
   account?: any;
   referenceNo?: string;
   error?: string;
 }> {
   try {
-    const headers = await getBearerHeaders();
+    const headers = await getAuthBearerHeaders();
     if (!headers.Authorization) return { success: false, error: 'Auth required' };
     const resp = await fetch('/api/economy/fx-exchange', {
       method: 'POST',
@@ -134,6 +156,65 @@ export async function executeServerFxExchange(params: {
   }
 }
 
+export async function executeServerSavings(params: {
+  currency: 'NGN' | 'CAD';
+  action: 'deposit' | 'withdraw';
+  amount: number | string;
+}): Promise<{
+  success: boolean;
+  message?: string;
+  account?: any;
+  error?: string;
+}> {
+  try {
+    const headers = await getAuthBearerHeaders();
+    if (!headers.Authorization) return { success: false, error: 'Auth required' };
+    const resp = await fetch('/api/economy/savings', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        requestId: createRequestId('sav'),
+        ...params,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return { success: false, error: data.error || 'Savings operation failed' };
+    return data;
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error' };
+  }
+}
+
+export async function executeServerSpend(params: {
+  currency: 'NGN' | 'CAD';
+  amount: number | string;
+  title: string;
+  category?: BankReceipt['category'];
+}): Promise<{
+  success: boolean;
+  receipt?: BankReceipt;
+  account?: any;
+  error?: string;
+}> {
+  try {
+    const headers = await getAuthBearerHeaders();
+    if (!headers.Authorization) return { success: false, error: 'Auth required' };
+    const resp = await fetch('/api/economy/spend', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        requestId: createRequestId('spn'),
+        ...params,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return { success: false, error: data.error || 'Purchase rejected' };
+    return data;
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Network error' };
+  }
+}
+
 export async function executeServerPurchase(params: {
   itemId: string;
   title: string;
@@ -148,7 +229,7 @@ export async function executeServerPurchase(params: {
   error?: string;
 }> {
   try {
-    const headers = await getBearerHeaders();
+    const headers = await getAuthBearerHeaders();
     if (!headers.Authorization) return { success: false, error: 'Auth required' };
     const resp = await fetch('/api/economy/purchase', {
       method: 'POST',
@@ -170,6 +251,7 @@ export async function collectServerBusinessRevenue(params: {
   businessId: string;
   businessName: string;
   dailyRevenueNGN: number;
+  currency?: 'NGN' | 'CAD';
 }): Promise<{
   success: boolean;
   payout?: number;
@@ -179,7 +261,7 @@ export async function collectServerBusinessRevenue(params: {
   error?: string;
 }> {
   try {
-    const headers = await getBearerHeaders();
+    const headers = await getAuthBearerHeaders();
     if (!headers.Authorization) return { success: false, error: 'Auth required' };
     const resp = await fetch('/api/economy/business-collect', {
       method: 'POST',
@@ -217,7 +299,7 @@ export async function applyCanadaVisaServer(payload: CanadaVisaApplicationPayloa
   error?: string;
 }> {
   try {
-    const headers = await getBearerHeaders();
+    const headers = await getAuthBearerHeaders();
     if (!headers.Authorization) return { success: false, error: 'Sign in with a verified account to submit your Canada Visa application.' };
     const resp = await fetch('/api/immigration/apply-canada', {
       method: 'POST',

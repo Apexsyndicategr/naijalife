@@ -86,6 +86,8 @@ import {
   Cloud,
   ChevronRight,
   Heart,
+  Laptop,
+  ExternalLink,
 } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -156,7 +158,23 @@ import {
   CANADA_AIRLINES,
   CANADA_CABIN_CLASSES,
 } from '../utils/travelPricing';
-import { formatNaira, formatCAD, formatFullNumberDigits } from '../utils/formatNaira';
+import {
+  formatNaira,
+  formatCAD,
+  formatFullNumberDigits,
+  formatNairaFromKobo,
+  formatCadFromCents,
+  formatFullDigitsFromMinor,
+} from '../utils/formatNaira';
+import {
+  addMinorUnits,
+  subtractMinorUnits,
+  majorToMinor,
+  minorToMajorNumber,
+  parseMinorString,
+  computeFxNgnToCad,
+  computeFxCadToNgn,
+} from '../utils/bigMoney';
 import { getStoredUsers, saveSession } from './AuthPortal';
 import { LUXURY_CATALOG, LuxuryVehicleItem } from '../data/luxuryCatalog';
 import { PET_CATALOG, PetItem } from '../data/petCatalog';
@@ -168,6 +186,14 @@ import {
   StudentCourseProgress,
 } from '../data/courseCurriculum';
 import { SnapchatApp } from './SnapchatApp';
+import { FamilyApp } from './FamilyApp';
+import { BusinessApp } from './BusinessApp';
+import { InvestApp } from './InvestApp';
+import { GovernmentApp } from './GovernmentApp';
+import { NaijaRideApp } from './NaijaRideApp';
+import { PetsApp } from './PetsApp';
+import { InsuranceApp } from './InsuranceApp';
+import { NaijaBetPredictionsApp } from './NaijaBetPredictionsApp';
 import {
   EXPANDED_105_WALLPAPERS,
   getDefaultWallpaperForPhoneModel,
@@ -212,8 +238,10 @@ import {
 import {
   applyCanadaVisaServer,
   collectServerBusinessRevenue,
+  createRequestId,
   executeServerFxExchange,
   executeServerPurchase,
+  executeServerSavings,
   executeServerTransfer,
 } from '../services/economyService';
 
@@ -290,6 +318,8 @@ export interface NaijaPhoneProps {
     sourceAmount: number;
     targetAmount: number;
     receipts: any[];
+    ngnKobo?: string;
+    cadCents?: string;
   }) => void;
   cloudSyncStatus?: 'synced' | 'syncing' | 'conflict' | 'offline';
   onTriggerCloudSync?: () => Promise<void> | void;
@@ -319,6 +349,9 @@ export type PhoneAppType =
   | 'boutique'
   | 'handy'
   | 'bus'
+  | 'ride'
+  | 'insurance'
+  | 'apex_syndicate'
   | 'phones'
   | 'certificates'
   | 'documents'
@@ -613,9 +646,13 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   // Boutique state
   const [boutiqueCategoryFilter, setBoutiqueCategoryFilter] = useState<string>('All');
 
-  // Phones state
+  // Phones & Laptops Device Store state
   const [phoneBrandFilter, setPhoneBrandFilter] = useState<string>('All');
   const [phoneSearchQuery, setPhoneSearchQuery] = useState<string>('');
+  const [deviceStoreTab, setDeviceStoreTab] = useState<'phones' | 'laptops'>('phones');
+  const [laptopCatalog, setLaptopCatalog] = useState<any[]>([]);
+  const [laptopBusy, setLaptopBusy] = useState<boolean>(false);
+  const [snapUnreadCount, setSnapUnreadCount] = useState<number>(0);
 
   // Suggestions & Complaints state
   const [suggestionTab, setSuggestionTab] = useState<'submit' | 'my_submissions' | 'owner_inbox'>('submit');
@@ -668,97 +705,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [canadaFormFinancials, setCanadaFormFinancials] = useState<string>('Verified Liquid Balance & Tax Clearance');
   const [isSubmittingCanadaVisa, setIsSubmittingCanadaVisa] = useState<boolean>(false);
 
-  // NaijaBet state: SportyBet 10 matches + Aviator + History Tab
-  const [betTab, setBetTab] = useState<'sports' | 'history' | 'aviator'>('sports');
-  const [selectedPicks, setSelectedPicks] = useState<Record<string, { match: string; pick: string; odd: number }>>({});
-  const [betStake, setBetStake] = useState<number>(2000);
-  const [placedBetSlips, setPlacedBetSlips] = useState<{
-    id: string;
-    summary: string;
-    picksCount: number;
-    totalOdds: number;
-    stake: number;
-    potentialWin: number;
-    status: 'PENDING' | 'WON' | 'LOST';
-    date: string;
-    picks?: { match: string; pick: string; odd: number; isCorrect?: boolean; result?: string }[];
-  }[]>(() => {
-    try {
-      const raw = localStorage.getItem('naija_life_bet_slips');
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  // NaijaBet Daily 8:30 PM WAT Match Settlement (0.1% win probability)
-  useEffect(() => {
-    const settlePendingSlips = () => {
-      const now = new Date();
-      // Calculate West Africa Time (UTC+1)
-      const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-      const watDate = new Date(utc + 3600000 * 1);
-      const watHours = watDate.getHours();
-      const watMins = watDate.getMinutes();
-
-      // Check if past 20:30 WAT (8:30 PM)
-      const isPastSettlement = watHours > 20 || (watHours === 20 && watMins >= 30);
-      if (!isPastSettlement) return;
-
-      setPlacedBetSlips((prevSlips) => {
-        let hasResolved = false;
-        const updated = prevSlips.map((slip) => {
-          if (slip.status !== 'PENDING') return slip;
-          hasResolved = true;
-
-          // 0.1% chance of winning (0.001)
-          const isWinner = Math.random() < 0.001;
-          const evaluatedPicks = (slip.picks || []).map((p) => {
-            if (isWinner) {
-              return { ...p, isCorrect: true, result: p.pick };
-            } else {
-              const correct = Math.random() < 0.35;
-              return { ...p, isCorrect: correct, result: correct ? p.pick : (p.pick === '1' ? '2' : '1') };
-            }
-          });
-
-          if (!isWinner && evaluatedPicks.length > 0 && evaluatedPicks.every((p) => p.isCorrect)) {
-            evaluatedPicks[0].isCorrect = false;
-            evaluatedPicks[0].result = evaluatedPicks[0].pick === '1' ? '2' : '1';
-          }
-
-          if (isWinner) {
-            onUpdateMoney(slip.potentialWin);
-            onShowToast(`🎉 NAIJABET WINNER! Your bet slip won ${formatNaira(slip.potentialWin)}!`);
-            triggerSound?.('success');
-            return {
-              ...slip,
-              status: 'WON' as const,
-              picks: evaluatedPicks,
-            };
-          } else {
-            return {
-              ...slip,
-              status: 'LOST' as const,
-              picks: evaluatedPicks,
-            };
-          }
-        });
-
-        if (hasResolved) {
-          try {
-            localStorage.setItem('naija_life_bet_slips', JSON.stringify(updated));
-          } catch {}
-          return updated;
-        }
-        return prevSlips;
-      });
-    };
-
-    settlePendingSlips();
-    const interval = setInterval(settlePendingSlips, 20000);
-    return () => clearInterval(interval);
-  }, [onUpdateMoney, onShowToast, triggerSound]);
 
   // Empire Biz & Invest Sub-Tabs
   const [bizSubTab, setBizSubTab] = useState<'owned' | 'catalog'>('owned');
@@ -877,25 +823,61 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   };
 
   const getEffectiveCAD = (): number =>
-    checkIsOwner(userProfile) ? 9.99e23 : (userProfile?.bankCAD || 0);
+    minorToMajorNumber(parseMinorString(userProfile?.cadCents, userProfile?.bankCAD || 0));
 
   const getEffectiveNGN = (): number =>
-    checkIsOwner(userProfile) ? 9.99e23 : moneyNGN;
+    minorToMajorNumber(parseMinorString(userProfile?.ngnKobo, moneyNGN));
 
   const persistProfileUpdate = (nextProf: UserProfile) => {
-    const normalized: UserProfile = checkIsOwner(nextProf)
-      ? {
-          ...nextProf,
-          bankNaira: 9.99e23,
-          cashNaira: 9.99e23,
-          bankCAD: 9.99e23,
-          savingsCAD: 9.99e23,
-        }
-      : nextProf;
     try {
-      saveSession(normalized);
+      saveSession(nextProf);
     } catch {}
-    onUpdateProfile?.(normalized);
+    onUpdateProfile?.(nextProf);
+  };
+
+  const debitCADProfile = (amtCAD: number, extra?: Partial<UserProfile>): boolean => {
+    if (!userProfile) return false;
+    const curCents = parseMinorString(userProfile.cadCents, userProfile.bankCAD || 0);
+    const debitCents = majorToMinor(amtCAD);
+    if (curCents < debitCents) return false;
+    const nextCents = subtractMinorUnits(curCents, debitCents);
+    persistProfileUpdate({
+      ...userProfile,
+      ...extra,
+      cadCents: nextCents,
+      bankCAD: minorToMajorNumber(nextCents),
+    });
+    return true;
+  };
+
+  const debitNGNProfile = (amtNGN: number, extra?: Partial<UserProfile>): boolean => {
+    if (!userProfile) return false;
+    const curKobo = parseMinorString(userProfile.ngnKobo, moneyNGN);
+    const debitKobo = majorToMinor(amtNGN);
+    if (curKobo < debitKobo) return false;
+    const nextKobo = subtractMinorUnits(curKobo, debitKobo);
+    const nextMajor = minorToMajorNumber(nextKobo);
+    persistProfileUpdate({
+      ...userProfile,
+      ...extra,
+      ngnKobo: nextKobo,
+      cashNaira: 0,
+      bankNaira: nextMajor,
+    });
+    return true;
+  };
+
+  const creditCADProfile = (amtCAD: number, extra?: Partial<UserProfile>) => {
+    if (!userProfile) return;
+    const curCents = parseMinorString(userProfile.cadCents, userProfile.bankCAD || 0);
+    const creditCents = majorToMinor(amtCAD);
+    const nextCents = addMinorUnits(curCents, creditCents);
+    persistProfileUpdate({
+      ...userProfile,
+      ...extra,
+      cadCents: nextCents,
+      bankCAD: minorToMajorNumber(nextCents),
+    });
   };
 
   const getAuthBearerHeaders = async (): Promise<Record<string, string>> => {
@@ -967,91 +949,20 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
   const [ownerBroadcastTrack, setOwnerBroadcastTrack] = useState<string>('');
   const [isUploadingBroadcast, setIsUploadingBroadcast] = useState<boolean>(false);
 
-  // Aviator game state
-  const [aviatorStake, setAviatorStake] = useState<number>(1000);
-  const [aviatorMultiplier, setAviatorMultiplier] = useState<number>(1.00);
-  const [isAviatorFlying, setIsAviatorFlying] = useState<boolean>(false);
-  const [aviatorCrashed, setAviatorCrashed] = useState<boolean>(false);
-  const [hasCashedOut, setHasCashedOut] = useState<boolean>(false);
-  const aviatorTimerRef = useRef<any>(null);
-  const [aviatorHistory, setAviatorHistory] = useState<number[]>([1.85, 2.40, 1.15, 12.60, 3.10, 1.95]);
-
-  const handleStartAviator = () => {
-    const isCanada = activeStateKey === 'canada';
-    const stakeCAD = Math.max(1, Math.round(aviatorStake / 960.54));
-    if (isCanada) {
-      const userCAD = getEffectiveCAD();
-      if (userCAD < stakeCAD) {
-        onShowToast(`Insufficient CAD funds! Requires $${stakeCAD.toLocaleString()} CAD.`);
-        triggerSound?.('alert');
-        return;
-      }
-      if (userProfile) {
-        const nextCAD = checkIsOwner(userProfile) ? 9.99e23 : Math.max(0, Math.round((userCAD - stakeCAD) * 100) / 100);
-        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD });
-      }
-    } else {
-      if (moneyNGN < aviatorStake) {
-        onShowToast('Insufficient funds for Aviator stake!');
-        triggerSound?.('alert');
-        return;
-      }
-      onUpdateMoney(-aviatorStake);
-    }
-    setIsAviatorFlying(true);
-    setAviatorCrashed(false);
-    setHasCashedOut(false);
-    setAviatorMultiplier(1.00);
-
-    const crashAt = +(Math.random() < 0.65 
-      ? (1.15 + Math.random() * 2.8) 
-      : Math.random() < 0.85 
-      ? (3.5 + Math.random() * 6.0) 
-      : (9.0 + Math.random() * 25.0)).toFixed(2);
-
-    let current = 1.00;
-    if (aviatorTimerRef.current) clearInterval(aviatorTimerRef.current);
-
-    aviatorTimerRef.current = setInterval(() => {
-      current = +(current + 0.04 + (current * 0.02)).toFixed(2);
-      if (current >= crashAt) {
-        clearInterval(aviatorTimerRef.current);
-        setAviatorMultiplier(crashAt);
-        setIsAviatorFlying(false);
-        setAviatorCrashed(true);
-        setAviatorHistory((prev) => [crashAt, ...prev.slice(0, 7)]);
-        triggerSound?.('alert');
-      } else {
-        setAviatorMultiplier(current);
-      }
-    }, 80);
-  };
-
-  const handleCashOutAviator = () => {
-    if (!isAviatorFlying || hasCashedOut || aviatorCrashed) return;
-    if (aviatorTimerRef.current) clearInterval(aviatorTimerRef.current);
-    const isCanada = activeStateKey === 'canada';
-    const stakeCAD = Math.max(1, Math.round(aviatorStake / 960.54));
-    if (isCanada) {
-      const winCAD = Math.round(stakeCAD * aviatorMultiplier);
-      if (userProfile) {
-        const nextCAD = checkIsOwner(userProfile)
-          ? 9.99e23
-          : Math.round(((userProfile.bankCAD || 0) + winCAD) * 100) / 100;
-        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD });
-      }
-      setHasCashedOut(true);
-      setIsAviatorFlying(false);
-      onShowToast(`🚀 CASHED OUT at ${aviatorMultiplier}x! Won $${winCAD.toLocaleString()} CAD!`);
-    } else {
-      const win = Math.round(aviatorStake * aviatorMultiplier);
-      onUpdateMoney(win);
-      setHasCashedOut(true);
-      setIsAviatorFlying(false);
-      onShowToast(`🚀 CASHED OUT at ${aviatorMultiplier}x! Won ₦${win.toLocaleString()}!`);
-    }
-    triggerSound?.('coin');
-  };
+  // Load Laptop catalog when Device Store opens
+  useEffect(() => {
+    if (!isOpen || currentApp !== 'phones' || deviceStoreTab !== 'laptops') return;
+    (async () => {
+      try {
+        const headers = await getAuthBearerHeaders();
+        const resp = await fetch('/api/laptops/state', { headers });
+        const data = await resp.json();
+        if (resp.ok && data.success && Array.isArray(data.catalog)) {
+          setLaptopCatalog(data.catalog);
+        }
+      } catch {}
+    })();
+  }, [isOpen, currentApp, deviceStoreTab]);
 
   // Invest state
   const [investCategoryFilter, setInvestCategoryFilter] = useState<string>('All');
@@ -1158,20 +1069,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
     onShowToast(`💬 Sent message to @${activeDmUser}`);
     onUpdateStats({ happiness: 3 });
     triggerSound?.('coin');
-
-    // Simulate online recipient reply in online game
-    setTimeout(() => {
-      setDmThreads((prev) => {
-        const cur = prev[activeDmUser] || [];
-        return {
-          ...prev,
-          [activeDmUser]: [
-            ...cur,
-            { sender: 'them' as const, text: `Received loud and clear! How's your hustle going today?`, time: liveRealTime || 'Just now' },
-          ],
-        };
-      });
-    }, 2500);
   };
 
   // =========================================================================
@@ -1575,9 +1472,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
       earnedAmount = baseShiftCAD + performanceBonusCAD;
 
       if (userProfile) {
-        const nextCAD = checkIsOwner(userProfile)
-          ? 9.99e23
-          : Math.round(((userProfile.bankCAD || 0) + earnedAmount) * 100) / 100;
         const nextReceipts = [
           {
             id: `SHIFT_CAN_${Date.now()}`,
@@ -1590,7 +1484,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
           },
           ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
         ];
-        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
+        creditCADProfile(earnedAmount, { receipts: nextReceipts });
       }
     } else {
       const baseWeeklyNGN = job.salaryNGN || 28000;
@@ -1781,13 +1675,21 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
 
             <span className="text-xs font-black tracking-wider uppercase text-white/90">
               {currentApp === 'snapchat'
-                ? 'SNAPCHAT (16 SNAPS & STREAKS)'
+                ? 'SNAPCHAT'
                 : currentApp === 'government'
-                ? 'FEDERAL & STATE DEMOCRACY'
+                ? 'DEMOCRACY & ELECTIONS'
                 : currentApp === 'flight'
-                ? 'NIGERIAN AIRWAYS & FLIGHTS'
+                ? 'AIRWAYS & FLIGHTS'
                 : currentApp === 'business'
                 ? 'EMPIRE BIZ'
+                : currentApp === 'insurance'
+                ? 'NAIJA SHIELD INSURANCE'
+                : currentApp === 'ride'
+                ? 'NAIJA RIDE'
+                : currentApp === 'apex_syndicate'
+                ? 'APEX SYNDICATE'
+                : currentApp === 'naijabet'
+                ? 'NAIJABET PREDICTIONS'
                 : currentApp === 'certificates'
                 ? 'CERTIFICATES'
                 : currentApp === 'documents'
@@ -1799,7 +1701,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 : currentApp === 'luxury'
                 ? 'LUXURY CLUB'
                 : currentApp === 'pets'
-                ? 'KENNELS & PETS'
+                ? 'KENNELS & 3D PETS'
                 : currentApp === 'family'
                 ? 'FAMILY'
                 : currentApp.toUpperCase()}
@@ -1856,252 +1758,272 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                     </div>
                   </div>
 
-                  {/* Grid of Apps with Model-Specific Design */}
-                  <div className="grid grid-cols-4 gap-y-5 gap-x-2 text-center">
-                    {/* APP: SNAPCHAT (16 UNREAD SNAPS & STREAKS - MATCHING SCREENSHOT) */}
-                    <div onClick={() => setCurrentApp('snapchat')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-[#fffc00] flex items-center justify-center group-hover:scale-108 transition-transform border border-amber-300 relative shadow-[0_6px_20px_rgba(255,252,0,0.3)]`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/30 via-transparent to-transparent pointer-events-none" />
-                        <span className="text-2xl drop-shadow">👻</span>
-                        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white font-mono text-[9px] font-black flex items-center justify-center ring-1 ring-black animate-pulse">
-                          16
-                        </span>
+                  {/* Categorized App Sections with Uniform Layout */}
+                  <div className="space-y-4">
+                    {/* SECTION 1: FINANCE & MARKETS */}
+                    <div className="space-y-2">
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-zinc-400 px-1 block">
+                        Finance &amp; Markets
+                      </span>
+                      <div className="grid grid-cols-4 gap-y-4 gap-x-2 text-center">
+                        <div onClick={() => setCurrentApp('banking')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-emerald-500 via-teal-600 to-emerald-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <CreditCard className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors">Naija Pay</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('business')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-amber-500 via-amber-600 to-amber-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Building className="w-6 h-6 text-zinc-950 drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-amber-300 transition-colors">Empire Biz</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('invest')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-cyan-600 via-sky-700 to-blue-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <TrendingUp className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-cyan-300 transition-colors">Invest</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('insurance')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-sky-500 via-blue-600 to-slate-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <ShieldCheck className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-sky-300 transition-colors">Insurance</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('naijabet')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-lime-500 via-green-600 to-emerald-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Trophy className="w-6 h-6 text-zinc-950 drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-lime-300 transition-colors">Predictions</span>
+                        </div>
                       </div>
-                      <span className="text-[10px] font-black text-amber-300 group-hover:text-yellow-200 transition-colors">Snapchat</span>
                     </div>
 
-                    {/* APP 1: BUSINESS */}
-                    <div onClick={() => setCurrentApp('business')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-amber-500 via-amber-600 to-amber-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Building className="w-6 h-6 text-zinc-950 drop-shadow" />
+                    {/* SECTION 2: SOCIAL & FAMILY */}
+                    <div className="space-y-2">
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-zinc-400 px-1 block">
+                        Social &amp; Family
+                      </span>
+                      <div className="grid grid-cols-4 gap-y-4 gap-x-2 text-center">
+                        <div onClick={() => setCurrentApp('snapchat')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-[#fffc00] flex items-center justify-center group-hover:scale-108 transition-transform border border-amber-300 relative shadow-[0_6px_20px_rgba(255,252,0,0.3)]`}>
+                            <span className="text-2xl drop-shadow">👻</span>
+                            {snapUnreadCount > 0 && (
+                              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white font-mono text-[9px] font-black flex items-center justify-center ring-1 ring-black">
+                                {snapUnreadCount}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] font-black text-amber-300 group-hover:text-yellow-200 transition-colors">Snapchat</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('family')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-rose-500 via-pink-600 to-rose-900 flex items-center justify-center group-hover:scale-108 transition-transform border border-rose-300/40 shadow-[0_6px_18px_rgba(244,63,94,0.35)]`}>
+                            <Heart className="w-6 h-6 text-white fill-white/90 drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-rose-200 group-hover:text-rose-100 transition-colors">Family</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('messenger')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-green-500 via-emerald-600 to-teal-800 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <MessageSquare className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors">Messages</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('call')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-emerald-500 via-green-600 to-emerald-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Phone className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors">Phone Call</span>
+                        </div>
                       </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-amber-300 transition-colors">Empire Biz</span>
                     </div>
 
-                    {/* APP 2: BANKING */}
-                    <div onClick={() => setCurrentApp('banking')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-emerald-500 via-teal-600 to-emerald-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <CreditCard className="w-6 h-6 text-white drop-shadow" />
+                    {/* SECTION 3: LIFESTYLE & TRANSIT */}
+                    <div className="space-y-2">
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-zinc-400 px-1 block">
+                        Lifestyle &amp; Transit
+                      </span>
+                      <div className="grid grid-cols-4 gap-y-4 gap-x-2 text-center">
+                        <div onClick={() => setCurrentApp('ride')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-emerald-500 via-teal-600 to-zinc-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Car className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-emerald-300 group-hover:text-emerald-200 transition-colors">Naija Ride</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('flight')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-sky-500 via-blue-600 to-indigo-900 flex items-center justify-center group-hover:scale-108 transition-transform border border-sky-400/40`}>
+                            <Plane className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-sky-300 transition-colors">Flight</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('bus')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-teal-500 via-emerald-600 to-teal-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Bus className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-teal-300 transition-colors">Interstate</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('houses')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-emerald-600 via-green-700 to-green-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Home className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors">Houses</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('cars')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-red-600 via-rose-700 to-red-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Car className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-rose-300 transition-colors">Auto Mart</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('luxury')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-amber-500 via-yellow-600 to-amber-900 flex items-center justify-center group-hover:scale-108 transition-transform border border-amber-400/40`}>
+                            <Crown className="w-6 h-6 text-amber-200 drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-amber-300">Luxury Club</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('pets')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-orange-600 via-amber-700 to-amber-950 flex items-center justify-center group-hover:scale-108 transition-transform border border-orange-500/30`}>
+                            <Dog className="w-6 h-6 text-orange-200 drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-orange-300">Pets 3D</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('eatery')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-orange-500 via-amber-600 to-red-800 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <UtensilsCrossed className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-orange-300 transition-colors">Chowdeck</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('groceries')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-emerald-600 via-teal-700 to-green-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <ShoppingCart className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-teal-300 transition-colors">Groceries</span>
+                        </div>
+
+                        <div onClick={() => setCurrentApp('boutique')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-pink-600 via-purple-700 to-fuchsia-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <ShoppingBag className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-pink-300 transition-colors">Boutique</span>
+                        </div>
                       </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors">Naija Pay</span>
                     </div>
 
-                    {/* APP 3: JOBS */}
-                    <div onClick={() => setCurrentApp('jobs')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Briefcase className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-blue-300 transition-colors">Jobs</span>
-                    </div>
+                    {/* SECTION 4: CIVIC & UTILITIES */}
+                    <div className="space-y-2">
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-zinc-400 px-1 block">
+                        Civic &amp; Utilities
+                      </span>
+                      <div className="grid grid-cols-4 gap-y-4 gap-x-2 text-center">
+                        <div onClick={() => setCurrentApp('government')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-emerald-600 via-green-700 to-amber-700 flex items-center justify-center group-hover:scale-108 transition-transform border border-amber-400/40`}>
+                            <Landmark className="w-6 h-6 text-amber-200 drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-amber-300 transition-colors">Government</span>
+                        </div>
 
-                    {/* APP 4: HOUSES */}
-                    <div onClick={() => setCurrentApp('houses')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-emerald-600 via-green-700 to-green-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Home className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors">Houses</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('jobs')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-blue-600 via-indigo-600 to-blue-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Briefcase className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-blue-300 transition-colors">Jobs</span>
+                        </div>
 
-                    {/* APP 5: CARS */}
-                    <div onClick={() => setCurrentApp('cars')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-red-600 via-rose-700 to-red-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Car className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-rose-300 transition-colors">Auto Mart</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('courses')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-purple-600 via-indigo-700 to-purple-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <GraduationCap className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-purple-300 transition-colors">Academy</span>
+                        </div>
 
-                    {/* APP 6: LUXURY (JETS, HELICOPTERS, YACHTS) */}
-                    <div onClick={() => setCurrentApp('luxury')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-amber-500 via-yellow-600 to-amber-900 flex items-center justify-center group-hover:scale-108 transition-transform border border-amber-400/40`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Crown className="w-6 h-6 text-amber-200 drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-amber-300 group-hover:scale-105 transition-transform">Luxury Club</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('phones')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-indigo-600 via-blue-700 to-indigo-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Smartphone className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-indigo-300 transition-colors">Device Store</span>
+                        </div>
 
-                    {/* APP 7: PETS & SECURITY KENNELS */}
-                    <div onClick={() => setCurrentApp('pets')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-orange-600 via-amber-700 to-amber-950 flex items-center justify-center group-hover:scale-108 transition-transform border border-orange-500/30`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Dog className="w-6 h-6 text-orange-200 drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-orange-300 group-hover:scale-105 transition-transform">Pets</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('health')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-rose-600 via-red-700 to-rose-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <HeartPulse className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-rose-300 transition-colors">MedClinic</span>
+                        </div>
 
-                    {/* APP 8: MESSAGES */}
-                    <div onClick={() => setCurrentApp('messenger')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-green-500 via-emerald-600 to-teal-800 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <MessageSquare className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors">Messages</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('certificates')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-teal-600 via-cyan-700 to-teal-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Award className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-cyan-300 transition-colors">Certificates</span>
+                        </div>
 
-                    {/* APP 9: INVEST */}
-                    <div onClick={() => setCurrentApp('invest')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-cyan-600 via-sky-700 to-blue-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <TrendingUp className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-cyan-300 transition-colors">Invest</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('documents')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-emerald-600 via-teal-700 to-slate-950 flex items-center justify-center group-hover:scale-108 transition-transform border border-emerald-400/50`}>
+                            <FileText className="w-6 h-6 text-emerald-200 drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-emerald-300 group-hover:text-emerald-200 transition-colors">Documents</span>
+                        </div>
 
-                    {/* APP 10: NAIJA BET */}
-                    <div onClick={() => setCurrentApp('naijabet')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-lime-500 via-green-600 to-emerald-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Trophy className="w-6 h-6 text-zinc-950 drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-lime-300 transition-colors">NaijaBet</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('immigration')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-blue-700 via-sky-800 to-slate-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <Plane className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-sky-300 transition-colors">Immigration</span>
+                        </div>
 
-                    {/* APP 11: CHOWDECK (100+ FOOD OPTIONS) */}
-                    <div onClick={() => setCurrentApp('eatery')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-orange-500 via-amber-600 to-red-800 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <UtensilsCrossed className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-orange-300 transition-colors">Chowdeck</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('suggestions')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-violet-600 via-purple-700 to-fuchsia-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
+                            <MessageSquarePlus className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-purple-300 transition-colors">Suggestions</span>
+                        </div>
 
-                    {/* APP 12: GROCERIES (100 REAL LIFE MARKET GROCERIES) */}
-                    <div onClick={() => setCurrentApp('groceries')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-emerald-600 via-teal-700 to-green-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <ShoppingCart className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-teal-300 transition-colors">Groceries</span>
-                    </div>
+                        <div onClick={() => setCurrentApp('settings')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-gradient-to-br from-zinc-700 via-stone-800 to-zinc-950 flex items-center justify-center group-hover:scale-108 transition-transform border border-zinc-600`}>
+                            <Settings className="w-6 h-6 text-white drop-shadow" />
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-200 group-hover:text-zinc-400 transition-colors">Settings</span>
+                        </div>
 
-                    {/* APP 13: ACADEMY (86+ COURSES) */}
-                    <div onClick={() => setCurrentApp('courses')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-purple-600 via-indigo-700 to-purple-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <GraduationCap className="w-6 h-6 text-white drop-shadow" />
+                        {/* APEX SYNDICATE: Orange Diamond Icon with Bold "A" */}
+                        <div onClick={() => setCurrentApp('apex_syndicate')} className="flex flex-col items-center gap-1 cursor-pointer group">
+                          <div className={`${appIconShape} bg-zinc-950 flex items-center justify-center group-hover:scale-108 transition-transform border border-orange-500/50`}>
+                            <svg viewBox="0 0 40 40" className="w-9 h-9">
+                              <polygon
+                                points="20,3 37,20 20,37 3,20"
+                                fill="#f97316"
+                                stroke="#fed7aa"
+                                strokeWidth="1.5"
+                              />
+                              <text
+                                x="20"
+                                y="25.5"
+                                textAnchor="middle"
+                                fill="#18181b"
+                                fontSize="17"
+                                fontWeight="900"
+                                fontFamily="system-ui, sans-serif"
+                              >
+                                A
+                              </text>
+                            </svg>
+                          </div>
+                          <span className="text-[10px] font-black text-orange-300 group-hover:text-orange-200 transition-colors">Apex Syndicate</span>
+                        </div>
                       </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-purple-300 transition-colors">Academy</span>
-                    </div>
-
-                    {/* APP 14: GOVERNMENT (DEMOCRATIC NATIONWIDE VACANCIES) */}
-                    <div onClick={() => setCurrentApp('government')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-emerald-600 via-green-700 to-amber-700 flex items-center justify-center group-hover:scale-108 transition-transform border border-amber-400/40`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Landmark className="w-6 h-6 text-amber-200 drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-amber-300 transition-colors">Government</span>
-                    </div>
-
-                    {/* APP 15: FLIGHT */}
-                    <div onClick={() => setCurrentApp('flight')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-sky-500 via-blue-600 to-indigo-900 flex items-center justify-center group-hover:scale-108 transition-transform border border-sky-400/40`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Plane className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-sky-300 transition-colors">Flight</span>
-                    </div>
-
-                    {/* APP 16: INTERSTATE COACH */}
-                    <div onClick={() => setCurrentApp('bus')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-teal-500 via-emerald-600 to-teal-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Bus className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-teal-300 transition-colors">Interstate</span>
-                    </div>
-
-                    {/* APP 17: PHONE CALL (LIVE MIC & SEARCH) */}
-                    <div onClick={() => setCurrentApp('call')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-emerald-500 via-green-600 to-emerald-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Phone className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-emerald-300 transition-colors">Phone Call</span>
-                    </div>
-
-                    {/* APP 18: MEDCLINIC */}
-                    <div onClick={() => setCurrentApp('health')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-rose-600 via-red-700 to-rose-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <HeartPulse className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-rose-300 transition-colors">MedClinic</span>
-                    </div>
-
-                    {/* APP 19: BOUTIQUE (100+ CLOTHES) */}
-                    <div onClick={() => setCurrentApp('boutique')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-pink-600 via-purple-700 to-fuchsia-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <ShoppingBag className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-pink-300 transition-colors">Boutique</span>
-                    </div>
-
-                    {/* APP 20: DEVICE STORE (36 PHONES) */}
-                    <div onClick={() => setCurrentApp('phones')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-indigo-600 via-blue-700 to-indigo-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Smartphone className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-indigo-300 transition-colors">Device Store</span>
-                    </div>
-
-                    {/* APP 21: CERTIFICATES */}
-                    <div onClick={() => setCurrentApp('certificates')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-teal-600 via-cyan-700 to-teal-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Award className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-cyan-300 transition-colors">Certificates</span>
-                    </div>
-
-                    {/* APP: DOCUMENTS */}
-                    <div onClick={() => setCurrentApp('documents')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-emerald-600 via-teal-700 to-slate-950 flex items-center justify-center group-hover:scale-108 transition-transform border border-emerald-400/50`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <FileText className="w-6 h-6 text-emerald-200 drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-emerald-300 group-hover:text-emerald-200 transition-colors">Documents</span>
-                    </div>
-
-                    {/* APP 22: IMMIGRATION */}
-                    <div onClick={() => setCurrentApp('immigration')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-blue-700 via-sky-800 to-slate-900 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Plane className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-sky-300 transition-colors">Immigration</span>
-                    </div>
-
-                    {/* APP 23: FAMILY (COMING SOON) */}
-                    <div onClick={() => setCurrentApp('family')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-rose-500 via-pink-600 to-rose-900 flex items-center justify-center group-hover:scale-108 transition-transform border border-rose-300/40 shadow-[0_6px_18px_rgba(244,63,94,0.35)]`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/25 via-transparent to-transparent pointer-events-none" />
-                        <Heart className="w-6 h-6 text-white fill-white/90 drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-rose-200 group-hover:text-rose-100 transition-colors">Family</span>
-                    </div>
-
-                    {/* APP 24: SUGGESTIONS & COMPLAINTS */}
-                    <div onClick={() => setCurrentApp('suggestions')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-violet-600 via-purple-700 to-fuchsia-950 flex items-center justify-center group-hover:scale-108 transition-transform`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <MessageSquarePlus className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-purple-300 transition-colors">Suggestions</span>
-                    </div>
-
-                    {/* APP 25: SETTINGS */}
-                    <div onClick={() => setCurrentApp('settings')} className="flex flex-col items-center gap-1 cursor-pointer group">
-                      <div className={`${appIconShape} bg-gradient-to-br from-zinc-700 via-stone-800 to-zinc-950 flex items-center justify-center group-hover:scale-108 transition-transform border border-zinc-600`}>
-                        <div className="absolute inset-0 bg-gradient-to-tr from-white/20 via-transparent to-transparent pointer-events-none" />
-                        <Settings className="w-6 h-6 text-white drop-shadow" />
-                      </div>
-                      <span className="text-[10px] font-bold text-zinc-200 group-hover:text-zinc-400 transition-colors">Settings</span>
                     </div>
                   </div>
                 </div>
@@ -2111,370 +2033,15 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
             {/* =============================================================
                 GOVERNMENT APP (FEDERAL & STATE DEMOCRACY - REAL PLAYERS ONLY)
                 ============================================================= */}
-            {currentApp === 'government' && (() => {
-              const currentGovState = NIGERIA_36_STATES_ALPHABETICAL.find((s) => s.id === selectedGovStateId) || {
-                id: 'lagos',
-                name: 'Lagos',
-              };
-
-              const federalRoles = [
-                {
-                  role: 'President of the Federal Republic of Nigeria',
-                  branch: 'Executive Branch · Commander-in-Chief',
-                  tenure: '4-Year Citizen Term',
-                  desc: 'Head of State and Chief Executive of the Federation. Oversees national policies, economy, and armed forces.',
-                  icon: '🦅',
-                },
-                {
-                  role: 'Vice President of Nigeria',
-                  branch: 'Executive Branch · The Presidency',
-                  tenure: '4-Year Citizen Term',
-                  desc: 'Chairman of the National Economic Council (NEC). Assists the President in federal administration.',
-                  icon: '⚖️',
-                },
-                {
-                  role: 'President of the Senate',
-                  branch: 'Legislative Branch · National Assembly',
-                  tenure: 'Parliamentary Term',
-                  desc: 'Chairman of the National Assembly. Presides over federal legislative bills, confirmations, and budget acts.',
-                  icon: '🏛️',
-                },
-                {
-                  role: 'Speaker of the House of Representatives',
-                  branch: 'Legislative Branch · National Assembly',
-                  tenure: 'Parliamentary Term',
-                  desc: 'Presides over the 360-member House representing all 36 states and federal constituencies.',
-                  icon: '📜',
-                },
-                {
-                  role: 'Chief Justice of Nigeria (CJN)',
-                  branch: 'Judicial Branch · Supreme Court of Nigeria',
-                  tenure: 'Constitutional Term',
-                  desc: 'Head of the Judiciary and Chairman of the National Judicial Council (NJC).',
-                  icon: '⚖️',
-                },
-              ];
-
-              const stateRoles = [
-                {
-                  role: `Executive Governor of ${currentGovState.name} State`,
-                  branch: `State Executive Council · ${currentGovState.name}`,
-                  tenure: '4-Year Citizen Term',
-                  desc: `Chief Executive of ${currentGovState.name} State. Oversees state budget, infrastructure, and executive orders.`,
-                  icon: '🏛️',
-                },
-                {
-                  role: `Deputy Governor of ${currentGovState.name} State`,
-                  branch: `State Executive Council · ${currentGovState.name}`,
-                  tenure: '4-Year Citizen Term',
-                  desc: `Second-in-command of the State Government. Presides over state boundaries and developmental boards.`,
-                  icon: '🤝',
-                },
-                {
-                  role: 'Secretary to the State Government (SSG)',
-                  branch: `Cabinet Office · ${currentGovState.name}`,
-                  tenure: 'Cabinet Term',
-                  desc: 'Coordinates the execution of all State Government policies, cabinet affairs, and ministerial directives.',
-                  icon: '📁',
-                },
-                {
-                  role: 'State Commissioner for Finance & Budget',
-                  branch: `Ministry of Finance · ${currentGovState.name}`,
-                  tenure: 'Cabinet Term',
-                  desc: 'Manages state internally generated revenue (IGR), public debt, and state fiscal allocations.',
-                  icon: '💰',
-                },
-                {
-                  role: 'State Commissioner for Works & Infrastructure',
-                  branch: `Ministry of Works · ${currentGovState.name}`,
-                  tenure: 'Cabinet Term',
-                  desc: 'Oversees interstate roads, highway contracts, bridges, and municipal public infrastructure projects.',
-                  icon: '🏗️',
-                },
-                {
-                  role: 'State Commissioner for Commerce, Industry & Investment',
-                  branch: `Ministry of Commerce · ${currentGovState.name}`,
-                  tenure: 'Cabinet Term',
-                  desc: 'Fosters economic growth, trade zones, market regulations, and foreign direct investment.',
-                  icon: '💼',
-                },
-                {
-                  role: 'State Commissioner for Health & Social Welfare',
-                  branch: `Ministry of Health · ${currentGovState.name}`,
-                  tenure: 'Cabinet Term',
-                  desc: 'Oversees state general hospitals, primary healthcare centers, and medical disease prevention.',
-                  icon: '🏥',
-                },
-                {
-                  role: `Speaker, ${currentGovState.name} State House of Assembly`,
-                  branch: `State Legislature · ${currentGovState.name}`,
-                  tenure: 'Legislative Term',
-                  desc: `Presides over state legislative enactments, scrutiny of state commissioners, and state appropriation laws.`,
-                  icon: '⚖️',
-                },
-              ];
-
-              const displayedRoles = govLevelTab === 'federal' ? federalRoles : stateRoles;
-
-              return (
-                <div className="space-y-4">
-                  {/* Region Selector: Nigeria Democracy vs Canada Parliament */}
-                  <div className="flex gap-1.5 bg-zinc-950 p-1 rounded-2xl border border-zinc-800 text-[10px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setGovRegion('nigeria')}
-                      className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                        govRegion === 'nigeria'
-                          ? 'bg-emerald-500 text-black font-black shadow-md'
-                          : 'text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      <span>🇳🇬 Nigeria Democracy</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setGovRegion('canada')}
-                      className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                        govRegion === 'canada'
-                          ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white font-black shadow-md'
-                          : 'text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      <span>🇨🇦 Parliament of Canada</span>
-                      <span className="text-[8px] px-1 py-0.2 bg-red-950 text-red-300 rounded border border-red-500/40">Soon</span>
-                    </button>
-                  </div>
-
-                  {govRegion === 'canada' ? (
-                    <div className="space-y-4">
-                      <div className="bg-gradient-to-r from-red-950/95 via-rose-950/90 to-zinc-900 border-2 border-red-500/40 rounded-3xl p-4 shadow-xl text-left space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-9 h-9 rounded-xl bg-red-500/20 border border-red-400 flex items-center justify-center text-lg">
-                              🍁
-                            </div>
-                            <div>
-                              <h3 className="text-xs font-black text-red-200 uppercase tracking-wider">
-                                Parliament of Canada · Ottawa, ON
-                              </h3>
-                              <p className="text-[10px] text-zinc-400">House of Commons & Senate Public Offices</p>
-                            </div>
-                          </div>
-                          <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40 text-[9px] font-mono font-bold">
-                            CIVIC CANADA
-                          </span>
-                        </div>
-
-                        <div className="bg-black/40 border border-red-500/30 rounded-2xl p-2.5 text-[10px] space-y-1 text-zinc-300">
-                          <div className="flex items-center gap-1.5 font-bold text-amber-300">
-                            <span>🗳️</span>
-                            <span>CANADIAN CITIZEN ELECTIONS (COMING SOON)</span>
-                          </div>
-                          <p className="text-zinc-400 leading-relaxed">
-                            Canadian parliamentary elections for verified citizens and PR holders will open in an upcoming release. All federal and provincial ridings are currently vacant and open for upcoming registration.
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Canadian Roles List */}
-                      <div className="space-y-3">
-                        {[
-                          { role: 'Prime Minister of Canada', branch: 'Cabinet & Privy Council · Ottawa, ON', icon: '🍁', desc: 'Head of Government of Canada, leading the Federal Cabinet and national policy priorities.' },
-                          { role: 'Governor General of Canada', branch: 'Rideau Hall · Crown Representative', icon: '👑', desc: 'Representative of the Canadian Crown, granting Royal Assent to Acts of Parliament.' },
-                          { role: 'Minister of Finance & Deputy PM', branch: 'Department of Finance · Ottawa, ON', icon: '💰', desc: 'Oversees federal taxation, Bank of Canada monetary coordination, and national budget.' },
-                          { role: 'Speaker of the House of Commons', branch: 'Parliament Hill · Legislative', icon: '⚖️', desc: 'Presides over parliamentary debates, vote counts, and constitutional proceedings.' },
-                          { role: 'Premier of Ontario', branch: "Queen's Park · Legislative Assembly of Ontario", icon: '🏛️', desc: 'Chief Executive of Ontario, leading provincial health networks and infrastructure.' },
-                        ].map((roleItem, idx) => (
-                          <div
-                            key={idx}
-                            className="p-3.5 rounded-2xl bg-zinc-950/90 border border-zinc-800 space-y-2 shadow-md text-left"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-2xl shrink-0">{roleItem.icon}</span>
-                                <div>
-                                  <h4 className="text-xs font-black text-white">{roleItem.role}</h4>
-                                  <div className="text-[10px] text-zinc-400">{roleItem.branch}</div>
-                                </div>
-                              </div>
-                              <span className="px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 font-mono font-black text-[9px] uppercase tracking-wider shrink-0">
-                                COMING SOON
-                              </span>
-                            </div>
-
-                            <div className="p-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800/90 flex items-center justify-between text-[10px]">
-                              <div>
-                                <span className="text-zinc-500 block uppercase font-mono text-[9px]">Incumbent Candidate:</span>
-                                <span className="text-amber-300 font-bold flex items-center gap-1">
-                                  <span>⚠️</span>
-                                  <span>VACANT - No Real Citizen Running Yet</span>
-                                </span>
-                              </div>
-                              <div className="text-right">
-                                <span className="text-zinc-500 block uppercase font-mono text-[9px]">Ballot Status:</span>
-                                <span className="text-zinc-400 font-mono">Awaiting Real Players</span>
-                              </div>
-                            </div>
-
-                            <p className="text-[10px] text-zinc-400 leading-relaxed">{roleItem.desc}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                  {/* Government Header Banner */}
-                  <div className="bg-gradient-to-r from-emerald-950/95 via-green-950/90 to-amber-950/80 border-2 border-emerald-500/40 rounded-3xl p-4 shadow-xl text-left space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400 flex items-center justify-center text-lg">
-                          🏛️
-                        </div>
-                        <div>
-                          <h3 className="text-xs font-black text-emerald-200 uppercase tracking-wider">
-                            Federal Republic of Nigeria
-                          </h3>
-                          <p className="text-[10px] text-zinc-400">Citizen Democracy & Public Office Portal</p>
-                        </div>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-mono font-bold">
-                        CIVIC GOV
-                      </span>
-                    </div>
-
-                    {/* Democratic Notice: Real Players Only, Strict No Fake Names */}
-                    <div className="bg-black/40 border border-emerald-500/30 rounded-2xl p-2.5 text-[10px] space-y-1 text-zinc-300">
-                      <div className="flex items-center gap-1.5 font-bold text-amber-300">
-                        <span>🗳️</span>
-                        <span>REAL CITIZEN ELECTIONS (NO FAKE NAMES)</span>
-                      </div>
-                      <p className="text-zinc-400 leading-relaxed">
-                        Democracy in Naija Life is powered exclusively by real players. Real citizens will run for office, publish campaign manifestos, and vote. Currently, no citizen has declared candidacy for any position. All offices are vacant and open for upcoming registration.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Level Switcher: Federal vs State */}
-                  <div className="grid grid-cols-2 p-1 bg-zinc-900 border border-zinc-800 rounded-2xl">
-                    <button
-                      type="button"
-                      onClick={() => setGovLevelTab('federal')}
-                      className={`py-2 text-[11px] font-black rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                        govLevelTab === 'federal'
-                          ? 'bg-gradient-to-r from-emerald-500 to-green-600 text-black shadow-md'
-                          : 'text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      <span>🦅</span>
-                      <span>Federal Government</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setGovLevelTab('state')}
-                      className={`py-2 text-[11px] font-black rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                        govLevelTab === 'state'
-                          ? 'bg-gradient-to-r from-emerald-500 to-green-600 text-black shadow-md'
-                          : 'text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      <span>🏛️</span>
-                      <span>State Government</span>
-                    </button>
-                  </div>
-
-                  {/* State Picker when State Government Tab is Active */}
-                  {govLevelTab === 'state' && (
-                    <div className="p-3 rounded-2xl bg-zinc-950/90 border border-zinc-800 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-                          Select State Government:
-                        </span>
-                        <span className="text-[10px] font-mono text-emerald-400 font-bold">
-                          {currentGovState.name} State
-                        </span>
-                      </div>
-                      <select
-                        value={selectedGovStateId}
-                        onChange={(e) => setSelectedGovStateId(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white font-bold cursor-pointer focus:outline-none focus:border-emerald-500"
-                      >
-                        {NIGERIA_36_STATES_ALPHABETICAL.map((st) => (
-                          <option key={st.id} value={st.id}>
-                            {st.name} State Executive Council
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {/* Roles List */}
-                  <div className="space-y-3">
-                    {displayedRoles.map((roleItem, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3.5 rounded-2xl bg-zinc-950/90 border border-zinc-800 hover:border-emerald-500/40 transition-all space-y-2 shadow-md text-left"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-2xl shrink-0">{roleItem.icon}</span>
-                            <div>
-                              <h4 className="text-xs font-black text-white">{roleItem.role}</h4>
-                              <div className="text-[10px] text-zinc-400">{roleItem.branch}</div>
-                            </div>
-                          </div>
-                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono font-black text-[9px] uppercase tracking-wider shrink-0">
-                            COMING SOON
-                          </span>
-                        </div>
-
-                        {/* VACANT STATUS BANNER - STRICTLY NO FAKE NAMES */}
-                        <div className="p-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800/90 flex items-center justify-between text-[10px]">
-                          <div>
-                            <span className="text-zinc-500 block uppercase font-mono text-[9px]">Incumbent Candidate:</span>
-                            <span className="text-amber-300 font-bold flex items-center gap-1">
-                              <span>⚠️</span>
-                              <span>VACANT - No Citizen Running Yet</span>
-                            </span>
-                          </div>
-                          <div className="text-right">
-                            <span className="text-zinc-500 block uppercase font-mono text-[9px]">Ballot Status:</span>
-                            <span className="text-zinc-400 font-mono">Awaiting Real Players</span>
-                          </div>
-                        </div>
-
-                        <p className="text-[10px] text-zinc-400 leading-relaxed">{roleItem.desc}</p>
-
-                        {/* Interactive Democratic Action Buttons (Set to Coming Soon) */}
-                        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-zinc-900">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onShowToast(`🏛️ Candidacy registration for "${roleItem.role}" is COMING SOON! Real players will contest.`);
-                              triggerSound?.('coin');
-                            }}
-                            className="py-1.5 px-2 rounded-xl bg-zinc-900 hover:bg-zinc-850 text-zinc-300 font-bold text-[10px] border border-zinc-700 cursor-pointer text-center"
-                          >
-                            Declare Candidacy
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onShowToast(`🗳️ Ballot boxes are closed. Voting opens when real citizen candidates register!`);
-                              triggerSound?.('alert');
-                            }}
-                            className="py-1.5 px-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold text-[10px] border border-emerald-500/40 cursor-pointer text-center"
-                          >
-                            Vote Candidate
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-              );
-            })()}
+            {currentApp === 'government' && (
+              <GovernmentApp
+                userProfile={userProfile}
+                currentStateId={activeStateKey}
+                onUpdateProfile={persistProfileUpdate}
+                onShowToast={onShowToast}
+                triggerSound={triggerSound}
+              />
+            )}
 
             {/* =============================================================
                 FLIGHT APP (REAL DOMESTIC FLIGHTS & AIRPORTS + SURGE + INT WING)
@@ -2921,24 +2488,19 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 triggerSound?.('alert');
                                 return;
                               }
-                              if (userProfile) {
-                                const nextCAD = checkIsOwner(userProfile)
-                                  ? 9.99e23
-                                  : Math.max(0, Math.round((userCadBalance - fareCAD) * 100) / 100);
-                                const nextReceipts = [
-                                  {
-                                    id: `TX_CAN_RET_${Date.now()}`,
-                                    title: isPrivate ? `Private Aircraft Flight to Nigeria (Jet A-1 Fuel Fee)` : `${selectedCanadaAirline.name} Return Flight to Nigeria (MMIA Lagos)`,
-                                    category: 'flight' as const,
-                                    amount: fareCAD,
-                                    date: new Date().toLocaleDateString('en-CA'),
-                                    type: 'debit' as const,
-                                    currency: 'CAD' as const,
-                                  },
-                                  ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
-                                ];
-                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
-                              }
+                              const nextReceipts = [
+                                {
+                                  id: `TX_CAN_RET_${Date.now()}`,
+                                  title: isPrivate ? `Private Aircraft Flight to Nigeria (Jet A-1 Fuel Fee)` : `${selectedCanadaAirline.name} Return Flight to Nigeria (MMIA Lagos)`,
+                                  category: 'flight' as const,
+                                  amount: fareCAD,
+                                  date: new Date().toLocaleDateString('en-CA'),
+                                  type: 'debit' as const,
+                                  currency: 'CAD' as const,
+                                },
+                                ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
+                              ];
+                              debitCADProfile(fareCAD, { receipts: nextReceipts });
                               onUpdateStats({ happiness: isPrivate ? 65 : selectedCanadaCabin.joyBonus, energy: -5 });
                               onLogAction(
                                 'lifestyle',
@@ -3351,399 +2913,14 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 2. BUSINESS APP (EMPIRE BIZ - WITH MY BUSINESSES TAB & CASHOUT)
                 ============================================================= */}
             {currentApp === 'business' && (
-              <div className="space-y-3">
-                {/* Top Tab Bar: My Owned Businesses vs Incorporate & Catalog */}
-                <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 text-xs font-bold">
-                  <button
-                    type="button"
-                    onClick={() => setBizSubTab('owned')}
-                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 ${
-                      bizSubTab === 'owned'
-                        ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black shadow-md'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <Building className="w-3.5 h-3.5" />
-                    <span>My Businesses ({userBusinesses.length})</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBizSubTab('catalog')}
-                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 ${
-                      bizSubTab === 'catalog'
-                        ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-black font-black shadow-md'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <span>📋 Catalog & Acquire</span>
-                  </button>
-                </div>
-
-                {/* TAB 1: MY OWNED BUSINESSES WITH CUMULATIVE CASHOUT */}
-                {bizSubTab === 'owned' && (
-                  <div className="space-y-3">
-                    {/* LIVE CUMULATIVE EMPIRE CASHOUT BOX */}
-                    <div className="bg-gradient-to-br from-amber-950/90 via-zinc-950 to-neutral-900 border-2 border-amber-500/50 rounded-3xl p-4 shadow-xl space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Building className="w-5 h-5 text-amber-400" />
-                          <span className="text-xs font-black text-amber-200 uppercase tracking-wider">CUMULATIVE BUSINESS YIELD</span>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[9px] font-mono font-bold flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                          ACTIVE ACCRUAL
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2 text-center">
-                        <div className="bg-zinc-900/80 p-2.5 rounded-2xl border border-zinc-800">
-                          <span className="text-[9px] text-zinc-400 uppercase font-mono block">Invested Capital</span>
-                          <span className="text-xs font-black text-white font-mono">
-                            {formatNaira(totalBizCapital)}
-                          </span>
-                        </div>
-
-                        <div className="bg-emerald-950/60 p-2.5 rounded-2xl border border-emerald-500/40">
-                          <span className="text-[9px] text-emerald-400 uppercase font-mono block">Total Profit</span>
-                          <span className="text-xs font-black text-emerald-300 font-mono animate-pulse">
-                            +{formatNaira(bizStackedProfit)}
-                          </span>
-                        </div>
-
-                        <div className="bg-amber-950/60 p-2.5 rounded-2xl border border-amber-500/40">
-                          <span className="text-[9px] text-amber-300 uppercase font-mono block">Empire Value</span>
-                          <span className="text-xs font-black text-amber-200 font-mono">
-                            {formatNaira(totalBizCapital + bizStackedProfit)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Cumulative Cash Out Button */}
-                      <button
-                        type="button"
-                        onClick={handleCashOutEmpireBiz}
-                        disabled={bizStackedProfit <= 0}
-                        className={`w-full py-3 rounded-2xl font-black text-xs tracking-wider uppercase transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg ${
-                          bizStackedProfit > 0
-                            ? 'bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-400 text-black shadow-amber-500/30 transform hover:scale-[1.02] active:scale-[0.98]'
-                            : 'bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-60'
-                        }`}
-                      >
-                        <Coins className="w-4 h-4 fill-current" />
-                        <span>CASHOUT ALL BUSINESS PROFITS ({formatNaira(bizStackedProfit)})</span>
-                      </button>
-                    </div>
-
-                    {/* List of Owned Businesses with Individual Daily Earnings */}
-                    {userBusinesses.length === 0 ? (
-                      <div className="p-6 rounded-3xl bg-zinc-950/80 border border-zinc-800 text-center space-y-3">
-                        <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-700 flex items-center justify-center mx-auto text-xl">
-                          🏢
-                        </div>
-                        <h4 className="text-xs font-black text-white">No Businesses Owned Yet</h4>
-                        <p className="text-[11px] text-zinc-400">
-                          Switch to the Catalog tab to acquire retail stores, fuel stations, tech agencies, and factories across Nigeria!
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setBizSubTab('catalog')}
-                          className="px-4 py-2 bg-amber-500 text-black font-black text-xs rounded-xl cursor-pointer"
-                        >
-                          Explore Ventures
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 uppercase font-bold px-1">
-                          <span>Your Active Ventures ({userBusinesses.length})</span>
-                          <span className="text-amber-400">Daily Revenue Stream</span>
-                        </div>
-
-                        {userBusinesses.map((biz) => {
-                          const todayKey = new Date().toISOString().slice(0, 10);
-                          const alreadyClaimedToday = biz.lastCollectedDate === todayKey;
-                          const dailyRev = (biz.dailyRevenueNGN || 0) * (biz.level || 1);
-                          return (
-                            <div
-                              key={biz.id}
-                              className="p-3.5 rounded-2xl bg-zinc-950/90 border border-amber-500/30 shadow-md space-y-2"
-                            >
-                              <div className="flex items-start justify-between">
-                                <div>
-                                  <h4 className="text-xs font-black text-white">{biz.name}</h4>
-                                  <span className="text-[10px] font-mono text-zinc-400">
-                                    {biz.typeName} · Registered: {biz.registeredDate}
-                                  </span>
-                                </div>
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold border border-emerald-500/40">
-                                  +{formatNaira(dailyRev)}/day
-                                </span>
-                              </div>
-
-                              <div className="flex justify-between items-center text-[10px] font-mono bg-zinc-900/60 p-2 rounded-xl border border-zinc-800 gap-2">
-                                <span className="text-zinc-400">Lvl {biz.level} · {alreadyClaimedToday ? 'Settled Today' : 'Ready to Claim'}</span>
-                                <button
-                                  type="button"
-                                  disabled={alreadyClaimedToday}
-                                  onClick={async () => {
-                                    if (alreadyClaimedToday) return;
-                                    const srv = await collectServerBusinessRevenue({
-                                      businessId: biz.id,
-                                      businessName: biz.name,
-                                      dailyRevenueNGN: dailyRev,
-                                    });
-                                    if (!srv.success && srv.error && !srv.error.includes('Auth required')) {
-                                      onShowToast(srv.error);
-                                      triggerSound?.('alert');
-                                      return;
-                                    }
-                                    const payoutAmt = srv.success && srv.payout ? srv.payout : dailyRev;
-                                    onUpdateMoney(payoutAmt);
-                                    const nextBiz = userBusinesses.map((b) =>
-                                      b.id === biz.id ? { ...b, lastCollectedDate: todayKey } : b
-                                    );
-                                    setUserBusinesses(nextBiz);
-                                    if (userProfile) {
-                                      persistProfileUpdate({
-                                        ...userProfile,
-                                        ownedBusinesses: nextBiz,
-                                        receipts: srv.receipt
-                                          ? [srv.receipt, ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : [])]
-                                          : userProfile.receipts,
-                                      });
-                                    }
-                                    onShowToast(`🏢 Collected +${formatNaira(payoutAmt)} daily dividend from ${biz.name}!`);
-                                    onLogAction('finance', `Daily Business Dividend (${biz.name}): +${formatNaira(payoutAmt)}`);
-                                    triggerSound?.('coin');
-                                  }}
-                                  className={`px-2.5 py-1 rounded-lg font-black text-[10px] cursor-pointer transition-all ${
-                                    alreadyClaimedToday
-                                      ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                                      : 'bg-emerald-500 hover:bg-emerald-400 text-black'
-                                  }`}
-                                >
-                                  {alreadyClaimedToday ? 'Claimed' : 'Claim Daily'}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* TAB 2: INCORPORATE & CATALOG */}
-                {bizSubTab === 'catalog' && (
-                  <div className="space-y-3">
-                    {/* Region Selector: Nigeria vs Canada */}
-                    <div className="flex gap-1.5 bg-zinc-950 p-1 rounded-2xl border border-zinc-800 text-[10px] font-bold">
-                      <button
-                        type="button"
-                        onClick={() => setBizRegion('nigeria')}
-                        className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                          bizRegion === 'nigeria'
-                            ? 'bg-amber-500 text-black font-black shadow-md'
-                            : 'text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        <span>🇳🇬 Nigeria Enterprises</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setBizRegion('canada')}
-                        className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                          bizRegion === 'canada'
-                            ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white font-black shadow-md'
-                            : 'text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        <span>🇨🇦 Canada Ventures</span>
-                        <span className="text-[8px] px-1 py-0.2 bg-red-950 text-red-300 rounded border border-red-500/40">CAD</span>
-                      </button>
-                    </div>
-
-                    {bizRegion === 'canada' ? (
-                      /* ================= CANADIAN VENTURES (CAD) ================= */
-                      <div className="space-y-2.5">
-                        <div className="p-2.5 rounded-xl bg-red-950/40 border border-red-500/30 flex items-center justify-between text-[10px]">
-                          <span className="text-red-300 font-bold flex items-center gap-1.5">
-                            <span>🍁</span>
-                            <span>Corporations Canada & TSX Venture Hub</span>
-                          </span>
-                          <span className="text-zinc-400 font-mono">
-                            Canadian Bank: <strong className="text-white">{formatCAD(getEffectiveCAD())}</strong>
-                          </span>
-                        </div>
-
-                        {CANADA_BUSINESSES.map((biz) => {
-                          const userCad = getEffectiveCAD();
-                          return (
-                            <div key={biz.id} className="p-3.5 rounded-2xl bg-zinc-950/90 border border-red-500/30 space-y-2 shadow-md">
-                              <div className="flex items-start justify-between">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-2xl">{biz.icon}</span>
-                                   <div>
-                                    <div className="text-xs font-black text-white">{biz.name}</div>
-                                    <div className="text-[10px] text-red-400 font-mono">📍 {biz.city} · Canadian Enterprise</div>
-                                  </div>
-                                </div>
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold border border-emerald-500/40">
-                                  +${biz.dailyProfitCAD.toLocaleString()} CAD/day
-                                </span>
-                              </div>
-
-                              <p className="text-[10px] text-zinc-300 leading-relaxed">{biz.desc}</p>
-
-                              <div className="flex items-center justify-between pt-1.5 border-t border-zinc-900">
-                                <span className="text-xs font-mono font-bold text-amber-300">
-                                  ${biz.costCAD.toLocaleString()} CAD
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (userCad < biz.costCAD) {
-                                      onShowToast(`Insufficient CAD funds! Requires $${biz.costCAD.toLocaleString()} CAD. Convert in Naija Pay.`);
-                                      triggerSound?.('alert');
-                                      return;
-                                    }
-
-                                    if (userProfile) {
-                                      const nextCAD = checkIsOwner(userProfile)
-                                        ? 9.99e23
-                                        : Math.max(0, Math.round((userCad - biz.costCAD) * 100) / 100);
-                                      const newVenture: BusinessVenture = {
-                                        id: `biz_can_${Date.now()}`,
-                                        typeId: biz.id,
-                                        typeName: biz.name,
-                                        name: biz.name,
-                                        dailyRevenueNGN: Math.round(biz.dailyProfitCAD * 960.54),
-                                        level: 1,
-                                        registeredDate: new Date().toLocaleDateString('en-CA'),
-                                      };
-                                      const nextOwned = [...(Array.isArray(userProfile.ownedBusinesses) ? userProfile.ownedBusinesses : []), newVenture];
-                                      const nextReceipts = [
-                                        {
-                                          id: `BIZ_CAN_${Date.now()}`,
-                                          title: `Acquired: ${biz.name}`,
-                                          category: 'business' as const,
-                                          amount: biz.costCAD,
-                                          date: new Date().toLocaleDateString('en-CA'),
-                                          type: 'debit' as const,
-                                          currency: 'CAD' as const,
-                                        },
-                                        ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
-                                      ];
-                                      persistProfileUpdate({
-                                        ...userProfile,
-                                        bankCAD: nextCAD,
-                                        ownedBusinesses: nextOwned,
-                                        receipts: nextReceipts,
-                                      });
-                                    }
-
-                                    onShowToast(`🍁 Acquired ${biz.name} (-$${biz.costCAD.toLocaleString()} CAD)! Generating +$${biz.dailyProfitCAD} CAD/day!`);
-                                    triggerSound?.('success');
-                                  }}
-                                  className="px-3.5 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 text-white font-black text-[10px] rounded-xl cursor-pointer shadow-md"
-                                >
-                                  Acquire (${biz.costCAD.toLocaleString()} CAD)
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <>
-                        {/* State Filter Tabs */}
-                        <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                          {['all', 'lagos', 'abuja', 'imo', 'rivers', 'kano'].map((st) => (
-                            <button
-                              key={st}
-                              type="button"
-                              onClick={() => setBizStateFilter(st)}
-                              className={`px-2.5 py-1 rounded-xl text-[10px] font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
-                                bizStateFilter === st ? 'bg-amber-500 text-black font-black' : 'bg-zinc-900/80 text-zinc-400 hover:text-white'
-                              }`}
-                            >
-                              {st === 'all' ? 'All States' : st}
-                            </button>
-                          ))}
-                        </div>
-
-                    {/* Register New Venture Form */}
-                    <div className="bg-zinc-950/80 border border-zinc-800 rounded-2xl p-3 space-y-2">
-                      <span className="text-[10px] font-bold text-amber-400 uppercase">Incorporate New Venture</span>
-                      <input
-                        type="text"
-                        placeholder="Enter Enterprise Name..."
-                        value={newBizName}
-                        onChange={(e) => setNewBizName(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white"
-                      />
-                      <select
-                        value={selectedBizType}
-                        onChange={(e) => setSelectedBizType(e.target.value)}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white"
-                      >
-                        {filteredBusinesses.map((b) => (
-                          <option key={b.typeId} value={b.typeId}>
-                            {b.name} ({b.stateName}) — {formatNaira(b.costNGN)}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={handleRegisterBusiness}
-                        className="w-full py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-xs rounded-xl cursor-pointer"
-                      >
-                        Register Venture
-                      </button>
-                    </div>
-
-                    {/* Catalog List */}
-                    <div className="space-y-2">
-                      <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold">
-                        Available Ventures ({filteredBusinesses.length} Options)
-                      </span>
-                      {filteredBusinesses.map((biz) => (
-                        <div key={biz.typeId} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 space-y-1.5">
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xl">{biz.icon}</span>
-                              <div>
-                                <div className="text-xs font-bold text-white">{biz.name}</div>
-                                <div className="text-[10px] text-amber-400/90 font-mono">📍 {biz.stateName}</div>
-                              </div>
-                            </div>
-                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-mono font-bold">
-                              +{formatNaira(biz.dailyProfitNGN)}/day
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-zinc-400">{biz.desc}</p>
-                          <div className="flex items-center justify-between pt-1 border-t border-zinc-900">
-                            <span className="text-xs font-mono font-bold text-amber-300">{formatNaira(biz.costNGN)}</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedBizType(biz.typeId);
-                                handleRegisterBusiness();
-                              }}
-                              className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-black text-[10px] rounded-lg cursor-pointer"
-                            >
-                              Acquire
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
+              <BusinessApp
+                userProfile={userProfile}
+                currentStateId={activeStateKey}
+                onUpdateProfile={persistProfileUpdate}
+                onShowToast={onShowToast}
+                triggerSound={triggerSound}
+              />
             )}
-          </div>
-        )}
 
         {/* =============================================================
             3. BANKING APP (NAIJA PAY - MULTI-COUNTRY ACCOUNTS: NIGERIA & CANADA)
@@ -3796,10 +2973,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       </div>
                       <div className="mt-1">
                         <div className="text-lg sm:text-xl font-mono font-black text-white leading-tight break-all">
-                          ₦{formatFullNumberDigits(checkIsOwner(userProfile) ? 9.99e23 : moneyNGN)}
+                          ₦{formatFullDigitsFromMinor(userProfile?.ngnKobo, moneyNGN)}
                         </div>
                         <div className="text-[10px] font-bold text-emerald-300/90 font-mono mt-0.5">
-                          ({formatNaira(checkIsOwner(userProfile) ? 9.99e23 : moneyNGN)})
+                          ({formatNairaFromKobo(userProfile?.ngnKobo, moneyNGN)})
                         </div>
                       </div>
                       <div className="flex items-center justify-between mt-2 pt-2 border-t border-emerald-500/20 text-[10px] text-zinc-300 gap-2">
@@ -3997,8 +3174,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               triggerSound?.('alert');
                               return;
                             }
-                            const isOwner = checkIsOwner(userProfile);
-                            if (!isOwner && moneyNGN < amt) {
+                            const curKobo = parseMinorString(userProfile?.ngnKobo, moneyNGN);
+                            const debitKobo = majorToMinor(amt);
+                            if (curKobo < debitKobo) {
                               onShowToast('Insufficient funds in your Nigerian account!');
                               triggerSound?.('alert');
                               return;
@@ -4018,7 +3196,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             });
 
                             if (srv.error && !srv.error.includes('not initialized')) {
-                              // Check local / Firestore fallback only when offline/unauthenticated
                               if (srv.error.includes('not found') || srv.error.includes('Insufficient') || srv.error.includes('own account')) {
                                 onShowToast(srv.error);
                                 triggerSound?.('alert');
@@ -4046,8 +3223,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               }
                             }
 
-                            onUpdateMoney(-amt);
-
                             const txRef = srv.referenceNo || `TX_${Date.now()}`;
                             const nowStr = new Date().toLocaleDateString('en-GB');
                             const nextReceipt = srv.receipt || {
@@ -4063,16 +3238,16 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             };
 
                             if (userProfile) {
-                              const nextNGN = isOwner ? 9.99e23 : Math.max(0, moneyNGN - amt);
-                              const cashNaira = isOwner ? 9.99e23 : Math.round(nextNGN * 0.15);
-                              const bankNaira = isOwner ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
+                              const nextNgnKobo = srv.senderProfile?.ngnKobo || subtractMinorUnits(curKobo, debitKobo);
+                              const nextNGN = minorToMajorNumber(nextNgnKobo);
                               const nextReceipts = Array.isArray(srv.senderProfile?.receipts)
                                 ? srv.senderProfile.receipts
                                 : [nextReceipt, ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : [])];
                               persistProfileUpdate({
                                 ...userProfile,
-                                cashNaira,
-                                bankNaira,
+                                ngnKobo: nextNgnKobo,
+                                cashNaira: 0,
+                                bankNaira: nextNGN,
                                 receipts: nextReceipts,
                               });
                             }
@@ -4093,50 +3268,110 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="bg-zinc-950/80 border border-zinc-800 rounded-2xl p-4 space-y-3">
                         <div className="text-center space-y-1">
                           <span className="text-xs font-bold text-emerald-400 block">High-Yield Target Lock Savings</span>
-                          <p className="text-[10px] text-zinc-400">Lock funds to compound 18% annual return and protect capital.</p>
+                          <p className="text-[10px] text-zinc-400">Lock or withdraw NGN capital anytime with exact kobo precision.</p>
+                          <div className="mt-2 p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 font-mono">
+                            <span className="text-[9px] text-zinc-400 uppercase block">Saved NGN Balance</span>
+                            <span className="text-sm font-black text-emerald-300">
+                              {formatNairaFromKobo(userProfile?.savingsNgnKobo, userProfile?.savingsBalanceNGN || 0)}
+                            </span>
+                          </div>
                         </div>
                         <div className="space-y-1.5">
-                          <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold">Select Amount to Put In</span>
+                          <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold">Amount (NGN ₦)</span>
                           <input
                             type="number"
-                            placeholder="Enter amount to save in NGN..."
+                            placeholder="Enter amount in NGN..."
                             value={savingsInputAmount}
                             onChange={(e) => setSavingsInputAmount(Number(e.target.value))}
                             className="w-full bg-zinc-900 border border-emerald-500/40 rounded-xl px-3 py-2 text-xs text-white font-mono"
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!savingsInputAmount || savingsInputAmount <= 0) {
-                              onShowToast('Please enter a valid amount to save!');
-                              return;
-                            }
-                            if (moneyNGN < savingsInputAmount) {
-                              onShowToast(`Insufficient funds! Your balance is ${formatFullNairaNumber(moneyNGN)}`);
-                              triggerSound?.('alert');
-                              return;
-                            }
-                            onUpdateMoney(-savingsInputAmount);
-                            if (userProfile) {
-                              const isOwn = checkIsOwner(userProfile);
-                              const nextNGN = isOwn ? 9.99e23 : Math.max(0, moneyNGN - savingsInputAmount);
-                              const cashNaira = isOwn ? 9.99e23 : Math.round(nextNGN * 0.15);
-                              const bankNaira = isOwn ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
-                              persistProfileUpdate({
-                                ...userProfile,
-                                cashNaira,
-                                bankNaira,
-                                savingsBalanceNGN: (userProfile.savingsBalanceNGN || 0) + savingsInputAmount,
-                              });
-                            }
-                            onShowToast(`🔒 Successfully locked ₦${savingsInputAmount.toLocaleString()} into 18% Target Savings!`);
-                            triggerSound?.('coin');
-                          }}
-                          className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 text-black font-black rounded-xl text-xs cursor-pointer shadow-lg active:scale-95 transition-all"
-                        >
-                          Lock ₦{savingsInputAmount.toLocaleString()} into Savings
-                        </button>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const amt = Number(savingsInputAmount);
+                              if (!Number.isFinite(amt) || amt <= 0) {
+                                onShowToast('Please enter a valid amount to save!');
+                                return;
+                              }
+                              const curKobo = parseMinorString(userProfile?.ngnKobo, moneyNGN);
+                              const amtKobo = majorToMinor(amt);
+                              if (curKobo < amtKobo) {
+                                onShowToast(`Insufficient funds! Your balance is ${formatNairaFromKobo(userProfile?.ngnKobo, moneyNGN)}`);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              const srv = await executeServerSavings({ currency: 'NGN', action: 'deposit', amount: amt });
+                              if (srv.error && !srv.error.includes('Auth required') && !srv.error.includes('not initialized')) {
+                                onShowToast(srv.error);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              if (userProfile) {
+                                const nextNgnKobo = srv.account?.ngnKobo || subtractMinorUnits(curKobo, amtKobo);
+                                const curSavKobo = parseMinorString(userProfile.savingsNgnKobo, userProfile.savingsBalanceNGN || 0);
+                                const nextSavKobo = srv.account?.savingsNgnKobo || addMinorUnits(curSavKobo, amtKobo);
+                                persistProfileUpdate({
+                                  ...userProfile,
+                                  ngnKobo: nextNgnKobo,
+                                  savingsNgnKobo: nextSavKobo,
+                                  cashNaira: 0,
+                                  bankNaira: minorToMajorNumber(nextNgnKobo),
+                                  savingsBalanceNGN: minorToMajorNumber(nextSavKobo),
+                                  receipts: Array.isArray(srv.account?.receipts) ? srv.account.receipts : userProfile.receipts,
+                                });
+                              }
+                              onShowToast(srv.message || `🔒 Locked ₦${amt.toLocaleString()} into 18% Target Savings!`);
+                              triggerSound?.('coin');
+                            }}
+                            className="py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 text-black font-black rounded-xl text-xs cursor-pointer shadow-lg active:scale-95 transition-all"
+                          >
+                            Lock Funds
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const amt = Number(savingsInputAmount);
+                              if (!Number.isFinite(amt) || amt <= 0) {
+                                onShowToast('Please enter a valid withdrawal amount!');
+                                return;
+                              }
+                              const curSavKobo = parseMinorString(userProfile?.savingsNgnKobo, userProfile?.savingsBalanceNGN || 0);
+                              const amtKobo = majorToMinor(amt);
+                              if (curSavKobo < amtKobo) {
+                                onShowToast(`Insufficient saved NGN! Savings balance is ${formatNairaFromKobo(userProfile?.savingsNgnKobo, userProfile?.savingsBalanceNGN || 0)}`);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              const srv = await executeServerSavings({ currency: 'NGN', action: 'withdraw', amount: amt });
+                              if (srv.error && !srv.error.includes('Auth required') && !srv.error.includes('not initialized')) {
+                                onShowToast(srv.error);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              if (userProfile) {
+                                const curKobo = parseMinorString(userProfile.ngnKobo, moneyNGN);
+                                const nextNgnKobo = srv.account?.ngnKobo || addMinorUnits(curKobo, amtKobo);
+                                const nextSavKobo = srv.account?.savingsNgnKobo || subtractMinorUnits(curSavKobo, amtKobo);
+                                persistProfileUpdate({
+                                  ...userProfile,
+                                  ngnKobo: nextNgnKobo,
+                                  savingsNgnKobo: nextSavKobo,
+                                  cashNaira: 0,
+                                  bankNaira: minorToMajorNumber(nextNgnKobo),
+                                  savingsBalanceNGN: minorToMajorNumber(nextSavKobo),
+                                  receipts: Array.isArray(srv.account?.receipts) ? srv.account.receipts : userProfile.receipts,
+                                });
+                              }
+                              onShowToast(srv.message || `🔓 Withdrew ₦${amt.toLocaleString()} back to Liquid Balance!`);
+                              triggerSound?.('coin');
+                            }}
+                            className="py-2.5 bg-zinc-800 hover:bg-zinc-700 text-emerald-300 border border-emerald-500/40 font-black rounded-xl text-xs cursor-pointer shadow-lg active:scale-95 transition-all"
+                          >
+                            Withdraw
+                          </button>
+                        </div>
                       </div>
                     )}
 
@@ -4155,25 +3390,17 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             type="button"
                             onClick={() => {
                               const currentLoan = userProfile?.loanBalanceNGN || 0;
-                              const toPay = Math.min(moneyNGN, repayLoanAmount || currentLoan);
+                              const curKobo = parseMinorString(userProfile?.ngnKobo, moneyNGN);
+                              const maxAvail = minorToMajorNumber(curKobo);
+                              const toPay = Math.min(maxAvail, repayLoanAmount || currentLoan);
                               if (toPay <= 0) {
                                 onShowToast('Insufficient funds to make loan repayment!');
                                 triggerSound?.('alert');
                                 return;
                               }
-                              onUpdateMoney(-toPay);
-                              if (userProfile) {
-                                const isOwn = checkIsOwner(userProfile);
-                                const nextNGN = isOwn ? 9.99e23 : Math.max(0, moneyNGN - toPay);
-                                const cashNaira = isOwn ? 9.99e23 : Math.round(nextNGN * 0.15);
-                                const bankNaira = isOwn ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
-                                persistProfileUpdate({
-                                  ...userProfile,
-                                  cashNaira,
-                                  bankNaira,
-                                  loanBalanceNGN: Math.max(0, currentLoan - toPay),
-                                });
-                              }
+                              debitNGNProfile(toPay, {
+                                loanBalanceNGN: Math.max(0, currentLoan - toPay),
+                              });
                               onShowToast(`🎉 Paid ${formatFullNairaNumber(toPay)} towards starter loan!`);
                               triggerSound?.('success');
                             }}
@@ -4185,24 +3412,13 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             type="button"
                             onClick={() => {
                               const currentLoan = userProfile?.loanBalanceNGN || 0;
-                              if (moneyNGN < currentLoan) {
+                              const curKobo = parseMinorString(userProfile?.ngnKobo, moneyNGN);
+                              if (curKobo < majorToMinor(currentLoan)) {
                                 onShowToast(`Insufficient funds to clear entire loan of ${formatFullNairaNumber(currentLoan)}!`);
                                 triggerSound?.('alert');
                                 return;
                               }
-                              onUpdateMoney(-currentLoan);
-                              if (userProfile) {
-                                const isOwn = checkIsOwner(userProfile);
-                                const nextNGN = isOwn ? 9.99e23 : Math.max(0, moneyNGN - currentLoan);
-                                const cashNaira = isOwn ? 9.99e23 : Math.round(nextNGN * 0.15);
-                                const bankNaira = isOwn ? 9.99e23 : Math.max(0, nextNGN - cashNaira);
-                                persistProfileUpdate({
-                                  ...userProfile,
-                                  cashNaira,
-                                  bankNaira,
-                                  loanBalanceNGN: 0,
-                                });
-                              }
+                              debitNGNProfile(currentLoan, { loanBalanceNGN: 0 });
                               onShowToast(`🏆 Zero debt! You have completely cleared your starter loan.`);
                               triggerSound?.('success');
                             }}
@@ -4231,10 +3447,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       </div>
                       <div className="mt-1">
                         <div className="text-lg sm:text-xl font-mono font-black text-white leading-tight break-all">
-                          ${formatFullNumberDigits(checkIsOwner(userProfile) ? 9.99e23 : (userProfile?.bankCAD || 0))} CAD
+                          ${formatFullDigitsFromMinor(userProfile?.cadCents, userProfile?.bankCAD || 0)} CAD
                         </div>
                         <div className="text-[10px] font-bold text-red-300/90 font-mono mt-0.5">
-                          ({formatCAD(checkIsOwner(userProfile) ? 9.99e23 : (userProfile?.bankCAD || 0))})
+                          ({formatCadFromCents(userProfile?.cadCents, userProfile?.bankCAD || 0)})
                         </div>
                       </div>
                       <div className="flex items-center justify-between mt-2 pt-2 border-t border-red-500/20 text-[10px] text-zinc-400">
@@ -4387,10 +3603,15 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               triggerSound?.('alert');
                               return;
                             }
-                            const isOwner = checkIsOwner(userProfile);
-                            const senderCad = getEffectiveCAD();
-                            if (!isOwner && senderCad < amt) {
-                              onShowToast(`Insufficient funds! Your Canadian balance is $${senderCad.toLocaleString()} CAD.`);
+                            const curCents = parseMinorString(userProfile?.cadCents, userProfile?.bankCAD || 0);
+                            const debitCents = majorToMinor(amt);
+                            if (curCents < debitCents) {
+                              onShowToast(`Insufficient funds! Your Canadian balance is ${formatCadFromCents(userProfile?.cadCents, userProfile?.bankCAD || 0)}.`);
+                              triggerSound?.('alert');
+                              return;
+                            }
+                            if (cleanRecipient === userProfile?.username?.toLowerCase().trim() || rawInput === userProfile?.walletAccountNumber) {
+                              onShowToast('Cannot transfer funds to your own account.');
                               triggerSound?.('alert');
                               return;
                             }
@@ -4430,11 +3651,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             }
 
                             if (userProfile) {
-                              const nextCAD = isOwner
-                                ? 9.99e23
-                                : srv.senderProfile?.bankCAD !== undefined
-                                ? Number(srv.senderProfile.bankCAD)
-                                : Math.max(0, Math.round((senderCad - amt) * 100) / 100);
+                              const nextCadCents = srv.senderProfile?.cadCents || subtractMinorUnits(curCents, debitCents);
+                              const nextCAD = minorToMajorNumber(nextCadCents);
                               const nextReceipt = srv.receipt || {
                                 id: `TX_CAD_${Date.now()}`,
                                 title: `Interac Transfer to @${cleanRecipient}`,
@@ -4450,6 +3668,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 : [nextReceipt, ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : [])];
                               persistProfileUpdate({
                                 ...userProfile,
+                                cadCents: nextCadCents,
                                 bankCAD: nextCAD,
                                 receipts: nextReceipts,
                               });
@@ -4471,47 +3690,108 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                       <div className="bg-zinc-950/80 border border-zinc-800 rounded-2xl p-4 space-y-3">
                         <div className="text-center space-y-1">
                           <span className="text-xs font-bold text-red-400 block">Canadian High-Yield TFSA / RRSP Savings</span>
-                          <p className="text-[10px] text-zinc-400">Lock Canadian Dollars in Tax-Free Savings Account yielding 6.5% compound APY.</p>
+                          <p className="text-[10px] text-zinc-400">Deposit or withdraw CAD with exact cents precision.</p>
+                          <div className="mt-2 p-2.5 rounded-xl bg-red-950/40 border border-red-500/30 font-mono">
+                            <span className="text-[9px] text-zinc-400 uppercase block">Saved CAD Balance</span>
+                            <span className="text-sm font-black text-red-300">
+                              {formatCadFromCents(userProfile?.savingsCadCents, userProfile?.savingsCAD || 0)}
+                            </span>
+                          </div>
                         </div>
                         <div className="space-y-1.5">
-                          <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold">Deposit to TFSA ($ CAD)</span>
+                          <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold">Amount ($ CAD)</span>
                           <input
                             type="number"
-                            placeholder="Amount to lock in CAD..."
+                            placeholder="Amount in CAD..."
                             value={cadSavingsInput}
                             onChange={(e) => setCadSavingsInput(Number(e.target.value))}
                             className="w-full bg-zinc-900 border border-red-500/40 rounded-xl px-3 py-2 text-xs text-white font-mono"
                           />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const senderCad = getEffectiveCAD();
-                            if (senderCad < cadSavingsInput || cadSavingsInput <= 0) {
-                              onShowToast(`Insufficient CAD funds! Your balance is $${senderCad.toLocaleString()} CAD.`);
-                              triggerSound?.('alert');
-                              return;
-                            }
-                            if (userProfile) {
-                              const nextCAD = checkIsOwner(userProfile)
-                                ? 9.99e23
-                                : Math.max(0, Math.round((senderCad - cadSavingsInput) * 100) / 100);
-                              const nextSavings = checkIsOwner(userProfile)
-                                ? 9.99e23
-                                : Math.round(((userProfile.savingsCAD || 0) + cadSavingsInput) * 100) / 100;
-                              persistProfileUpdate({
-                                ...userProfile,
-                                bankCAD: nextCAD,
-                                savingsCAD: nextSavings,
-                              });
-                            }
-                            onShowToast(`🔒 Deposited $${cadSavingsInput.toLocaleString()} CAD into TFSA Tax-Free Savings!`);
-                            triggerSound?.('coin');
-                          }}
-                          className="w-full py-2.5 bg-gradient-to-r from-red-600 to-rose-600 text-white font-black rounded-xl text-xs cursor-pointer shadow-lg active:scale-95 transition-all"
-                        >
-                          Lock ${cadSavingsInput.toLocaleString()} CAD into TFSA
-                        </button>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const amt = Number(cadSavingsInput);
+                              if (!Number.isFinite(amt) || amt <= 0) {
+                                onShowToast('Please enter a valid CAD amount!');
+                                return;
+                              }
+                              const curCents = parseMinorString(userProfile?.cadCents, userProfile?.bankCAD || 0);
+                              const amtCents = majorToMinor(amt);
+                              if (curCents < amtCents) {
+                                onShowToast(`Insufficient CAD funds! Balance is ${formatCadFromCents(userProfile?.cadCents, userProfile?.bankCAD || 0)}.`);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              const srv = await executeServerSavings({ currency: 'CAD', action: 'deposit', amount: amt });
+                              if (srv.error && !srv.error.includes('Auth required') && !srv.error.includes('not initialized')) {
+                                onShowToast(srv.error);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              if (userProfile) {
+                                const nextCadCents = srv.account?.cadCents || subtractMinorUnits(curCents, amtCents);
+                                const curSavCents = parseMinorString(userProfile.savingsCadCents, userProfile.savingsCAD || 0);
+                                const nextSavCents = srv.account?.savingsCadCents || addMinorUnits(curSavCents, amtCents);
+                                persistProfileUpdate({
+                                  ...userProfile,
+                                  cadCents: nextCadCents,
+                                  savingsCadCents: nextSavCents,
+                                  bankCAD: minorToMajorNumber(nextCadCents),
+                                  savingsCAD: minorToMajorNumber(nextSavCents),
+                                  receipts: Array.isArray(srv.account?.receipts) ? srv.account.receipts : userProfile.receipts,
+                                });
+                              }
+                              onShowToast(srv.message || `🔒 Deposited $${amt.toLocaleString()} CAD into TFSA Savings!`);
+                              triggerSound?.('coin');
+                            }}
+                            className="py-2.5 bg-gradient-to-r from-red-600 to-rose-600 text-white font-black rounded-xl text-xs cursor-pointer shadow-lg active:scale-95 transition-all"
+                          >
+                            Lock TFSA
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const amt = Number(cadSavingsInput);
+                              if (!Number.isFinite(amt) || amt <= 0) {
+                                onShowToast('Please enter a valid CAD withdrawal amount!');
+                                return;
+                              }
+                              const curSavCents = parseMinorString(userProfile?.savingsCadCents, userProfile?.savingsCAD || 0);
+                              const amtCents = majorToMinor(amt);
+                              if (curSavCents < amtCents) {
+                                onShowToast(`Insufficient saved CAD! TFSA balance is ${formatCadFromCents(userProfile?.savingsCadCents, userProfile?.savingsCAD || 0)}.`);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              const srv = await executeServerSavings({ currency: 'CAD', action: 'withdraw', amount: amt });
+                              if (srv.error && !srv.error.includes('Auth required') && !srv.error.includes('not initialized')) {
+                                onShowToast(srv.error);
+                                triggerSound?.('alert');
+                                return;
+                              }
+                              if (userProfile) {
+                                const curCents = parseMinorString(userProfile.cadCents, userProfile.bankCAD || 0);
+                                const nextCadCents = srv.account?.cadCents || addMinorUnits(curCents, amtCents);
+                                const nextSavCents = srv.account?.savingsCadCents || subtractMinorUnits(curSavCents, amtCents);
+                                persistProfileUpdate({
+                                  ...userProfile,
+                                  cadCents: nextCadCents,
+                                  savingsCadCents: nextSavCents,
+                                  bankCAD: minorToMajorNumber(nextCadCents),
+                                  savingsCAD: minorToMajorNumber(nextSavCents),
+                                  receipts: Array.isArray(srv.account?.receipts) ? srv.account.receipts : userProfile.receipts,
+                                });
+                              }
+                              onShowToast(srv.message || `🔓 Withdrew $${amt.toLocaleString()} CAD to Chequing!`);
+                              triggerSound?.('coin');
+                            }}
+                            className="py-2.5 bg-zinc-800 hover:bg-zinc-700 text-red-300 border border-red-500/40 font-black rounded-xl text-xs cursor-pointer shadow-lg active:scale-95 transition-all"
+                          >
+                            Withdraw
+                          </button>
+                        </div>
                       </div>
                     )}
                   </>
@@ -4641,11 +3921,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               triggerSound?.('alert');
                               return;
                             }
-                            const isOwner = checkIsOwner(userProfile);
-
                             if (fxDirection === 'ngn_to_cad') {
-                              const availableNgn = getEffectiveNGN();
-                              if (!isOwner && availableNgn < amt) {
+                              const curNgnKobo = parseMinorString(userProfile?.ngnKobo, moneyNGN);
+                              const curCadCents = parseMinorString(userProfile?.cadCents, userProfile?.bankCAD || 0);
+                              const srcKobo = majorToMinor(amt);
+                              if (curNgnKobo < srcKobo) {
                                 onShowToast('Insufficient NGN balance for currency exchange!');
                                 triggerSound?.('alert');
                                 return;
@@ -4656,15 +3936,20 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 triggerSound?.('alert');
                                 return;
                               }
-                              const receivedCAD =
-                                srv.success && srv.converted !== undefined
-                                  ? Number(srv.converted)
-                                  : Math.round((amt / ECONOMY_CONFIG.cadToNgnRate) * 100) / 100;
-                              if (receivedCAD <= 0) {
+                              const { creditCadCents } = computeFxNgnToCad(srcKobo, ECONOMY_CONFIG.cadToNgnRate, 1);
+                              const targetCadCents = srv.convertedMinor ? BigInt(srv.convertedMinor) : creditCadCents;
+                              if (targetCadCents <= 0n) {
                                 onShowToast('Minimum NGN exchange is ₦10 to receive at least $0.01 CAD.');
                                 triggerSound?.('alert');
                                 return;
                               }
+                              const receivedCAD =
+                                srv.success && srv.converted !== undefined
+                                  ? Number(srv.converted)
+                                  : minorToMajorNumber(targetCadCents);
+
+                              const nextNgnKobo = srv.account?.ngnKobo || subtractMinorUnits(curNgnKobo, srcKobo);
+                              const nextCadCents = srv.account?.cadCents || addMinorUnits(curCadCents, targetCadCents);
 
                               const txNow = Date.now();
                               const newReceipts = Array.isArray(srv.account?.receipts)
@@ -4696,20 +3981,20 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   direction: 'ngn_to_cad',
                                   sourceAmount: amt,
                                   targetAmount: receivedCAD,
+                                  ngnKobo: nextNgnKobo,
+                                  cadCents: nextCadCents,
                                   receipts: newReceipts,
                                 });
-                              } else {
-                                if (!isOwner) onUpdateMoney(-amt);
-                                if (userProfile) {
-                                  const nextCAD = isOwner
-                                    ? 9.99e23
-                                    : Math.round(((userProfile.bankCAD || 0) + receivedCAD) * 100) / 100;
-                                  persistProfileUpdate({
-                                    ...userProfile,
-                                    bankCAD: nextCAD,
-                                    receipts: newReceipts,
-                                  });
-                                }
+                              } else if (userProfile) {
+                                persistProfileUpdate({
+                                  ...userProfile,
+                                  ngnKobo: nextNgnKobo,
+                                  cadCents: nextCadCents,
+                                  cashNaira: 0,
+                                  bankNaira: minorToMajorNumber(nextNgnKobo),
+                                  bankCAD: minorToMajorNumber(nextCadCents),
+                                  receipts: newReceipts,
+                                });
                               }
 
                               setFxModalOpen(false);
@@ -4717,8 +4002,10 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               onLogAction('finance', `FX NGN -> CAD: ₦${amt.toLocaleString()} -> $${receivedCAD.toLocaleString()} CAD`);
                               triggerSound?.('success');
                             } else {
-                              const currentCad = getEffectiveCAD();
-                              if (!isOwner && currentCad < amt) {
+                              const curNgnKobo = parseMinorString(userProfile?.ngnKobo, moneyNGN);
+                              const curCadCents = parseMinorString(userProfile?.cadCents, userProfile?.bankCAD || 0);
+                              const srcCents = majorToMinor(amt);
+                              if (curCadCents < srcCents) {
                                 onShowToast('Insufficient CAD balance for currency exchange!');
                                 triggerSound?.('alert');
                                 return;
@@ -4729,15 +4016,20 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 triggerSound?.('alert');
                                 return;
                               }
-                              const receivedNGN =
-                                srv.success && srv.converted !== undefined
-                                  ? Number(srv.converted)
-                                  : Math.floor(amt * ECONOMY_CONFIG.cadToNgnRate);
-                              if (receivedNGN <= 0) {
+                              const { creditNgnKobo } = computeFxCadToNgn(srcCents, ECONOMY_CONFIG.cadToNgnRate);
+                              const targetNgnKobo = srv.convertedMinor ? BigInt(srv.convertedMinor) : creditNgnKobo;
+                              if (targetNgnKobo <= 0n) {
                                 onShowToast('Please enter at least $0.01 CAD to exchange.');
                                 triggerSound?.('alert');
                                 return;
                               }
+                              const receivedNGN =
+                                srv.success && srv.converted !== undefined
+                                  ? Number(srv.converted)
+                                  : minorToMajorNumber(targetNgnKobo);
+
+                              const nextCadCents = srv.account?.cadCents || subtractMinorUnits(curCadCents, srcCents);
+                              const nextNgnKobo = srv.account?.ngnKobo || addMinorUnits(curNgnKobo, targetNgnKobo);
 
                               const txNow = Date.now();
                               const newReceipts = Array.isArray(srv.account?.receipts)
@@ -4769,20 +4061,20 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   direction: 'cad_to_ngn',
                                   sourceAmount: amt,
                                   targetAmount: receivedNGN,
+                                  ngnKobo: nextNgnKobo,
+                                  cadCents: nextCadCents,
                                   receipts: newReceipts,
                                 });
-                              } else {
-                                if (!isOwner) onUpdateMoney(receivedNGN);
-                                if (userProfile) {
-                                  const nextCAD = isOwner
-                                    ? 9.99e23
-                                    : Math.max(0, Math.round((currentCad - amt) * 100) / 100);
-                                  persistProfileUpdate({
-                                    ...userProfile,
-                                    bankCAD: nextCAD,
-                                    receipts: newReceipts,
-                                  });
-                                }
+                              } else if (userProfile) {
+                                persistProfileUpdate({
+                                  ...userProfile,
+                                  ngnKobo: nextNgnKobo,
+                                  cadCents: nextCadCents,
+                                  cashNaira: 0,
+                                  bankNaira: minorToMajorNumber(nextNgnKobo),
+                                  bankCAD: minorToMajorNumber(nextCadCents),
+                                  receipts: newReceipts,
+                                });
                               }
 
                               setFxModalOpen(false);
@@ -5212,9 +4504,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     return;
                                   }
                                   if (userProfile) {
-                                    const nextCAD = checkIsOwner(userProfile)
-                                      ? 9.99e23
-                                      : Math.max(0, Math.round((userCad - prop.weeklyRentCAD) * 100) / 100);
                                     const nextReceipts = [
                                       {
                                         id: `RENT_CAN_${Date.now()}`,
@@ -5227,7 +4516,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                       },
                                       ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                     ];
-                                    persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
+                                    debitCADProfile(prop.weeklyRentCAD, { receipts: nextReceipts });
                                   }
                                   onBuyOrRentProperty({
                                     id: prop.id,
@@ -5260,9 +4549,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     return;
                                   }
                                   if (userProfile) {
-                                    const nextCAD = checkIsOwner(userProfile)
-                                      ? 9.99e23
-                                      : Math.max(0, Math.round((userCad - prop.buyPriceCAD) * 100) / 100);
                                     const nextReceipts = [
                                       {
                                         id: `BUY_CAN_${Date.now()}`,
@@ -5275,7 +4561,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                       },
                                       ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                     ];
-                                    persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
+                                    debitCADProfile(prop.buyPriceCAD, { receipts: nextReceipts });
                                   }
                                   onBuyOrRentProperty({
                                     id: prop.id,
@@ -5452,9 +4738,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 return;
                               }
                               if (userProfile) {
-                                const nextCAD = checkIsOwner(userProfile)
-                                  ? 9.99e23
-                                  : Math.max(0, Math.round((userCad - totalCAD) * 100) / 100);
                                 const nextReceipts = [
                                   {
                                     id: `CHOW_CAN_${Date.now()}`,
@@ -5467,7 +4750,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   },
                                   ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                 ];
-                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
+                                debitCADProfile(totalCAD, { receipts: nextReceipts });
                               }
                               onUpdateStats({ hunger: f.hungerBoost, happiness: f.joyBoost });
                               onShowToast(`🍁 Delicious! Delivered ${f.name} (-$${totalCAD} CAD)!`);
@@ -5638,9 +4921,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 return;
                               }
                               if (userProfile) {
-                                const nextCAD = checkIsOwner(userProfile)
-                                  ? 9.99e23
-                                  : Math.max(0, Math.round((userCad - totalCAD) * 100) / 100);
                                 const nextReceipts = [
                                   {
                                     id: `GROC_CAN_${Date.now()}`,
@@ -5653,7 +4933,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   },
                                   ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                 ];
-                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
+                                debitCADProfile(totalCAD, { receipts: nextReceipts });
                               }
                               onUpdateStats({ hunger: item.hungerRestore, health: 5 });
                               onShowToast(`🍁 Purchased ${item.name} (-$${totalCAD} CAD)!`);
@@ -5860,14 +5140,8 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 triggerSound?.('alert');
                                 return;
                               }
-                              let nextCAD = userCad;
-                              if (userCad >= 650) {
-                                nextCAD = checkIsOwner(userProfile) ? 9.99e23 : Math.max(0, Math.round((userCad - 650) * 100) / 100);
-                              } else {
-                                onUpdateMoney(-624351);
-                              }
 
-                                const studyDoc = {
+                              const studyDoc = {
                                 id: `doc_can_study_${Date.now()}`,
                                 title: 'Canada Designated Learning Institution Study Permit',
                                 type: 'study_permit' as const,
@@ -5882,7 +5156,11 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               };
                               if (userProfile) {
                                 const nextDocs = [...(Array.isArray(userProfile.ownedDocuments) ? userProfile.ownedDocuments : []), studyDoc];
-                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, ownedDocuments: nextDocs });
+                                if (userCad >= 650) {
+                                  debitCADProfile(650, { ownedDocuments: nextDocs });
+                                } else {
+                                  debitNGNProfile(624351, { ownedDocuments: nextDocs });
+                                }
                               }
                               onShowToast('🍁 Issued Canadian Study Permit! You are now authorized to enroll in Canadian university courses.');
                               triggerSound?.('success');
@@ -6007,9 +5285,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                         return;
                                       }
                                       if (userProfile) {
-                                        const nextCAD = checkIsOwner(userProfile)
-                                          ? 9.99e23
-                                          : Math.max(0, Math.round((userCad - gradFee) * 100) / 100);
                                         const updatedCourses = [...completedCoursesState, crs.id];
                                         setCompletedCoursesState(updatedCourses);
                                         const nextDocs = [
@@ -6038,9 +5313,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                           },
                                           ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                         ];
-                                        persistProfileUpdate({
-                                          ...userProfile,
-                                          bankCAD: nextCAD,
+                                        debitCADProfile(gradFee, {
                                           completedCourses: updatedCourses,
                                           ownedDocuments: nextDocs,
                                           receipts: nextReceipts,
@@ -6131,9 +5404,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                         return;
                                       }
                                       if (userProfile) {
-                                        const nextCAD = checkIsOwner(userProfile)
-                                          ? 9.99e23
-                                          : Math.max(0, Math.round((userCad - crs.feeCAD) * 100) / 100);
                                         const nextReceipts = [
                                           {
                                             id: `EDU_CAN_${Date.now()}`,
@@ -6146,7 +5416,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                           },
                                           ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                         ];
-                                        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
+                                        debitCADProfile(crs.feeCAD, { receipts: nextReceipts });
                                       }
                                       const newProg: StudentCourseProgress = {
                                         courseId: crs.id,
@@ -6932,8 +6202,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                         return;
                       }
 
-                      onUpdateMoney(-fee);
-
                       const nowStr = new Date().toLocaleDateString('en-GB');
                       const existingDocs = Array.isArray(userProfile?.ownedDocuments) ? userProfile.ownedDocuments : [];
                       const fallbackDocs: UserDocument[] = res.issuedDocuments && res.issuedDocuments.length > 0
@@ -6987,13 +6255,25 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                             ...(Array.isArray(userProfile?.receipts) ? userProfile.receipts : []),
                           ];
 
-                      if (userProfile) {
+                      if (userProfile && res.account?.ngnKobo) {
+                        const srvNgnMajor = minorToMajorNumber(res.account.ngnKobo);
                         persistProfileUpdate({
                           ...userProfile,
+                          ngnKobo: res.account.ngnKobo,
+                          cashNaira: 0,
+                          bankNaira: srvNgnMajor,
                           ownedDocuments: mergedDocs,
                           immigrationStatus: 'CANADA_VISA_APPROVED',
                           receipts: nextReceipts,
                         });
+                      } else if (userProfile) {
+                        debitNGNProfile(fee, {
+                          ownedDocuments: mergedDocs,
+                          immigrationStatus: 'CANADA_VISA_APPROVED',
+                          receipts: nextReceipts,
+                        });
+                      } else {
+                        onUpdateMoney(-fee);
                       }
 
                       onShowToast(`🇨🇦 APPROVED IMMEDIATELY! Your Canada Visa & Nigerian Passport are active — cleared to book flights to Canada!`);
@@ -7301,7 +6581,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     triggerSound?.('alert');
                                     return;
                                   }
-                                  onUpdateMoney(-item.feeNGN);
                                   const docNum = `DOC-${Math.floor(100000 + Math.random() * 900000)}`;
                                   const newDoc: UserDocument = {
                                     id: item.id,
@@ -7330,7 +6609,9 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                       },
                                       ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                     ];
-                                    persistProfileUpdate({ ...userProfile, ownedDocuments: nextDocs, receipts: nextReceipts });
+                                    debitNGNProfile(item.feeNGN, { ownedDocuments: nextDocs, receipts: nextReceipts });
+                                  } else {
+                                    onUpdateMoney(-item.feeNGN);
                                   }
                                   onShowToast(`🎉 Issued! ${item.title} has been added to your Documents app.`);
                                   triggerSound?.('success');
@@ -7500,117 +6781,263 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 <div className="bg-gradient-to-r from-indigo-950/90 to-purple-950/80 border border-indigo-500/40 rounded-2xl p-3 flex items-center justify-between shadow-lg">
                   <div>
                     <h3 className="text-xs font-black text-indigo-200">Computer Village Tech Hub</h3>
-                    <p className="text-[10px] text-zinc-400">{filteredPhones.length} Real-Life Models Available</p>
+                    <p className="text-[10px] text-zinc-400">
+                      {deviceStoreTab === 'laptops'
+                        ? `${laptopCatalog.length} Developer Laptops · Unlocks Desktop OS`
+                        : `${filteredPhones.length} Real-Life Smartphones Available`}
+                    </p>
                   </div>
-                  <Smartphone className="w-5 h-5 text-indigo-400" />
-                </div>
-
-                {/* Instant Search Bar */}
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={phoneSearchQuery}
-                    onChange={(e) => setPhoneSearchQuery(e.target.value)}
-                    placeholder="Search phones (e.g. Xiaomi 18, Ultra, Fold, iPhone)..."
-                    className="w-full bg-zinc-950/90 border border-zinc-800 rounded-xl pl-8 pr-7 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
-                  />
-                  {phoneSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setPhoneSearchQuery('')}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+                  {deviceStoreTab === 'laptops' ? (
+                    <Laptop className="w-5 h-5 text-emerald-400" />
+                  ) : (
+                    <Smartphone className="w-5 h-5 text-indigo-400" />
                   )}
                 </div>
 
-                {/* Brand Tabs with Xiaomi Priority */}
-                <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                  {['All', 'Xiaomi', 'Apple', 'Samsung', 'Google', 'Tecno', 'Infinix', 'OnePlus'].map((b) => (
-                    <button
-                      key={b}
-                      type="button"
-                      onClick={() => setPhoneBrandFilter(b)}
-                      className={`px-3 py-1 rounded-xl text-[10px] font-bold transition-all whitespace-nowrap cursor-pointer ${
-                        phoneBrandFilter === b
-                          ? 'bg-indigo-600 text-white font-black shadow-md'
-                          : 'bg-zinc-900/80 text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      {b}
-                    </button>
-                  ))}
+                {/* Device Store Sub-Tabs: Smartphones vs Laptops */}
+                <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 text-xs font-bold gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setDeviceStoreTab('phones')}
+                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 ${
+                      deviceStoreTab === 'phones'
+                        ? 'bg-indigo-600 text-white font-black shadow-md'
+                        : 'text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>Smartphones</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeviceStoreTab('laptops')}
+                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1.5 ${
+                      deviceStoreTab === 'laptops'
+                        ? 'bg-emerald-500 text-black font-black shadow-md'
+                        : 'text-zinc-400 hover:text-white'
+                    }`}
+                  >
+                    <Laptop className="w-3.5 h-3.5" />
+                    <span>Laptops ({userProfile?.ownedLaptops?.length || 0})</span>
+                  </button>
                 </div>
 
-                <div className="space-y-2">
-                  {filteredPhones.map((ph) => {
-                    const isCurrent = userProfile?.phoneModel === ph.model;
-                    return (
-                      <div key={ph.model} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 flex items-center justify-between">
-                        <div>
-                          <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                            <span>{ph.name}</span>
-                            {isCurrent && (
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[9px] font-bold">
-                                Current
-                              </span>
+                {deviceStoreTab === 'laptops' ? (
+                  <div className="space-y-2.5">
+                    <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-[10px] text-emerald-200 flex items-center justify-between">
+                      <span>💻 Purchase any laptop to unlock Laptop OS (Code Studio &amp; Lv.7 Cyber Defense) in the map HUD!</span>
+                    </div>
+
+                    {laptopCatalog.length === 0 ? (
+                      <div className="p-5 rounded-2xl bg-zinc-950/80 border border-zinc-800 text-center text-xs text-zinc-400">
+                        Sign in online to load live Computer Village Laptop inventory.
+                      </div>
+                    ) : (
+                      laptopCatalog.map((lap: any) => {
+                        const isCanada = activeStateKey === 'canada';
+                        const isOwned = (userProfile?.ownedLaptops || []).includes(lap.id);
+                        const priceDisplay = isCanada
+                          ? `$${Number(lap.priceCAD || 0).toLocaleString()} CAD`
+                          : formatNaira(Number(lap.priceNGN || 0));
+
+                        return (
+                          <div key={lap.id} className="p-3 rounded-2xl bg-zinc-950/90 border border-zinc-800 space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="text-xs font-black text-white flex items-center gap-1.5">
+                                  <span>{lap.name}</span>
+                                  <span className="px-1.5 py-0.2 rounded bg-zinc-900 border border-zinc-700 text-[9px] font-mono text-zinc-300">
+                                    {lap.tier}
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-zinc-400 font-mono">
+                                  {lap.brand} · {lap.cpu} · {lap.ram} · {lap.storage}
+                                </div>
+                                <div className="text-[10px] text-zinc-400">{lap.display}</div>
+                              </div>
+                              {isOwned && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold shrink-0">
+                                  Owned
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-[10px] text-zinc-400 leading-relaxed">{lap.desc}</p>
+
+                            <div className="flex items-center justify-between pt-1.5 border-t border-zinc-900">
+                              <span className="text-xs font-mono font-bold text-emerald-400">{priceDisplay}</span>
+                              {!isOwned ? (
+                                <button
+                                  type="button"
+                                  disabled={laptopBusy}
+                                  onClick={async () => {
+                                    setLaptopBusy(true);
+                                    try {
+                                      const headers = await getAuthBearerHeaders();
+                                      const resp = await fetch('/api/laptops/buy', {
+                                        method: 'POST',
+                                        headers,
+                                        body: JSON.stringify({
+                                          laptopId: lap.id,
+                                          currency: isCanada ? 'CAD' : 'NGN',
+                                          requestId: createRequestId('lap'),
+                                        }),
+                                      });
+                                      const data = await resp.json();
+                                      if (!resp.ok || !data.success) {
+                                        onShowToast(data.error || 'Could not purchase laptop.');
+                                        triggerSound?.('alert');
+                                        return;
+                                      }
+                                      if (userProfile && data.account) {
+                                        persistProfileUpdate({
+                                          ...userProfile,
+                                          ngnKobo: data.account.ngnKobo ?? userProfile.ngnKobo,
+                                          cadCents: data.account.cadCents ?? userProfile.cadCents,
+                                          cashNaira: 0,
+                                          bankNaira: data.account.bankNaira ?? userProfile.bankNaira,
+                                          bankCAD: data.account.bankCAD ?? userProfile.bankCAD,
+                                          ownedLaptops: data.account.ownedLaptops ?? userProfile.ownedLaptops,
+                                          activeLaptopId: data.account.activeLaptopId ?? lap.id,
+                                          receipts: data.account.receipts ?? userProfile.receipts,
+                                        });
+                                      }
+                                      onShowToast(`💻 Purchased ${lap.name}! Open Laptop OS from the bottom dock!`);
+                                      triggerSound?.('success');
+                                    } catch {
+                                      onShowToast('Network error purchasing laptop.');
+                                      triggerSound?.('alert');
+                                    } finally {
+                                      setLaptopBusy(false);
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs cursor-pointer disabled:opacity-50"
+                                >
+                                  Buy Laptop
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (userProfile) {
+                                      persistProfileUpdate({ ...userProfile, activeLaptopId: lap.id });
+                                      onShowToast(`💻 Set ${lap.name} as active workstation!`);
+                                      triggerSound?.('coin');
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs cursor-pointer"
+                                >
+                                  {userProfile?.activeLaptopId === lap.id ? 'Active Device' : 'Set Active'}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {/* Instant Search Bar */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={phoneSearchQuery}
+                        onChange={(e) => setPhoneSearchQuery(e.target.value)}
+                        placeholder="Search phones (e.g. Xiaomi 18, Ultra, Fold, iPhone)..."
+                        className="w-full bg-zinc-950/90 border border-zinc-800 rounded-xl pl-8 pr-7 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+                      />
+                      {phoneSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setPhoneSearchQuery('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Brand Tabs with Xiaomi Priority */}
+                    <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                      {['All', 'Xiaomi', 'Apple', 'Samsung', 'Google', 'Tecno', 'Infinix', 'OnePlus'].map((b) => (
+                        <button
+                          key={b}
+                          type="button"
+                          onClick={() => setPhoneBrandFilter(b)}
+                          className={`px-3 py-1 rounded-xl text-[10px] font-bold transition-all whitespace-nowrap cursor-pointer ${
+                            phoneBrandFilter === b
+                              ? 'bg-indigo-600 text-white font-black shadow-md'
+                              : 'bg-zinc-900/80 text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {b}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="space-y-2">
+                      {filteredPhones.map((ph) => {
+                        const isCurrent = userProfile?.phoneModel === ph.model;
+                        return (
+                          <div key={ph.model} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 flex items-center justify-between">
+                            <div>
+                              <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span>{ph.name}</span>
+                                {isCurrent && (
+                                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[9px] font-bold">
+                                    Current
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-zinc-400">{ph.storage} · {ph.specs}</div>
+                              {(() => {
+                                const isCanada = activeStateKey === 'canada';
+                                const priceCAD = Math.round(ph.price / 960.54);
+                                return (
+                                  <span className="text-xs font-mono font-bold text-indigo-400 mt-0.5 block">
+                                    {isCanada ? `$${priceCAD.toLocaleString()} CAD` : formatNaira(ph.price)}
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                            {!isCurrent && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const isCanada = activeStateKey === 'canada';
+                                  const priceCAD = Math.round(ph.price / 960.54);
+                                  if (isCanada) {
+                                    const userCad = getEffectiveCAD();
+                                    if (userCad < priceCAD) {
+                                      onShowToast(`Insufficient CAD funds! Requires $${priceCAD.toLocaleString()} CAD.`);
+                                      triggerSound?.('alert');
+                                      return;
+                                    }
+                                    debitCADProfile(priceCAD, { phoneModel: ph.model });
+                                  } else {
+                                    if (parseMinorString(userProfile?.ngnKobo, moneyNGN) < majorToMinor(ph.price)) {
+                                      onShowToast('Insufficient funds for phone upgrade!');
+                                      triggerSound?.('alert');
+                                      return;
+                                    }
+                                    debitNGNProfile(ph.price, { phoneModel: ph.model });
+                                  }
+                                  onShowToast(`📱 Upgraded to ${ph.name}! Hardware updated.`);
+                                  triggerSound?.('success');
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer"
+                              >
+                                Upgrade
+                              </button>
                             )}
                           </div>
-                          <div className="text-[10px] text-zinc-400">{ph.storage} · {ph.specs}</div>
-                          {(() => {
-                            const isCanada = activeStateKey === 'canada';
-                            const priceCAD = Math.round(ph.price / 960.54);
-                            return (
-                              <span className="text-xs font-mono font-bold text-indigo-400 mt-0.5 block">
-                                {isCanada ? `$${priceCAD.toLocaleString()} CAD` : formatNaira(ph.price)}
-                              </span>
-                            );
-                          })()}
-                        </div>
-                        {!isCurrent && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const isCanada = activeStateKey === 'canada';
-                              const priceCAD = Math.round(ph.price / 960.54);
-                              if (isCanada) {
-                                const userCad = getEffectiveCAD();
-                                if (userCad < priceCAD) {
-                                  onShowToast(`Insufficient CAD funds! Requires $${priceCAD.toLocaleString()} CAD.`);
-                                  triggerSound?.('alert');
-                                  return;
-                                }
-                                if (userProfile) {
-                                  const nextCAD = checkIsOwner(userProfile)
-                                    ? 9.99e23
-                                    : Math.max(0, Math.round((userCad - priceCAD) * 100) / 100);
-                                  persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, phoneModel: ph.model });
-                                }
-                              } else {
-                                if (moneyNGN < ph.price) {
-                                  onShowToast('Insufficient funds for phone upgrade!');
-                                  triggerSound?.('alert');
-                                  return;
-                                }
-                                onUpdateMoney(-ph.price);
-                                if (userProfile) {
-                                  persistProfileUpdate({ ...userProfile, phoneModel: ph.model });
-                                }
-                              }
-                              onShowToast(`📱 Upgraded to ${ph.name}! Hardware updated.`);
-                              triggerSound?.('success');
-                            }}
-                            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs cursor-pointer"
-                          >
-                            Upgrade
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -7712,7 +7139,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   unlockType: 'clothing',
                                   unlockKey: unlockOutfitKey,
                                 });
-                                onUpdateMoney(-item.price);
                                 onUpdateStats({ happiness: 25 });
                                 if (userProfile) {
                                   const nextOwnedClothing = Array.from(
@@ -7733,8 +7159,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                     },
                                     ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                   ];
-                                  persistProfileUpdate({
-                                    ...userProfile,
+                                  debitNGNProfile(item.price, {
                                     ownedClothing: nextOwnedClothing,
                                     inventory: nextInv,
                                     receipts: nextReceipts,
@@ -7805,9 +7230,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 return;
                               }
                               if (userProfile) {
-                                const nextCAD = checkIsOwner(userProfile)
-                                  ? 9.99e23
-                                  : Math.max(0, Math.round((userCad - item.priceCAD) * 100) / 100);
                                 const nextInv = [...(Array.isArray(userProfile.inventory) ? userProfile.inventory : []), `${item.name} (Canadian Wardrobe)`];
                                 const nextReceipts = [
                                   {
@@ -7821,7 +7243,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                   },
                                   ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                                 ];
-                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, inventory: nextInv, receipts: nextReceipts });
+                                debitCADProfile(item.priceCAD, { inventory: nextInv, receipts: nextReceipts });
                               }
                               onUpdateStats({ happiness: 35 });
                               onShowToast(`🍁 Acquired ${item.name}! Added to Canadian wardrobe (-$${item.priceCAD.toLocaleString()} CAD).`);
@@ -9283,933 +8705,27 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
             )}
 
             {/* =============================================================
-                18. NAIJABET SPORTSBOOK & AVIATOR CRASH GAME
+                18. NAIJABET FREE SPORTS PREDICTIONS (ZERO GAMBLING)
                 ============================================================= */}
             {currentApp === 'naijabet' && (
-              <div className="space-y-3">
-                {/* Header Switcher */}
-                <div className="bg-gradient-to-r from-lime-950/90 via-zinc-950 to-neutral-900 border border-lime-500/40 rounded-2xl p-2.5 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Trophy className="w-5 h-5 text-lime-400" />
-                    <div>
-                      <h4 className="text-xs font-black text-lime-300 uppercase">NaijaBet Live</h4>
-                      <p className="text-[9px] text-zinc-400">SportyBet Sportsbook & Aviator Crash</p>
-                    </div>
-                  </div>
-
-                  <div className="flex bg-zinc-900 p-0.5 rounded-xl border border-zinc-800 text-[10px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setBetTab('sports')}
-                      className={`px-2 py-1 rounded-lg cursor-pointer ${
-                        betTab === 'sports' ? 'bg-lime-500 text-black font-black' : 'text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      ⚽ Sports
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBetTab('history')}
-                      className={`px-2 py-1 rounded-lg cursor-pointer ${
-                        betTab === 'history' ? 'bg-amber-400 text-black font-black' : 'text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      📜 History ({placedBetSlips.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBetTab('aviator')}
-                      className={`px-2 py-1 rounded-lg cursor-pointer ${
-                        betTab === 'aviator' ? 'bg-rose-600 text-white font-black' : 'text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      ✈️ Aviator
-                    </button>
-                  </div>
-                </div>
-
-                {/* TAB 1: SPORTYBET 10 DAILY MATCHES */}
-                {betTab === 'sports' && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between px-1">
-                      <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold">
-                        Today's Fixtures (Results settle 8:30 PM WAT)
-                      </span>
-                      <span className="text-[9px] font-mono text-lime-400 font-bold bg-lime-950/80 px-2 py-0.5 rounded border border-lime-500/40">
-                        10 Live Matches
-                      </span>
-                    </div>
-
-                    {/* SPORT SELECTOR SUBTABS */}
-                    <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none text-[10px] font-bold">
-                      {[
-                        { id: 'football', label: '⚽ Football' },
-                        { id: 'basketball', label: '🏀 Basketball' },
-                        { id: 'rugby', label: '🏉 Rugby' },
-                        { id: 'tennis', label: '🎾 Tennis' },
-                        { id: 'combat', label: '🥊 Combat & Boxing' },
-                      ].map((sp) => (
-                        <button
-                          key={sp.id}
-                          type="button"
-                          onClick={() => setBetSportTab(sp.id as any)}
-                          className={`px-3 py-1.5 rounded-xl whitespace-nowrap cursor-pointer transition-all ${
-                            betSportTab === sp.id
-                              ? 'bg-lime-500 text-black font-black shadow-md'
-                              : 'bg-zinc-900 text-zinc-400 hover:text-white border border-zinc-800'
-                          }`}
-                        >
-                          {sp.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* MATCHES LIST */}
-                    <div className="space-y-2">
-                      {(MULTI_SPORTS_FIXTURES[betSportTab] || []).map((m) => {
-                        const currentPick = selectedPicks[m.id];
-                        return (
-                          <div key={m.id} className="p-2.5 rounded-2xl bg-zinc-950/90 border border-zinc-800 space-y-1.5">
-                            <div className="flex justify-between items-center text-[9px] font-mono text-zinc-400">
-                              <span className="text-lime-400 font-bold">{m.league}</span>
-                              <span>{m.time}</span>
-                            </div>
-                            <div className="flex justify-between items-center text-xs font-bold text-white px-0.5">
-                              <span>{m.home}</span>
-                              <span className="text-[10px] text-zinc-500 font-mono">VS</span>
-                              <span>{m.away}</span>
-                            </div>
-                            <div className={`grid gap-1.5 pt-1 ${m.dOdd !== undefined ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedPicks((prev) => {
-                                    const next = { ...prev };
-                                    if (next[m.id]?.pick === '1') delete next[m.id];
-                                    else next[m.id] = { match: `${m.home} vs ${m.away}`, pick: '1', odd: m.hOdd };
-                                    return next;
-                                  });
-                                  triggerSound?.('coin');
-                                }}
-                                className={`py-1 rounded-xl text-[10px] font-mono font-bold flex flex-col items-center cursor-pointer transition-all ${
-                                  currentPick?.pick === '1'
-                                    ? 'bg-lime-500 text-black font-black shadow-md'
-                                    : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800'
-                                }`}
-                              >
-                                <span className="text-[8px]">1 (Home)</span>
-                                <span>{m.hOdd.toFixed(2)}</span>
-                              </button>
-                              {m.dOdd !== undefined && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedPicks((prev) => {
-                                      const next = { ...prev };
-                                      if (next[m.id]?.pick === 'X') delete next[m.id];
-                                      else next[m.id] = { match: `${m.home} vs ${m.away}`, pick: 'X', odd: m.dOdd! };
-                                      return next;
-                                    });
-                                    triggerSound?.('coin');
-                                  }}
-                                  className={`py-1 rounded-xl text-[10px] font-mono font-bold flex flex-col items-center cursor-pointer transition-all ${
-                                    currentPick?.pick === 'X'
-                                      ? 'bg-lime-500 text-black font-black shadow-md'
-                                      : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800'
-                                  }`}
-                                >
-                                  <span className="text-[8px]">X (Draw)</span>
-                                  <span>{m.dOdd.toFixed(2)}</span>
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedPicks((prev) => {
-                                    const next = { ...prev };
-                                    if (next[m.id]?.pick === '2') delete next[m.id];
-                                    else next[m.id] = { match: `${m.home} vs ${m.away}`, pick: '2', odd: m.aOdd };
-                                    return next;
-                                  });
-                                  triggerSound?.('coin');
-                                }}
-                                className={`py-1 rounded-xl text-[10px] font-mono font-bold flex flex-col items-center cursor-pointer transition-all ${
-                                  currentPick?.pick === '2'
-                                    ? 'bg-lime-500 text-black font-black shadow-md'
-                                    : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800'
-                                }`}
-                              >
-                                <span className="text-[8px]">2 (Away)</span>
-                                <span>{m.aOdd.toFixed(2)}</span>
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* BET SLIP BUILDER */}
-                    <div className="p-3.5 rounded-2xl bg-gradient-to-br from-zinc-950 via-zinc-900 to-black border-2 border-lime-500/60 shadow-xl space-y-2.5">
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs font-black text-lime-300 uppercase tracking-wider">
-                          Accumulator Bet Slip ({Object.keys(selectedPicks).length})
-                        </span>
-                        {Object.keys(selectedPicks).length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPicks({})}
-                            className="text-[9px] font-mono text-zinc-400 hover:text-rose-400 cursor-pointer"
-                          >
-                            Clear All
-                          </button>
-                        )}
-                      </div>
-
-                      {Object.keys(selectedPicks).length === 0 ? (
-                        <p className="text-[10px] text-zinc-400 text-center py-2">
-                          Select 1, X, or 2 on any match to build your accumulator slip!
-                        </p>
-                      ) : (
-                        <div className="space-y-1.5 max-h-24 overflow-y-auto scrollbar-none">
-                          {Object.entries(selectedPicks).map(([id, p]) => (
-                            <div key={id} className="flex justify-between items-center text-[10px] font-mono bg-zinc-900/80 px-2 py-1 rounded-lg">
-                              <span className="truncate max-w-[190px] text-white">{p.match}</span>
-                              <span className="text-lime-300 font-bold">{p.pick} @ {p.odd.toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="pt-2 border-t border-zinc-800 space-y-2">
-                        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-                          <div className="bg-zinc-900/90 p-2 rounded-xl">
-                            <span className="text-zinc-400 block">Total Odds</span>
-                            <span className="text-sm font-black text-lime-400">
-                              {Object.values(selectedPicks).length > 0
-                                ? Object.values(selectedPicks).reduce((acc, p) => acc * p.odd, 1).toFixed(2) + 'x'
-                                : '0.00x'}
-                            </span>
-                          </div>
-                          <div className="bg-zinc-900/90 p-2 rounded-xl">
-                            <span className="text-zinc-400 block">Potential Win</span>
-                            <span className="text-sm font-black text-emerald-400">
-                              {Object.values(selectedPicks).length > 0
-                                ? activeStateKey === 'canada'
-                                  ? `$${Math.round(Math.max(1, Math.round(betStake / 960.54)) * Object.values(selectedPicks).reduce((acc, p) => acc * p.odd, 1)).toLocaleString()} CAD`
-                                  : formatNaira(Math.round(betStake * Object.values(selectedPicks).reduce((acc, p) => acc * p.odd, 1)))
-                                : activeStateKey === 'canada' ? '$0 CAD' : '₦0'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-zinc-400 font-mono">
-                            Stake {activeStateKey === 'canada' ? '(CAD)' : '(NGN)'}:
-                          </span>
-                          <input
-                            type="number"
-                            value={activeStateKey === 'canada' ? Math.max(1, Math.round(betStake / 960.54)) : betStake}
-                            onChange={(e) => {
-                              const val = Math.max(1, Number(e.target.value));
-                              setBetStake(activeStateKey === 'canada' ? Math.round(val * 960.54) : val);
-                            }}
-                            className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1 text-xs text-white font-mono"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            disabled={Object.keys(selectedPicks).length === 0}
-                            onClick={() => {
-                              if (Object.keys(selectedPicks).length === 0) return;
-                              const isCan = activeStateKey === 'canada';
-                              const stakeCAD = Math.max(1, Math.round(betStake / 960.54));
-                              if (isCan) {
-                                const userCAD = getEffectiveCAD();
-                                if (userCAD < stakeCAD) {
-                                  onShowToast(`Insufficient CAD funds! Requires $${stakeCAD.toLocaleString()} CAD.`);
-                                  triggerSound?.('alert');
-                                  return;
-                                }
-                                if (userProfile) {
-                                  const nextCAD = checkIsOwner(userProfile)
-                                    ? 9.99e23
-                                    : Math.max(0, Math.round((userCAD - stakeCAD) * 100) / 100);
-                                  persistProfileUpdate({ ...userProfile, bankCAD: nextCAD });
-                                }
-                              } else {
-                                if (moneyNGN < betStake) {
-                                  onShowToast('Insufficient funds for sports bet stake!');
-                                  triggerSound?.('alert');
-                                  return;
-                                }
-                                onUpdateMoney(-betStake);
-                              }
-                              const picksCount = Object.keys(selectedPicks).length;
-                              const odds = +Object.values(selectedPicks).reduce((acc, p) => acc * p.odd, 1).toFixed(2);
-                              const pot = isCan ? Math.round(stakeCAD * odds) : Math.round(betStake * odds);
-                              const newSlip = {
-                                id: `slip_${Date.now()}`,
-                                summary: `${picksCount}-Match Accumulator`,
-                                picksCount,
-                                totalOdds: odds,
-                                stake: isCan ? stakeCAD : betStake,
-                                potentialWin: pot,
-                                currency: isCan ? 'CAD' : 'NGN',
-                                status: 'PENDING' as const,
-                                date: liveRealTime || 'Today 20:30 WAT',
-                                picks: Object.values(selectedPicks).map((p) => ({
-                                  match: p.match,
-                                  pick: p.pick,
-                                  odd: p.odd,
-                                })),
-                              };
-                              const nextSlips = [newSlip, ...placedBetSlips];
-                              setPlacedBetSlips(nextSlips);
-                              try { localStorage.setItem('naija_life_bet_slips', JSON.stringify(nextSlips)); } catch {}
-                              setSelectedPicks({});
-                              onShowToast(
-                                isCan
-                                  ? `🎯 Bet placed (-$${stakeCAD.toLocaleString()} CAD)! Matches settle daily at 8:30 PM.`
-                                  : `🎯 Bet slip placed (-${formatNaira(betStake)})! Matches settle daily at 8:30 PM WAT.`
-                              );
-                              triggerSound?.('coin');
-                            }}
-                            className={`w-full py-2.5 rounded-xl font-black text-xs cursor-pointer shadow-md transition-all ${
-                              Object.keys(selectedPicks).length > 0
-                                ? 'bg-lime-500 hover:bg-lime-400 text-black'
-                                : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                            }`}
-                          >
-                            Place Bet Slip ({Object.keys(selectedPicks).length > 0 ? formatNaira(betStake) : 'Select Picks'})
-                          </button>
-                        </div>
-                        <p className="text-[9px] font-mono text-zinc-400 text-center">
-                          ⏰ Fixtures settle automatically everyday at 8:30 PM WAT. Track picks in the History tab!
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 2: HISTORY TAB (ALL PLACED SLIPS WITH CORRECT / WRONG MATCHES) */}
-                {betTab === 'history' && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between px-1">
-                      <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold">
-                        Betting Slips History ({placedBetSlips.length})
-                      </span>
-                      <span className="text-[9px] font-mono text-amber-400 font-bold">8:30 PM WAT Settlement</span>
-                    </div>
-
-                    {placedBetSlips.length === 0 ? (
-                      <div className="p-6 rounded-3xl bg-zinc-950/80 border border-zinc-800 text-center space-y-2">
-                        <div className="text-3xl">🎫</div>
-                        <h4 className="text-xs font-black text-white">No Bet Slips Placed Yet</h4>
-                        <p className="text-[10px] text-zinc-400">
-                          Build your match accumulator in the Sports tab to track results here!
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setBetTab('sports')}
-                          className="px-3.5 py-1.5 rounded-xl bg-lime-500 text-black font-black text-xs cursor-pointer"
-                        >
-                          Select Live Matches
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-2.5">
-                        {placedBetSlips.map((slip) => (
-                          <div
-                            key={slip.id}
-                            className={`p-3.5 rounded-2xl border shadow-md space-y-2.5 ${
-                              slip.status === 'WON'
-                                ? 'bg-emerald-950/40 border-emerald-500/60'
-                                : slip.status === 'LOST'
-                                ? 'bg-rose-950/30 border-rose-500/40'
-                                : 'bg-zinc-950/90 border-zinc-800'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <span className="text-xs font-black text-white">{slip.summary}</span>
-                                <div className="text-[9px] text-zinc-400 font-mono">
-                                  {slip.date} · Stake: {formatNaira(slip.stake)} · Odds: {slip.totalOdds}x
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <span
-                                  className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-black uppercase ${
-                                    slip.status === 'WON'
-                                      ? 'bg-emerald-500 text-black'
-                                      : slip.status === 'LOST'
-                                      ? 'bg-rose-600 text-white'
-                                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
-                                  }`}
-                                >
-                                  {slip.status === 'PENDING' ? '⏳ PENDING 8:30 PM' : slip.status}
-                                </span>
-                                <span className="text-[10px] font-mono font-bold text-emerald-400 block mt-0.5">
-                                  Pot. Win: {formatNaira(slip.potentialWin)}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Individual matches list showing which were correct and wrong */}
-                            <div className="space-y-1 pt-1.5 border-t border-zinc-800/80">
-                              {(slip.picks || []).map((p: any, idx: number) => (
-                                <div
-                                  key={idx}
-                                  className="flex items-center justify-between text-[10px] font-mono p-1.5 rounded-lg bg-black/40 border border-white/5"
-                                >
-                                  <span className="truncate max-w-[170px] text-zinc-200">{p.match}</span>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    <span className="text-zinc-400">Pick {p.pick}</span>
-                                    {slip.status === 'PENDING' ? (
-                                      <span className="text-amber-400 text-[9px]">⏳ Pending</span>
-                                    ) : p.isCorrect ? (
-                                      <span className="text-emerald-400 font-bold flex items-center gap-0.5">
-                                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                        <span>Correct</span>
-                                      </span>
-                                    ) : (
-                                      <span className="text-rose-400 font-bold flex items-center gap-0.5">
-                                        <X className="w-3 h-3 text-rose-400" />
-                                        <span>Wrong</span>
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* TAB 2: AVIATOR CRASH GAME */}
-                {betTab === 'aviator' && (
-                  <div className="space-y-3">
-                    {/* Crash History Ribbon */}
-                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                      <span className="text-[9px] font-mono text-zinc-500 uppercase shrink-0">History:</span>
-                      {aviatorHistory.map((mult, idx) => (
-                        <span
-                          key={idx}
-                          className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-black shrink-0 ${
-                            mult >= 10
-                              ? 'bg-amber-500/30 text-amber-300 border border-amber-500/50'
-                              : mult >= 2
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                              : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                          }`}
-                        >
-                          {mult.toFixed(2)}x
-                        </span>
-                      ))}
-                    </div>
-
-                    {/* AVIATOR SKY FLIGHT DISPLAY */}
-                    <div className="relative w-full h-48 rounded-3xl bg-gradient-to-b from-rose-950 via-zinc-950 to-black border-2 border-rose-600/60 p-4 flex flex-col justify-between overflow-hidden shadow-2xl">
-                      {/* Grid Radar Lines */}
-                      <div className="absolute inset-0 bg-[linear-gradient(to_right,#88133715_1px,transparent_1px),linear-gradient(to_bottom,#88133715_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none" />
-
-                      <div className="relative flex justify-between items-center z-10">
-                        <span className="text-[10px] font-mono text-rose-400 font-bold flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                          <span>AVIATOR RADAR</span>
-                        </span>
-                        <span className="text-[10px] font-mono text-zinc-400">
-                          {isAviatorFlying ? 'FLYING...' : aviatorCrashed ? 'CRASHED' : 'READY'}
-                        </span>
-                      </div>
-
-                      {/* Flying Airplane & Multiplier */}
-                      <div className="relative flex flex-col items-center justify-center my-auto z-10">
-                        {isAviatorFlying ? (
-                          <div className="flex flex-col items-center animate-pulse">
-                            <span className="text-4xl filter drop-shadow-[0_0_12px_rgba(244,63,94,0.8)] -rotate-12 transition-transform duration-100">
-                              ✈️
-                            </span>
-                            <div className="text-3xl font-mono font-black text-white mt-1 drop-shadow-md">
-                              {aviatorMultiplier.toFixed(2)}x
-                            </div>
-                          </div>
-                        ) : aviatorCrashed ? (
-                          <div className="flex flex-col items-center">
-                            <span className="text-3xl">💥</span>
-                            <div className="text-lg font-mono font-black text-rose-400 mt-1 uppercase">
-                              FLEW AWAY @ {aviatorMultiplier.toFixed(2)}x
-                            </div>
-                          </div>
-                        ) : hasCashedOut ? (
-                          <div className="flex flex-col items-center">
-                            <span className="text-3xl">💰</span>
-                            <div className="text-lg font-mono font-black text-emerald-400 mt-1 uppercase">
-                              CASHED OUT @ {aviatorMultiplier.toFixed(2)}x!
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center">
-                            <span className="text-3xl">🛫</span>
-                            <div className="text-xs font-mono text-zinc-400 mt-1">
-                              Place your stake and take off!
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Bottom live payout tracker */}
-                      <div className="relative flex justify-between items-center text-[10px] font-mono z-10 border-t border-rose-900/50 pt-1.5">
-                        <span className="text-zinc-400">
-                          Stake: {activeStateKey === 'canada' ? `$${Math.max(1, Math.round(aviatorStake / 960.54)).toLocaleString()} CAD` : formatNaira(aviatorStake)}
-                        </span>
-                        <span className="text-amber-300 font-bold">
-                          Live Payout: {activeStateKey === 'canada' ? `$${Math.round(Math.max(1, Math.round(aviatorStake / 960.54)) * aviatorMultiplier).toLocaleString()} CAD` : formatNaira(Math.round(aviatorStake * aviatorMultiplier))}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* AVIATOR CONTROLLER */}
-                    <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3 space-y-2.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-zinc-400 font-mono">
-                          Stake {activeStateKey === 'canada' ? '(CAD)' : '(NGN)'}:
-                        </span>
-                        <input
-                          type="number"
-                          disabled={isAviatorFlying}
-                          value={activeStateKey === 'canada' ? Math.max(1, Math.round(aviatorStake / 960.54)) : aviatorStake}
-                          onChange={(e) => {
-                            const val = Math.max(1, Number(e.target.value));
-                            setAviatorStake(activeStateKey === 'canada' ? Math.round(val * 960.54) : val);
-                          }}
-                          className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1 text-xs text-white font-mono"
-                        />
-                      </div>
-
-                      {/* Quick stake presets */}
-                      <div className="grid grid-cols-4 gap-1">
-                        {(activeStateKey === 'canada' ? [5, 10, 25, 50] : [500, 1000, 5000, 20000]).map((amt) => (
-                          <button
-                            key={amt}
-                            type="button"
-                            disabled={isAviatorFlying}
-                            onClick={() => setAviatorStake(activeStateKey === 'canada' ? Math.round(amt * 960.54) : amt)}
-                            className="py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-mono text-[9px] font-bold cursor-pointer"
-                          >
-                            {activeStateKey === 'canada' ? `+$${amt}` : `+${formatNaira(amt)}`}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* ACTION BUTTON: BET OR CASH OUT */}
-                      {!isAviatorFlying ? (
-                        <button
-                          type="button"
-                          onClick={handleStartAviator}
-                          className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-sm cursor-pointer shadow-lg shadow-emerald-950/80 active:scale-98 transition-all flex items-center justify-center gap-2"
-                        >
-                          <Plane className="w-4 h-4 fill-black" />
-                          <span>
-                            BET {activeStateKey === 'canada' ? `$${Math.max(1, Math.round(aviatorStake / 960.54)).toLocaleString()} CAD` : formatNaira(aviatorStake)} (TAKE OFF)
-                          </span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={handleCashOutAviator}
-                          className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-black font-black text-sm cursor-pointer shadow-[0_0_20px_rgba(251,191,36,0.6)] animate-bounce active:scale-95 transition-all flex items-center justify-center gap-2"
-                        >
-                          <Coins className="w-5 h-5 fill-black" />
-                          <span>
-                            CASH OUT {activeStateKey === 'canada' ? `$${Math.round(Math.max(1, Math.round(aviatorStake / 960.54)) * aviatorMultiplier).toLocaleString()} CAD` : formatNaira(Math.round(aviatorStake * aviatorMultiplier))}
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <NaijaBetPredictionsApp
+                userProfile={userProfile}
+                onShowToast={onShowToast}
+                triggerSound={triggerSound}
+              />
             )}
 
             {/* =============================================================
-                19. INVEST (77+ NGX EQUITIES, T-BILLS, REAL ESTATE & CRYPTO)
+                19. INVEST (LIVE NGX / TSX / FX MARKET SIMULATOR)
                 ============================================================= */}
             {currentApp === 'invest' && (
-              <div className="space-y-3">
-                {/* LIVE INVESTMENT EARNINGS STACK BOX */}
-                <div className="bg-gradient-to-br from-cyan-950 via-zinc-950 to-neutral-900 border-2 border-cyan-500/50 rounded-3xl p-4 shadow-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <TrendingUp className="w-5 h-5 text-cyan-400" />
-                      <span className="text-xs font-black text-cyan-200 uppercase tracking-wider">LIVE STACKING YIELD STREAM</span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[9px] font-mono font-bold flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                      ACTIVE ACCRUAL
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="bg-zinc-900/80 p-2.5 rounded-2xl border border-zinc-800">
-                      <span className="text-[9px] text-zinc-400 uppercase font-mono block">Invested Principal</span>
-                      <span className="text-xs font-black text-white font-mono">
-                        {formatNaira(investments.reduce((sum, inv) => sum + (inv.investedAmount || 0), 0))}
-                      </span>
-                    </div>
-
-                    <div className="bg-emerald-950/60 p-2.5 rounded-2xl border border-emerald-500/40">
-                      <span className="text-[9px] text-emerald-400 uppercase font-mono block">Stacked Yield</span>
-                      <span className="text-xs font-black text-emerald-300 font-mono animate-pulse">
-                        +{formatNaira(investments.reduce((sum, inv) => sum + (inv.earnedReturns || 0), 0))}
-                      </span>
-                    </div>
-
-                    <div className="bg-cyan-950/60 p-2.5 rounded-2xl border border-cyan-500/40">
-                      <span className="text-[9px] text-cyan-300 uppercase font-mono block">Total Value</span>
-                      <span className="text-xs font-black text-cyan-200 font-mono">
-                        {formatNaira(investments.reduce((sum, inv) => sum + (inv.investedAmount || 0) + (inv.earnedReturns || 0), 0))}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Top Tab Bar: My Active Portfolio vs Nigeria Catalog vs Canada (CAD) */}
-                <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 text-xs font-bold gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setInvestSubTab('holdings')}
-                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                      investSubTab === 'holdings'
-                        ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-black font-black shadow-md'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <TrendingUp className="w-3.5 h-3.5" />
-                    <span className="truncate">Holdings ({investments.filter((i) => (i.investedAmount || 0) > 0).length})</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInvestSubTab('catalog')}
-                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                      investSubTab === 'catalog'
-                        ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-black font-black shadow-md'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <Coins className="w-3.5 h-3.5" />
-                    <span className="truncate">🇳🇬 Nigeria</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInvestSubTab('canada')}
-                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                      investSubTab === 'canada'
-                        ? 'bg-gradient-to-r from-red-600 via-rose-500 to-amber-500 text-white font-black shadow-md'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <span>🍁</span>
-                    <span className="truncate">Canada (CAD)</span>
-                  </button>
-                </div>
-
-                {/* TAB 1: MY HOLDINGS WITH ACCUMULATED DIVIDENDS & CUMULATIVE CASHOUT */}
-                {investSubTab === 'holdings' && (
-                  <div className="space-y-3">
-                    {/* CUMULATIVE CASHOUT BAR */}
-                    {(() => {
-                      const totalAccruedDividends = investments.reduce((sum, inv) => sum + (inv.earnedReturns || 0), 0);
-                      return (
-                        <div className="bg-gradient-to-br from-emerald-950 via-zinc-950 to-teal-950/60 border-2 border-emerald-500/50 rounded-2xl p-3.5 space-y-2 shadow-xl">
-                          <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-mono text-zinc-400 uppercase font-bold">Total Stacked Yield Dividends</span>
-                            <span className="text-xs font-mono font-black text-emerald-300 animate-pulse">
-                              +{formatNaira(totalAccruedDividends)}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={totalAccruedDividends <= 0}
-                            onClick={() => {
-                              if (totalAccruedDividends <= 0) return;
-                              onUpdateMoney(totalAccruedDividends);
-                              investments.forEach((inv) => {
-                                inv.earnedReturns = 0;
-                              });
-                              onShowToast(`💰 Cashed out +${formatNaira(totalAccruedDividends)} cumulative dividends from all holdings!`);
-                              triggerSound?.('coin');
-                            }}
-                            className={`w-full py-2.5 rounded-xl font-black text-xs cursor-pointer shadow-lg transition-all flex items-center justify-center gap-1.5 ${
-                              totalAccruedDividends > 0
-                                ? 'bg-gradient-to-r from-emerald-400 via-teal-400 to-emerald-500 text-black hover:scale-102 active:scale-98 shadow-emerald-950/80'
-                                : 'bg-zinc-850 text-zinc-500 border border-zinc-750 cursor-not-allowed'
-                            }`}
-                          >
-                            <Coins className="w-4 h-4 fill-black" />
-                            <span>CASHOUT ALL INVESTMENT DIVIDENDS (+{formatNaira(totalAccruedDividends)})</span>
-                          </button>
-                        </div>
-                      );
-                    })()}
-
-                    {/* ACTIVE PORTFOLIO HOLDINGS LIST */}
-                    {investments.some((i) => (i.investedAmount || 0) > 0) ? (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-mono text-cyan-400 uppercase font-bold">
-                            Individual Asset Holdings ({investments.filter((i) => (i.investedAmount || 0) > 0).length})
-                          </span>
-                        </div>
-
-                        {investments
-                          .filter((i) => (i.investedAmount || 0) > 0)
-                          .map((inv) => (
-                            <div
-                              key={inv.id}
-                              className="p-3.5 rounded-2xl bg-zinc-950/90 border border-cyan-500/30 shadow-md space-y-2"
-                            >
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <h5 className="text-xs font-bold text-white">{inv.title}</h5>
-                                  <span className="text-[9px] font-mono text-zinc-400 uppercase">{inv.category} · {inv.annualYieldPct}% p.a.</span>
-                                </div>
-                                <div className="text-right">
-                                  <span className="text-xs font-mono font-black text-emerald-400 block">
-                                    +{formatNaira(inv.earnedReturns || 0)}
-                                  </span>
-                                  <span className="text-[8px] font-mono text-emerald-400/80">Stacked Yield</span>
-                                </div>
-                              </div>
-
-                              <div className="flex justify-between items-center text-[10px] font-mono bg-zinc-900/60 p-2 rounded-xl border border-zinc-800">
-                                <span className="text-zinc-400">Principal: {formatNaira(inv.investedAmount)}</span>
-                                <span className="text-cyan-300 font-bold">Total Value: {formatNaira(inv.investedAmount + (inv.earnedReturns || 0))}</span>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  onLiquidateInvestment(inv.id);
-                                  triggerSound?.('coin');
-                                }}
-                                className="w-full py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black font-black text-xs cursor-pointer shadow flex items-center justify-center gap-1.5"
-                              >
-                                <Coins className="w-3.5 h-3.5" />
-                                <span>Sell & Liquidate Asset (+{formatNaira(inv.investedAmount + (inv.earnedReturns || 0))})</span>
-                              </button>
-                            </div>
-                          ))}
-                      </div>
-                    ) : (
-                      <div className="p-6 rounded-3xl bg-zinc-950/80 border border-zinc-800 text-center space-y-2">
-                        <div className="text-3xl">📈</div>
-                        <h4 className="text-xs font-black text-white">No Active Investments Owned</h4>
-                        <p className="text-[10px] text-zinc-400">
-                          Switch to the Investment Catalog tab to purchase NGX equities, treasury bills, real estate, and crypto!
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setInvestSubTab('catalog')}
-                          className="px-3.5 py-1.5 rounded-xl bg-cyan-500 text-black font-black text-xs cursor-pointer"
-                        >
-                          Browse Investment Catalog
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* TAB 2: SEARCH AND ASSET CATALOG */}
-                {investSubTab === 'catalog' && (
-                  <div className="bg-zinc-950/90 border border-zinc-800 rounded-3xl p-3.5 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-xs font-black text-white">Investment Asset Catalog</h4>
-                        <p className="text-[10px] text-zinc-400">Equities, T-Bills, Agriculture & Startups</p>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-mono text-[10px] font-bold">
-                        {filteredInvestments.length} Assets
-                      </span>
-                    </div>
-
-                  {/* Search Bar */}
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-2.5" />
-                    <input
-                      type="text"
-                      value={investSearchQuery}
-                      onChange={(e) => setInvestSearchQuery(e.target.value)}
-                      placeholder="Search stocks, bonds, farms, crypto..."
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500"
-                    />
-                  </div>
-
-                  {/* Category Filters */}
-                  <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none text-[10px]">
-                    {[
-                      { id: 'All', label: 'All' },
-                      { id: 'tbills', label: 'T-Bills' },
-                      { id: 'equities', label: 'NGX Stocks' },
-                      { id: 'realestate', label: 'Real Estate' },
-                      { id: 'agribusiness', label: 'Agribusiness' },
-                      { id: 'tech_startups', label: 'Startups' },
-                      { id: 'crypto', label: 'Crypto' },
-                      { id: 'forex', label: 'Forex' },
-                    ].map((cat) => (
-                      <button
-                        key={cat.id}
-                        type="button"
-                        onClick={() => setInvestCategoryFilter(cat.id)}
-                        className={`px-2.5 py-1 rounded-lg font-bold shrink-0 cursor-pointer transition-colors ${
-                          investCategoryFilter === cat.id
-                            ? 'bg-cyan-500 text-black font-black'
-                            : 'bg-zinc-900 text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        {cat.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Asset Cards */}
-                  <div className="space-y-2">
-                    {filteredInvestments.map((inv) => (
-                      <div
-                        key={inv.id}
-                        className="p-3 rounded-2xl bg-zinc-900/80 border border-zinc-800 flex justify-between items-center gap-2 hover:border-cyan-500/40 transition-colors"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs font-bold text-white truncate">{inv.title}</span>
-                            <span
-                              className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold shrink-0 ${
-                                inv.risk?.includes('Low')
-                                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/40'
-                                  : inv.risk?.includes('Moderate')
-                                  ? 'bg-amber-950 text-amber-400 border border-amber-500/40'
-                                  : 'bg-rose-950 text-rose-400 border border-rose-500/40'
-                              }`}
-                            >
-                              {inv.risk || 'Standard'}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-zinc-400 truncate mt-0.5">{inv.desc}</div>
-                          <div className="flex items-center gap-2 text-[10px] text-cyan-400 font-mono mt-1">
-                            <span>Min: {formatNaira(inv.minDeposit)}</span>
-                            <span>·</span>
-                            <span className="text-emerald-400 font-bold">+{inv.annualYieldPct}% p.a.</span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (moneyNGN < inv.minDeposit) {
-                              onShowToast(`Insufficient funds! Minimum deposit is ${formatNaira(inv.minDeposit)}`);
-                              triggerSound?.('alert');
-                              return;
-                            }
-                            onInvest(inv.id, inv.minDeposit);
-                          }}
-                          className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-zinc-950 font-bold text-xs cursor-pointer shrink-0 shadow"
-                        >
-                          Invest
-                        </button>
-                      </div>
-                    ))}
-
-                    {filteredInvestments.length === 0 && (
-                      <div className="py-6 text-center text-xs text-zinc-500">
-                        No investment assets found matching "{investSearchQuery}"
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-                {/* TAB 3: CANADIAN INVESTMENTS CATALOG (BOUGHT IN CAD, PAYS CAD) */}
-                {investSubTab === 'canada' && (
-                  <div className="space-y-3">
-                    <div className="bg-gradient-to-r from-red-950/80 via-neutral-950 to-zinc-950 border border-red-500/40 rounded-2xl p-3 flex items-center justify-between shadow-md">
-                      <div>
-                        <h4 className="text-xs font-black text-white flex items-center gap-1.5">
-                          <span>🍁</span>
-                          <span>Toronto Stock Exchange (TSX) &amp; Canadian Equities</span>
-                        </h4>
-                        <p className="text-[10px] text-zinc-400 font-mono mt-0.5">
-                          Assets bought strictly with Canadian Dollars ($ CAD) · Pays CAD Yields
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-[9px] font-mono text-zinc-400 uppercase block">CAD Bank:</span>
-                        <span className="text-xs font-mono font-black text-amber-300">
-                          {formatCAD(getEffectiveCAD())}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      {CANADIAN_INVESTMENTS_CATALOG.map((inv) => (
-                        <div key={inv.id} className="p-3 rounded-2xl bg-zinc-950/80 border border-zinc-800 hover:border-red-500/40 transition-all flex items-center justify-between gap-3 shadow-md">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <h5 className="text-xs font-black text-white truncate">{inv.title}</h5>
-                              <span className="px-1.5 py-0.2 rounded text-[8px] font-mono font-bold uppercase bg-red-950 text-red-300 border border-red-500/40">
-                                {inv.risk} Risk
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-zinc-400 truncate mt-0.5">{inv.desc}</div>
-                            <div className="flex items-center gap-2 text-[10px] text-red-300 font-mono mt-1">
-                              <span>Min: <strong className="text-amber-300">${inv.minDepositCAD.toLocaleString()} CAD</strong></span>
-                              <span>·</span>
-                              <span className="text-emerald-400 font-bold">+{inv.annualYieldPct}% p.a. Yield</span>
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const userCad = getEffectiveCAD();
-                              if (userCad < inv.minDepositCAD) {
-                                onShowToast(`Insufficient Canadian Dollars! Requires $${inv.minDepositCAD.toLocaleString()} CAD. Exchange NGN to CAD in Naija Pay.`);
-                                triggerSound?.('alert');
-                                return;
-                              }
-                              if (userProfile) {
-                                const nextCAD = checkIsOwner(userProfile)
-                                  ? 9.99e23
-                                  : Math.max(0, Math.round((userCad - inv.minDepositCAD) * 100) / 100);
-                                const nextReceipts = [
-                                  {
-                                    id: `INV_CAD_${Date.now()}`,
-                                    title: `Canadian Asset: ${inv.title}`,
-                                    category: 'business' as const,
-                                    amount: inv.minDepositCAD || 500,
-                                    date: new Date().toLocaleDateString('en-CA'),
-                                    type: 'debit' as const,
-                                    currency: 'CAD' as const,
-                                  },
-                                  ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
-                                ];
-                                persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, receipts: nextReceipts });
-                              }
-                              onShowToast(`🍁 Invested $${inv.minDepositCAD.toLocaleString()} CAD into ${inv.title}! Yields paid into Canadian Account.`);
-                              triggerSound?.('coin');
-                            }}
-                            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs cursor-pointer shrink-0 shadow"
-                          >
-                            Invest CAD
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <InvestApp
+                userProfile={userProfile}
+                currentStateId={activeStateKey}
+                onUpdateProfile={persistProfileUpdate}
+                onShowToast={onShowToast}
+                triggerSound={triggerSound}
+              />
             )}
 
             {/* =============================================================
@@ -10316,9 +8832,6 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                               return;
                             }
                             if (userProfile) {
-                              const nextCAD = checkIsOwner(userProfile)
-                                ? 9.99e23
-                                : Math.max(0, Math.round((userCad - veh.priceCAD) * 100) / 100);
                               const nextInv = [...(Array.isArray(userProfile.inventory) ? userProfile.inventory : []), `${veh.name} (Canadian Garage)`];
                               const nextReceipts = [
                                 {
@@ -10332,7 +8845,7 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                 },
                                 ...(Array.isArray(userProfile.receipts) ? userProfile.receipts : []),
                               ];
-                              persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, inventory: nextInv, receipts: nextReceipts });
+                              debitCADProfile(veh.priceCAD, { inventory: nextInv, receipts: nextReceipts });
                             }
                             onBuyVehicle({
                               id: veh.id,
@@ -10501,22 +9014,18 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                                         return;
                                       }
                                       if (userProfile) {
-                                        const nextCAD = checkIsOwner(userProfile)
-                                          ? 9.99e23
-                                          : Math.max(0, Math.round((userCad - priceCAD) * 100) / 100);
                                         const nextInv = [...(Array.isArray(userProfile.inventory) ? userProfile.inventory : []), `${item.name} (Canadian Hangar / Berth)`];
-                                        persistProfileUpdate({ ...userProfile, bankCAD: nextCAD, inventory: nextInv });
+                                        debitCADProfile(priceCAD, { inventory: nextInv });
                                       }
                                     } else {
-                                      if (moneyNGN < item.priceNGN) {
+                                      if (parseMinorString(userProfile?.ngnKobo, moneyNGN) < majorToMinor(item.priceNGN)) {
                                         onShowToast(`Insufficient funds! Requires ${formatNaira(item.priceNGN)} for acquisition.`);
                                         triggerSound?.('alert');
                                         return;
                                       }
-                                      onUpdateMoney(-item.priceNGN);
                                       if (userProfile) {
                                         const nextInv = [...(Array.isArray(userProfile.inventory) ? userProfile.inventory : []), `${item.name} (Hangar / Berth)`];
-                                        persistProfileUpdate({ ...userProfile, inventory: nextInv });
+                                        debitNGNProfile(item.priceNGN, { inventory: nextInv });
                                       }
                                     }
                                     onBuyVehicle?.({
@@ -10560,199 +9069,13 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 22. PETS APP (KENNELS & GUARD DOGS)
                 ============================================================= */}
             {currentApp === 'pets' && (
-              <div className="space-y-4">
-                {/* Header Banner */}
-                <div className="bg-gradient-to-br from-orange-950/80 via-zinc-950 to-neutral-900 border border-orange-500/40 rounded-2xl p-4 shadow-xl">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Dog className="w-5 h-5 text-orange-400" />
-                        <h3 className="text-sm font-black text-orange-200 uppercase tracking-wider">
-                          Supreme Nigerian Pedigree Kennels
-                        </h3>
-                      </div>
-                      <p className="text-[10px] text-zinc-400 mt-1">
-                        Champion Bloodline Guard Dogs &amp; Compound Protection Breeds
-                      </p>
-                    </div>
-                    <span className="px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/40 text-[9px] font-mono font-bold">
-                      PEDIGREE
-                    </span>
-                  </div>
-                </div>
-
-                {/* Region Tabs */}
-                <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 text-xs font-bold gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setPetsSubTab('nigeria')}
-                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                      petsSubTab === 'nigeria'
-                        ? 'bg-orange-500 text-black font-black shadow-md'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <span>🇳🇬 Nigerian Kennels</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPetsSubTab('canada')}
-                    className={`flex-1 py-1.5 rounded-xl cursor-pointer transition-all flex items-center justify-center gap-1 ${
-                      petsSubTab === 'canada'
-                        ? 'bg-gradient-to-r from-red-600 to-rose-500 text-white font-black shadow-md'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <span>🍁 Canadian Breeds (Coming Soon)</span>
-                  </button>
-                </div>
-
-                {/* TAB 1: NIGERIAN PETS */}
-                {petsSubTab === 'nigeria' && (
-                  <>
-                    {/* Category Filter */}
-                    <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                      {['All', 'Dog', 'Cat', 'Bird', 'Horse', 'Exotic'].map((cat) => (
-                        <button
-                          key={cat}
-                          type="button"
-                          onClick={() => setPetCategoryFilter(cat)}
-                          className={`px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
-                            petCategoryFilter === cat
-                              ? 'bg-orange-500 text-black font-black shadow-md'
-                              : 'bg-zinc-900/80 text-zinc-400 hover:text-white border border-zinc-800'
-                          }`}
-                        >
-                          {cat}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Pet Cards */}
-                    <div className="space-y-3">
-                      {filteredPets.map((pet) => (
-                        <div
-                          key={pet.id}
-                          className="p-3.5 rounded-2xl bg-zinc-950/80 border border-zinc-800 hover:border-orange-500/40 transition-all space-y-2 shadow-md"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2.5">
-                              <span className="text-3xl shrink-0">{pet.icon}</span>
-                              <div>
-                                <div className="text-xs font-black text-white">{pet.name}</div>
-                                <div className="text-[10px] text-orange-400/90 font-mono">
-                                  Breed: {pet.breed} · {pet.species}
-                                </div>
-                              </div>
-                            </div>
-                            <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 font-bold text-[9px] shrink-0 uppercase tracking-wider">
-                              COMING SOON
-                            </span>
-                          </div>
-
-                          <div className="text-[10px] text-zinc-300 bg-zinc-900/60 p-2 rounded-xl border border-zinc-800/80 font-mono">
-                            <span className="text-zinc-500">Temperament: </span>
-                            {pet.temperament}
-                          </div>
-
-                          <p className="text-[10px] text-zinc-400 leading-relaxed">{pet.desc}</p>
-
-                          <div className="flex items-center justify-between pt-2 border-t border-zinc-900">
-                            <div>
-                              <span className="text-[9px] text-zinc-500 uppercase font-mono block">Kennel Price</span>
-                              <span className="text-xs font-mono font-bold text-orange-400">
-                                {formatNaira(pet.priceNGN)}
-                              </span>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onShowToast(`🐾 Breeding kennel litters for ${pet.name} are currently in quarantine. Available in the next expansion!`);
-                                triggerSound?.('coin');
-                              }}
-                              className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs cursor-pointer border border-zinc-700"
-                            >
-                              Reserve Puppy
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {/* TAB 2: CANADIAN BREEDS (ALL SET TO COMING SOON) */}
-                {petsSubTab === 'canada' && (
-                  <div className="space-y-3">
-                    <div className="bg-gradient-to-r from-red-950/80 to-zinc-950 border border-red-500/30 rounded-2xl p-3 flex items-center justify-between shadow-md">
-                      <div>
-                        <h4 className="text-xs font-black text-white flex items-center gap-1.5">
-                          <span>🍁</span>
-                          <span>Canadian Cold-Climate Working Breeds</span>
-                        </h4>
-                        <p className="text-[10px] text-zinc-400 font-mono mt-0.5">
-                          Acclimatized Canadian snow breeds · Official Kennel Club (Coming Soon)
-                        </p>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40 text-[9px] font-mono font-bold uppercase">
-                        COMING SOON
-                      </span>
-                    </div>
-
-                    <div className="space-y-3">
-                      {CANADIAN_PETS_CATALOG.map((pet) => (
-                        <div
-                          key={pet.id}
-                          className="p-3.5 rounded-2xl bg-zinc-950/80 border border-red-500/20 hover:border-red-500/40 transition-all space-y-2 shadow-md"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2.5">
-                              <span className="text-3xl shrink-0">{pet.icon}</span>
-                              <div>
-                                <div className="text-xs font-black text-white">{pet.name}</div>
-                                <div className="text-[10px] text-red-400 font-mono">
-                                  Breed: {pet.breed} · {pet.species}
-                                </div>
-                              </div>
-                            </div>
-                            <span className="px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 font-bold text-[9px] shrink-0 uppercase tracking-wider">
-                              COMING SOON 🍁
-                            </span>
-                          </div>
-
-                          <div className="text-[10px] text-zinc-300 bg-zinc-900/60 p-2 rounded-xl border border-zinc-800/80 font-mono">
-                            <span className="text-zinc-500">Temperament: </span>
-                            {pet.temperament}
-                          </div>
-
-                          <p className="text-[10px] text-zinc-400 leading-relaxed">{pet.desc}</p>
-
-                          <div className="flex items-center justify-between pt-2 border-t border-zinc-900">
-                            <div>
-                              <span className="text-[9px] text-zinc-500 uppercase font-mono block">Estimated Fee</span>
-                              <span className="text-xs font-mono font-bold text-amber-300">
-                                ${pet.priceCAD.toLocaleString()} CAD
-                              </span>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onShowToast(`🍁 Canadian Kennel Club import permits for ${pet.name} will open in the next update!`);
-                                triggerSound?.('coin');
-                              }}
-                              className="px-3 py-1.5 rounded-xl bg-zinc-800/80 text-zinc-400 font-bold text-xs cursor-not-allowed border border-zinc-700"
-                            >
-                              Coming Soon
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <PetsApp
+                userProfile={userProfile}
+                currentStateId={activeStateKey}
+                onUpdateProfile={persistProfileUpdate}
+                onShowToast={onShowToast}
+                triggerSound={triggerSound}
+              />
             )}
 
             {/* =============================================================
@@ -11093,71 +9416,87 @@ export const NaijaPhone: React.FC<NaijaPhoneProps> = ({
                 SNAPCHAT APP: SET TO COMING SOON AS REQUESTED
                 ============================================================= */}
             {currentApp === 'snapchat' && (
-              <div className="h-full -m-4 min-h-[480px] bg-gradient-to-b from-[#fffc00] via-zinc-950 to-black text-white p-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
-                <div className="w-20 h-20 rounded-3xl bg-yellow-400 border-4 border-black/80 flex items-center justify-center text-5xl shadow-[0_10px_30px_rgba(255,252,0,0.4)] mb-4 animate-bounce">
-                  👻
-                </div>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-400/20 border border-yellow-400/50 text-yellow-300 font-mono text-[10px] font-black uppercase tracking-wider mb-2">
-                  <span>👻 OFFICIAL SNAPCHAT</span>
-                </div>
-                <h2 className="text-2xl font-black text-white tracking-tight drop-shadow-md">
-                  COMING SOON!
-                </h2>
-                <p className="text-xs text-zinc-300 mt-2 max-w-xs leading-relaxed font-sans">
-                  Snapchat for Naija Life is currently in development. We will work on it later!
-                </p>
-                <div className="mt-4 p-3.5 bg-zinc-900/90 border border-zinc-800 rounded-2xl text-[11px] text-zinc-300 space-y-1.5 text-left max-w-xs">
-                  <p className="text-yellow-400 font-bold flex items-center gap-1.5">
-                    <span>✨ In Future Updates:</span>
-                  </p>
-                  <p>• Live Photo & Video Snaps across all 36 States & Canada</p>
-                  <p>• Real-time Streaks (🔥) with other citizens</p>
-                  <p>• Snap Map with real live citizen locations</p>
-                  <p>• Add & chat with newly registered citizens</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCurrentApp('home')}
-                  className="mt-6 py-3 px-8 rounded-2xl bg-yellow-400 hover:bg-yellow-300 text-black font-black text-xs cursor-pointer shadow-xl transition-all active:scale-95"
-                >
-                  Back to Home Screen
-                </button>
-              </div>
+              <SnapchatApp
+                userProfile={userProfile}
+                moneyNGN={getEffectiveNGN()}
+                currentStateId={activeStateKey}
+                onUpdateMoney={onUpdateMoney}
+                onUpdateProfile={persistProfileUpdate}
+                onClose={() => setCurrentApp('home')}
+                triggerSound={triggerSound}
+                onShowToast={onShowToast}
+                onUnreadCountChange={setSnapUnreadCount}
+              />
             )}
 
             {/* =============================================================
-                FAMILY APP: COMING SOON (HEART LOGO)
+                FAMILY APP: LIVE HOUSEHOLD, MARRIAGE & EVENTS SYSTEM
                 ============================================================= */}
             {currentApp === 'family' && (
-              <div className="h-full -m-4 min-h-[480px] bg-gradient-to-b from-rose-600/80 via-zinc-950 to-black text-white p-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
-                <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-rose-500 to-pink-600 border-4 border-rose-200/70 flex items-center justify-center shadow-[0_10px_30px_rgba(244,63,94,0.45)] mb-4">
-                  <Heart className="w-10 h-10 text-white fill-white" />
+              <FamilyApp
+                userProfile={userProfile}
+                onShowToast={onShowToast}
+                triggerSound={triggerSound}
+              />
+            )}
+
+            {/* =============================================================
+                INSURANCE APP: HEALTH, AUTO, PROPERTY & BUSINESS POLICIES
+                ============================================================= */}
+            {currentApp === 'insurance' && (
+              <InsuranceApp
+                userProfile={userProfile}
+                currentStateId={activeStateKey}
+                onUpdateProfile={persistProfileUpdate}
+                onShowToast={onShowToast}
+                triggerSound={triggerSound}
+              />
+            )}
+
+            {/* =============================================================
+                NAIJA RIDE: EKOGO, SWIFTCAB & ROYALLUX RIDE HAILING
+                ============================================================= */}
+            {currentApp === 'ride' && (
+              <NaijaRideApp
+                userProfile={userProfile}
+                currentStateId={activeStateKey}
+                onUpdateProfile={persistProfileUpdate}
+                onShowToast={onShowToast}
+                triggerSound={triggerSound}
+              />
+            )}
+
+            {/* =============================================================
+                APEX SYNDICATE: OFFICIAL EXTERNAL PORTAL LAUNCHER
+                ============================================================= */}
+            {currentApp === 'apex_syndicate' && (
+              <div className="h-full -m-4 min-h-[480px] bg-gradient-to-b from-zinc-950 via-neutral-950 to-black text-white p-6 flex flex-col items-center justify-center text-center space-y-5">
+                <div className="w-20 h-20 rounded-3xl bg-zinc-900 border border-orange-500/40 flex items-center justify-center shadow-[0_12px_36px_rgba(249,115,22,0.35)]">
+                  <svg viewBox="0 0 64 64" className="w-12 h-12" aria-label="Apex Syndicate Logo">
+                    <polygon points="32,4 60,32 32,60 4,32" fill="#f97316" stroke="#fed7aa" strokeWidth="2.5" />
+                    <text x="32" y="40" textAnchor="middle" fill="#ffffff" fontSize="26" fontWeight="900" fontFamily="sans-serif">A</text>
+                  </svg>
                 </div>
-                <p className="text-[11px] font-black uppercase tracking-widest text-rose-300 mb-1.5">
-                  Naija Life Family
-                </p>
-                <h2 className="text-2xl font-black text-white tracking-tight drop-shadow-md">
-                  COMING SOON!
-                </h2>
-                <p className="text-xs text-zinc-300 mt-2 max-w-xs leading-relaxed font-sans">
-                  Build your family legacy across Nigeria and Canada. Marriage, households, and generational wealth are on the way.
-                </p>
-                <div className="mt-4 p-3.5 bg-zinc-900/90 border border-rose-500/30 rounded-2xl text-[11px] text-zinc-300 space-y-1.5 text-left max-w-xs">
-                  <p className="text-rose-300 font-bold">
-                    Coming in the Family Update:
+
+                <div className="space-y-1.5">
+                  <span className="px-3 py-1 rounded-full bg-orange-500/15 border border-orange-500/40 text-orange-300 font-mono text-[10px] font-black uppercase tracking-widest">
+                    Official Partner Portal
+                  </span>
+                  <h2 className="text-xl font-black text-white tracking-tight pt-1">Apex Syndicate</h2>
+                  <p className="text-xs text-zinc-400 max-w-xs leading-relaxed">
+                    Open the official Apex Syndicate web application directly in a new browser tab.
                   </p>
-                  <p>• Marriage proposals, traditional weddings &amp; shared homes</p>
-                  <p>• Raise children, school fees &amp; household allowances</p>
-                  <p>• Family tree, inheritance wills &amp; clan remittances</p>
-                  <p>• Joint household accounts &amp; anniversaries</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setCurrentApp('home')}
-                  className="mt-6 py-3 px-8 rounded-2xl bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-400 hover:to-pink-400 text-white font-black text-xs cursor-pointer shadow-xl transition-all active:scale-95"
+
+                <a
+                  href="https://apex-syndicateng.vercel.app/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-black font-black text-xs shadow-lg shadow-orange-500/30 transition-all active:scale-95"
                 >
-                  Back to Home Screen
-                </button>
+                  <span>Open Apex Syndicate</span>
+                  <ExternalLink className="w-4 h-4" />
+                </a>
               </div>
             )}
           </div>

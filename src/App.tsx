@@ -95,6 +95,18 @@ import {
   syncProfileToCloud,
 } from './services/firebaseAccountService';
 import { syncEconomyAccount } from './services/economyService';
+import { realtimeClient } from './services/realtimeClient';
+import {
+  OWNER_INITIAL_NGN_KOBO,
+  OWNER_INITIAL_CAD_CENTS,
+  addMinorUnits,
+  computeFxCadToNgn,
+  computeFxNgnToCad,
+  majorToMinor,
+  minorToMajorNumber,
+  parseMinorString,
+  subtractMinorUnits,
+} from './utils/bigMoney';
 
 /* =========================================================================
    1. RANDOM NIGERIAN SPAWN ENGINE: ALL 36 STATES + FCT
@@ -938,7 +950,7 @@ export interface ForexRates {
    8. MAIN COMPONENT: NAIJA LIFE ENGINE WITH HIGH-RISK PATHWAYS
    ========================================================================= */
 
-const SEXTILLION_999 = 9.99e23;
+const MINOR_DIGITS_RE = /^-?\d+$/;
 
 function isStrictOwnerProfile(profile?: UserProfile | null): boolean {
   if (!profile) return false;
@@ -954,17 +966,51 @@ function isStrictOwnerProfile(profile?: UserProfile | null): boolean {
   );
 }
 
-function enforceOwnerFinances(profile: UserProfile): UserProfile {
-  if (!isStrictOwnerProfile(profile)) return profile;
+/**
+ * Ensures `ngnKobo` / `cadCents` are initialized ONCE on first hydration without
+ * ever overwriting real accumulated spending, transfers, or FX conversions.
+ */
+function ensureProfileWithMinorUnits(profile: UserProfile): UserProfile {
+  const isOwner = isStrictOwnerProfile(profile);
+  const hasNgnKobo = typeof profile.ngnKobo === 'string' && MINOR_DIGITS_RE.test(profile.ngnKobo.trim());
+  const hasCadCents = typeof profile.cadCents === 'string' && MINOR_DIGITS_RE.test(profile.cadCents.trim());
+  const hasSavNgn = typeof profile.savingsNgnKobo === 'string' && MINOR_DIGITS_RE.test(profile.savingsNgnKobo.trim());
+  const hasSavCad = typeof profile.savingsCadCents === 'string' && MINOR_DIGITS_RE.test(profile.savingsCadCents.trim());
+
+  const ngnKobo = hasNgnKobo
+    ? profile.ngnKobo!.trim()
+    : isOwner
+    ? OWNER_INITIAL_NGN_KOBO
+    : majorToMinor((profile.cashNaira || 0) + (profile.bankNaira || 0)).toString();
+
+  const cadCents = hasCadCents
+    ? profile.cadCents!.trim()
+    : isOwner
+    ? OWNER_INITIAL_CAD_CENTS
+    : majorToMinor(profile.bankCAD || 0).toString();
+
+  const savingsNgnKobo = hasSavNgn
+    ? profile.savingsNgnKobo!.trim()
+    : majorToMinor(profile.savingsBalanceNGN || 0).toString();
+
+  const savingsCadCents = hasSavCad
+    ? profile.savingsCadCents!.trim()
+    : majorToMinor(profile.savingsCAD || 0).toString();
+
   return {
     ...profile,
-    bankNaira: SEXTILLION_999,
-    cashNaira: SEXTILLION_999,
-    bankCAD: SEXTILLION_999,
-    savingsCAD: SEXTILLION_999,
-    cashUSD: 1000000000,
-    cashGBP: 1000000000,
-    cashEUR: 1000000000,
+    ngnKobo,
+    cadCents,
+    savingsNgnKobo,
+    savingsCadCents,
+    bankNaira: minorToMajorNumber(ngnKobo),
+    cashNaira: 0,
+    bankCAD: minorToMajorNumber(cadCents),
+    savingsBalanceNGN: minorToMajorNumber(savingsNgnKobo),
+    savingsCAD: minorToMajorNumber(savingsCadCents),
+    cashUSD: isOwner ? (profile.cashUSD ?? 1000000000) : (profile.cashUSD ?? 0),
+    cashGBP: isOwner ? (profile.cashGBP ?? 1000000000) : (profile.cashGBP ?? 0),
+    cashEUR: isOwner ? (profile.cashEUR ?? 1000000000) : (profile.cashEUR ?? 0),
   };
 }
 
@@ -1301,18 +1347,13 @@ export default function App() {
                 setSuspendedNoticeReason(refreshed.reason);
                 showToast('Your account has been suspended by administration.');
               } else if (refreshed.status === 'AUTHENTICATED') {
-                const ownerNormalized = enforceOwnerFinances(refreshed.profile);
-                const owner = isStrictOwnerProfile(ownerNormalized);
-                saveSession(ownerNormalized);
-                setCurrentUser(ownerNormalized);
+                const normalized = ensureProfileWithMinorUnits(refreshed.profile);
+                saveSession(normalized);
+                setCurrentUser(normalized);
                 setWallet((w) => ({
                   ...w,
-                  NGN: owner
-                    ? SEXTILLION_999
-                    : ((ownerNormalized.cashNaira || 0) + (ownerNormalized.bankNaira || 0)) || w.NGN,
-                  CAD: owner
-                    ? SEXTILLION_999
-                    : (ownerNormalized.bankCAD ?? w.CAD),
+                  NGN: minorToMajorNumber(normalized.ngnKobo || '0'),
+                  CAD: minorToMajorNumber(normalized.cadCents || '0'),
                 }));
               }
             }
@@ -1335,13 +1376,29 @@ export default function App() {
           const cleanRec = String(evt.data.recipient).toLowerCase().trim();
           if (cleanCur === cleanRec) {
             const addedAmount = Number(evt.data.amount) || 0;
+            const addedMinor = majorToMinor(addedAmount);
             const curr = evt.data.currency || 'NGN';
             if (curr === 'CAD') {
-              setCurrentUser((prev) => prev ? { ...prev, bankCAD: (prev.bankCAD || 0) + addedAmount } : null);
+              setCurrentUser((prev) => {
+                if (!prev) return null;
+                const norm = ensureProfileWithMinorUnits(prev);
+                const nextCad = addMinorUnits(norm.cadCents || '0', addedMinor);
+                const updated = { ...norm, cadCents: nextCad, bankCAD: minorToMajorNumber(nextCad) };
+                saveSession(updated);
+                return updated;
+              });
               showToast(`🔔 CREDIT ALERT: +$${addedAmount.toLocaleString()} CAD from @${evt.data.sender}!`);
             } else {
-              setWallet((w) => ({ ...w, NGN: w.NGN + addedAmount }));
-              setCurrentUser((prev) => prev ? { ...prev, bankNaira: (prev.bankNaira || 0) + addedAmount } : null);
+              setCurrentUser((prev) => {
+                if (!prev) return null;
+                const norm = ensureProfileWithMinorUnits(prev);
+                const nextNgn = addMinorUnits(norm.ngnKobo || '0', addedMinor);
+                const nextMajor = minorToMajorNumber(nextNgn);
+                setWallet((w) => ({ ...w, NGN: nextMajor }));
+                const updated = { ...norm, ngnKobo: nextNgn, bankNaira: nextMajor, cashNaira: 0 };
+                saveSession(updated);
+                return updated;
+              });
               showToast(`🔔 CREDIT ALERT: +₦${addedAmount.toLocaleString()} NGN from @${evt.data.sender}!`);
             }
             triggerSound('coin');
@@ -1353,8 +1410,13 @@ export default function App() {
       globalChannel.onmessage = () => {
         const curSession = getStoredSession();
         if (curSession) {
-          setCurrentUser(curSession);
-          setWallet((w) => ({ ...w, NGN: curSession.bankNaira || w.NGN }));
+          const norm = ensureProfileWithMinorUnits(curSession);
+          setCurrentUser(norm);
+          setWallet((w) => ({
+            ...w,
+            NGN: minorToMajorNumber(norm.ngnKobo || '0'),
+            CAD: minorToMajorNumber(norm.cadCents || '0'),
+          }));
         }
       };
     } catch {}
@@ -1459,9 +1521,48 @@ export default function App() {
   // INVESTMENTS PORTFOLIO (INVESTMENT APP)
   const [investments, setInvestments] = useState<InvestmentAsset[]>(AVAILABLE_INVESTMENTS);
 
+  const applyMinorDelta = useCallback((deltaNGNMajor: number, deltaUSDMajor = 0) => {
+    const deltaKobo = majorToMinor(deltaNGNMajor);
+    setCurrentUser((prev) => {
+      if (!prev) {
+        setWallet((w) => ({
+          ...w,
+          NGN: Math.max(0, w.NGN + deltaNGNMajor),
+          USD: Math.max(0, w.USD + deltaUSDMajor),
+        }));
+        return prev;
+      }
+      const norm = ensureProfileWithMinorUnits(prev);
+      const curKobo = parseMinorString(norm.ngnKobo, 0);
+      const nextKoboBi = curKobo + deltaKobo < 0n ? 0n : curKobo + deltaKobo;
+      const nextKobo = nextKoboBi.toString();
+      const nextMajor = minorToMajorNumber(nextKobo);
+      setWallet((w) => ({
+        ...w,
+        NGN: nextMajor,
+        USD: Math.max(0, w.USD + deltaUSDMajor),
+      }));
+      const updated: UserProfile = {
+        ...norm,
+        ngnKobo: nextKobo,
+        bankNaira: nextMajor,
+        cashNaira: 0,
+      };
+      saveSession(updated);
+      if (updated.uid) {
+        syncProfileToCloud(updated.uid, {
+          ngnKobo: updated.ngnKobo,
+          bankNaira: updated.bankNaira,
+          cashNaira: 0,
+        }).catch(() => {});
+      }
+      return updated;
+    });
+  }, []);
+
   const handleBuyOrRentProperty = (property: PropertyAsset, mode: 'rent' | 'buy') => {
     const cost = mode === 'rent' ? property.annualRent : property.buyPrice;
-    setWallet((w) => ({ ...w, NGN: Math.max(0, w.NGN - cost) }));
+    applyMinorDelta(-cost);
     const updatedProp: PropertyAsset = {
       ...property,
       isRented: mode === 'rent',
@@ -1480,7 +1581,7 @@ export default function App() {
   };
 
   const handleBuyVehicle = (vehicle: VehicleAsset) => {
-    setWallet((w) => ({ ...w, NGN: Math.max(0, w.NGN - vehicle.price) }));
+    applyMinorDelta(-vehicle.price);
     const updatedVeh: VehicleAsset = { ...vehicle, isOwned: true };
     setOwnedVehicles((prev) => [...prev.filter((v) => v.id !== vehicle.id), updatedVeh]);
     setActiveVehicle(updatedVeh);
@@ -2283,8 +2384,80 @@ export default function App() {
     const amt = parseFloat(fxAmountInput);
     if (isNaN(amt) || amt <= 0) return;
 
-    const owner = isStrictOwnerProfile(currentUser);
-    if (!owner && wallet[fxFromCurrency] < amt) {
+    const norm = currentUser ? ensureProfileWithMinorUnits(currentUser) : null;
+    if ((fxFromCurrency === 'NGN' || fxFromCurrency === 'CAD') && (fxToCurrency === 'NGN' || fxToCurrency === 'CAD') && norm) {
+      const sourceMinor = majorToMinor(amt);
+      if (fxFromCurrency === 'NGN' && fxToCurrency === 'CAD') {
+        const curNgn = parseMinorString(norm.ngnKobo, 0);
+        if (curNgn < sourceMinor) {
+          addLog('finance', 'Insufficient NGN balance to complete exchange.');
+          triggerSound('alert');
+          return;
+        }
+        const { creditCadCents } = computeFxNgnToCad(sourceMinor, fxRates.CAD || 960.54);
+        const nextNgn = subtractMinorUnits(curNgn, sourceMinor);
+        const nextCad = addMinorUnits(norm.cadCents || '0', creditCadCents);
+        const updated: UserProfile = {
+          ...norm,
+          ngnKobo: nextNgn,
+          cadCents: nextCad,
+          bankNaira: minorToMajorNumber(nextNgn),
+          cashNaira: 0,
+          bankCAD: minorToMajorNumber(nextCad),
+        };
+        setWallet((w) => ({ ...w, NGN: updated.bankNaira || 0, CAD: updated.bankCAD || 0 }));
+        setCurrentUser(updated);
+        saveSession(updated);
+        if (updated.uid) {
+          syncProfileToCloud(updated.uid, {
+            ngnKobo: updated.ngnKobo,
+            cadCents: updated.cadCents,
+            bankNaira: updated.bankNaira,
+            cashNaira: 0,
+            bankCAD: updated.bankCAD,
+          }).catch(() => {});
+        }
+        addLog('finance', `Forex Bureau: Exchanged NGN ₦${amt.toLocaleString()} for CAD $${minorToMajorNumber(creditCadCents).toLocaleString()}.`);
+        triggerSound('coin');
+        return;
+      }
+      if (fxFromCurrency === 'CAD' && fxToCurrency === 'NGN') {
+        const curCad = parseMinorString(norm.cadCents, 0);
+        if (curCad < sourceMinor) {
+          addLog('finance', 'Insufficient CAD balance to complete exchange.');
+          triggerSound('alert');
+          return;
+        }
+        const { creditNgnKobo } = computeFxCadToNgn(sourceMinor, fxRates.CAD || 960.54);
+        const nextCad = subtractMinorUnits(curCad, sourceMinor);
+        const nextNgn = addMinorUnits(norm.ngnKobo || '0', creditNgnKobo);
+        const updated: UserProfile = {
+          ...norm,
+          ngnKobo: nextNgn,
+          cadCents: nextCad,
+          bankNaira: minorToMajorNumber(nextNgn),
+          cashNaira: 0,
+          bankCAD: minorToMajorNumber(nextCad),
+        };
+        setWallet((w) => ({ ...w, NGN: updated.bankNaira || 0, CAD: updated.bankCAD || 0 }));
+        setCurrentUser(updated);
+        saveSession(updated);
+        if (updated.uid) {
+          syncProfileToCloud(updated.uid, {
+            ngnKobo: updated.ngnKobo,
+            cadCents: updated.cadCents,
+            bankNaira: updated.bankNaira,
+            cashNaira: 0,
+            bankCAD: updated.bankCAD,
+          }).catch(() => {});
+        }
+        addLog('finance', `Forex Bureau: Exchanged CAD $${amt.toLocaleString()} for NGN ₦${minorToMajorNumber(creditNgnKobo).toLocaleString()}.`);
+        triggerSound('coin');
+        return;
+      }
+    }
+
+    if (wallet[fxFromCurrency] < amt) {
       addLog('finance', `Insufficient ${fxFromCurrency} balance to complete exchange.`);
       triggerSound('alert');
       return;
@@ -2293,12 +2466,8 @@ export default function App() {
     const converted = calculateConversion(amt, fxFromCurrency, fxToCurrency);
     if (converted <= 0) return;
 
-    const nextFromVal = owner && (fxFromCurrency === 'NGN' || fxFromCurrency === 'CAD')
-      ? SEXTILLION_999
-      : Math.max(0, Math.round((wallet[fxFromCurrency] - amt) * 100) / 100);
-    const nextToVal = owner && (fxToCurrency === 'NGN' || fxToCurrency === 'CAD')
-      ? SEXTILLION_999
-      : Math.round((wallet[fxToCurrency] + converted) * 100) / 100;
+    const nextFromVal = Math.max(0, Math.round((wallet[fxFromCurrency] - amt) * 100) / 100);
+    const nextToVal = Math.round((wallet[fxToCurrency] + converted) * 100) / 100;
 
     const nextWallet = {
       ...wallet,
@@ -2307,23 +2476,32 @@ export default function App() {
     };
     setWallet(nextWallet);
 
-    if (currentUser) {
-      const cashNaira = owner ? SEXTILLION_999 : Math.round(nextWallet.NGN * 0.15);
-      const bankNaira = owner ? SEXTILLION_999 : Math.max(0, nextWallet.NGN - cashNaira);
-      const updated = enforceOwnerFinances({
-        ...currentUser,
-        cashNaira,
-        bankNaira,
-        bankCAD: owner ? SEXTILLION_999 : nextWallet.CAD,
-        cashUSD: owner ? 1000000000 : nextWallet.USD,
-        cashGBP: owner ? 1000000000 : nextWallet.GBP,
-        cashEUR: owner ? 1000000000 : nextWallet.EUR,
-      });
+    if (norm) {
+      let nextNgnKobo = norm.ngnKobo || '0';
+      let nextCadCents = norm.cadCents || '0';
+      if (fxFromCurrency === 'NGN') nextNgnKobo = subtractMinorUnits(nextNgnKobo, majorToMinor(amt));
+      if (fxToCurrency === 'NGN') nextNgnKobo = addMinorUnits(nextNgnKobo, majorToMinor(converted));
+      if (fxFromCurrency === 'CAD') nextCadCents = subtractMinorUnits(nextCadCents, majorToMinor(amt));
+      if (fxToCurrency === 'CAD') nextCadCents = addMinorUnits(nextCadCents, majorToMinor(converted));
+
+      const updated: UserProfile = {
+        ...norm,
+        ngnKobo: nextNgnKobo,
+        cadCents: nextCadCents,
+        cashNaira: 0,
+        bankNaira: minorToMajorNumber(nextNgnKobo),
+        bankCAD: minorToMajorNumber(nextCadCents),
+        cashUSD: nextWallet.USD,
+        cashGBP: nextWallet.GBP,
+        cashEUR: nextWallet.EUR,
+      };
       setCurrentUser(updated);
       saveSession(updated);
       if (updated.uid) {
         syncProfileToCloud(updated.uid, {
-          cashNaira: updated.cashNaira,
+          ngnKobo: updated.ngnKobo,
+          cadCents: updated.cadCents,
+          cashNaira: 0,
           bankNaira: updated.bankNaira,
           bankCAD: updated.bankCAD,
           cashUSD: updated.cashUSD,
@@ -3154,7 +3332,7 @@ export default function App() {
   const applyAuthenticatedSession = useCallback(
     (profile: UserProfile, spawnState: any, cloudSave?: CloudGameSaveDoc | null) => {
       const isOwner = isStrictOwnerProfile(profile);
-      let hydratedProfile: UserProfile = enforceOwnerFinances(profile);
+      let hydratedProfile: UserProfile = ensureProfileWithMinorUnits(profile);
       const needsOneTimeNigeriaReturn =
         !hydratedProfile.migratedToNigeriaOriginalStateV1 &&
         (String(hydratedProfile.currentCountry || '').toLowerCase() !== 'nigeria' ||
@@ -3197,26 +3375,13 @@ export default function App() {
           internationalCountryId: needsOneTimeNigeriaReturn ? null : cloudSave.saveData.internationalCountryId,
         };
         restoreSavedState(mergedSaveData);
-        if (isOwner) {
-          setWallet({
-            NGN: SEXTILLION_999,
-            USD: 1000000000,
-            GBP: 1000000000,
-            EUR: 1000000000,
-            CAD: SEXTILLION_999,
-          });
-        } else {
-          const syncedCAD = hydratedProfile.bankCAD ?? cloudSave.saveData.wallet?.CAD ?? 0;
-          setWallet((w) => ({
-            ...w,
-            CAD: syncedCAD,
-          }));
-          if (hydratedProfile.bankCAD === undefined && cloudSave.saveData.wallet?.CAD !== undefined) {
-            const withCad = { ...hydratedProfile, bankCAD: syncedCAD };
-            setCurrentUser(withCad);
-            saveSession(withCad);
-          }
-        }
+        const syncedNGN = minorToMajorNumber(hydratedProfile.ngnKobo || '0');
+        const syncedCAD = minorToMajorNumber(hydratedProfile.cadCents || '0');
+        setWallet((w) => ({
+          ...w,
+          NGN: hydratedProfile.ngnKobo ? syncedNGN : w.NGN,
+          CAD: hydratedProfile.cadCents ? syncedCAD : (cloudSave.saveData.wallet?.CAD ?? w.CAD),
+        }));
         saveGameState(mergedSaveData);
         setCloudSyncStatus('synced');
       } else {
@@ -3239,11 +3404,11 @@ export default function App() {
         }
 
         setWallet({
-          NGN: isOwner ? SEXTILLION_999 : (hydratedProfile.cashNaira || 0) + (hydratedProfile.bankNaira || 0),
-          USD: isOwner ? 1000000000 : (hydratedProfile.cashUSD || 0),
-          GBP: isOwner ? 1000000000 : (hydratedProfile.cashGBP || 0),
-          EUR: isOwner ? 1000000000 : (hydratedProfile.cashEUR || 0),
-          CAD: isOwner ? SEXTILLION_999 : (hydratedProfile.bankCAD || 0),
+          NGN: minorToMajorNumber(hydratedProfile.ngnKobo || '0'),
+          USD: hydratedProfile.cashUSD || 0,
+          GBP: hydratedProfile.cashGBP || 0,
+          EUR: hydratedProfile.cashEUR || 0,
+          CAD: minorToMajorNumber(hydratedProfile.cadCents || '0'),
         });
         setEnergy(hydratedProfile.energy ?? 100);
         setHunger(hydratedProfile.hunger ?? 90);
@@ -3342,26 +3507,46 @@ export default function App() {
         }
       }
 
-      // Sync with server-authoritative economy ledger (NUBAN, Canada return migration, receipts)
+      // Sync with server-authoritative economy ledger (NUBAN, BigInt minor units, receipts, WAT settlements)
       syncEconomyAccount(hydratedProfile).then((syncRes) => {
         if (!syncRes.success || !syncRes.account) return;
         const srv = syncRes.account;
         setCurrentUser((prev) => {
           if (!prev) return prev;
-          const merged = enforceOwnerFinances({
+          const merged = ensureProfileWithMinorUnits({
             ...prev,
             walletAccountNumber: srv.walletAccountNumber || prev.walletAccountNumber,
+            ngnKobo: srv.ngnKobo || prev.ngnKobo,
+            cadCents: srv.cadCents || prev.cadCents,
+            savingsNgnKobo: srv.savingsNgnKobo || prev.savingsNgnKobo,
+            savingsCadCents: srv.savingsCadCents || prev.savingsCadCents,
             migratedToNigeriaOriginalStateV1: srv.migratedToNigeriaOriginalStateV1 ?? prev.migratedToNigeriaOriginalStateV1,
             immigrationStatus: (srv.immigrationStatus as UserProfile['immigrationStatus']) || prev.immigrationStatus,
             ownedClothing: srv.ownedClothing?.length ? srv.ownedClothing : prev.ownedClothing,
             ownedHairstyles: srv.ownedHairstyles?.length ? srv.ownedHairstyles : prev.ownedHairstyles,
             ownedDocuments: srv.ownedDocuments?.length ? srv.ownedDocuments : prev.ownedDocuments,
+            ownedLaptops: srv.ownedLaptops?.length ? srv.ownedLaptops : prev.ownedLaptops,
+            activeLaptopId: srv.activeLaptopId || prev.activeLaptopId,
+            codingXp: srv.codingXp ?? prev.codingXp,
+            codingLevel: srv.codingLevel ?? prev.codingLevel,
+            completedCodingChallenges: srv.completedCodingChallenges?.length ? srv.completedCodingChallenges : prev.completedCodingChallenges,
+            completedCyberMissions: srv.completedCyberMissions?.length ? srv.completedCyberMissions : prev.completedCyberMissions,
+            snapPlusExpiresAt: srv.snapPlusExpiresAt ?? prev.snapPlusExpiresAt,
+            predictionPoints: srv.predictionPoints ?? prev.predictionPoints,
             receipts: srv.receipts?.length ? srv.receipts : prev.receipts,
             alerts: srv.alerts?.length ? srv.alerts : prev.alerts,
           });
+          setWallet((w) => ({
+            ...w,
+            NGN: minorToMajorNumber(merged.ngnKobo || '0'),
+            CAD: minorToMajorNumber(merged.cadCents || '0'),
+          }));
           saveSession(merged);
           return merged;
         });
+        if (syncRes.watBizSettlements && syncRes.watBizSettlements.length > 0) {
+          showToast(`💼 Settled ${syncRes.watBizSettlements.length} Empire Biz 8:30 PM WAT payout(s)!`);
+        }
         if (syncRes.restoredToNigeria) {
           const homeState = resolveFullStateData(originalBirthId);
           setCurrentState(homeState);
@@ -3440,50 +3625,87 @@ export default function App() {
   const persistLatestUserState = useCallback(async () => {
     if (!currentUser) return;
     try {
-      const isOwner = Boolean(
-        currentUser.isOwner === true &&
-          currentUser.role === 'owner' &&
-          currentUser.isVerified === true &&
-          isStrictOwnerIdentity({
-            email: currentUser.email || currentUser.gmail,
-            emailVerified: currentUser.isVerified,
-            username: currentUser.username,
-          })
-      );
-      const SEXTILLION_999 = 9.99e23;
+      const norm = ensureProfileWithMinorUnits(currentUser);
       const updatedProfile: UserProfile = {
-        ...currentUser,
-        cashNaira: isOwner ? SEXTILLION_999 : Math.round(wallet.NGN * 0.15),
-        bankNaira: isOwner ? SEXTILLION_999 : Math.max(0, wallet.NGN - Math.round(wallet.NGN * 0.15)),
-        bankCAD: isOwner ? SEXTILLION_999 : (currentUser.bankCAD || 0),
-        savingsCAD: isOwner ? SEXTILLION_999 : (currentUser.savingsCAD || 0),
-        cashUSD: isOwner ? 1000000000 : wallet.USD,
-        cashGBP: isOwner ? 1000000000 : wallet.GBP,
-        cashEUR: isOwner ? 1000000000 : wallet.EUR,
+        ...norm,
+        cashUSD: wallet.USD,
+        cashGBP: wallet.GBP,
+        cashEUR: wallet.EUR,
         energy,
         hunger,
         thirst,
         health,
         happiness,
-        spawnStateId: currentUser.spawnStateId || 'lagos',
-        lastLocationStateId: currentState?.id || currentUser.lastLocationStateId || currentUser.spawnStateId || 'lagos',
+        spawnStateId: norm.spawnStateId || 'lagos',
+        lastLocationStateId: currentState?.id || norm.lastLocationStateId || norm.spawnStateId || 'lagos',
         currentCountry:
           locationMode === 'INTERNATIONAL'
             ? internationalCountry?.id || (currentState?.id === 'canada' ? 'canada' : 'nigeria')
             : currentState?.id === 'canada'
             ? 'canada'
             : 'nigeria',
-        furnitureBought: currentUser.furnitureBought || [],
-        inventory: currentUser.inventory || [],
-        completedCourses: currentUser.completedCourses || [],
-        ownedBusinesses: currentUser.ownedBusinesses || [],
+        furnitureBought: norm.furnitureBought || [],
+        inventory: norm.inventory || [],
+        completedCourses: norm.completedCourses || [],
+        ownedBusinesses: norm.ownedBusinesses || [],
       };
 
       saveSession(updatedProfile);
       await performCloudSaveSync(updatedProfile);
       return updatedProfile;
     } catch {}
-  }, [currentUser, wallet, energy, hunger, thirst, health, happiness, currentState, locationMode, internationalCountry, performCloudSaveSync]);
+  }, [currentUser, wallet.USD, wallet.GBP, wallet.EUR, energy, hunger, thirst, health, happiness, currentState, locationMode, internationalCountry, performCloudSaveSync]);
+
+  // Real-time WebSocket connection & live economy / transfer / settlement synchronization
+  useEffect(() => {
+    if (!currentUser?.username) return;
+    realtimeClient.connect(currentUser.username, currentUser.uid);
+    const unsub = realtimeClient.subscribe((evt) => {
+      if (evt.type === 'economy:balance_updated' || evt.type === 'transfer:received' || evt.type === 'business:wat_settlement') {
+        const acc = evt.account;
+        if (acc) {
+          setCurrentUser((prev) => {
+            if (!prev) return prev;
+            const updated = ensureProfileWithMinorUnits({
+              ...prev,
+              ngnKobo: acc.ngnKobo || prev.ngnKobo,
+              cadCents: acc.cadCents || prev.cadCents,
+              savingsNgnKobo: acc.savingsNgnKobo || prev.savingsNgnKobo,
+              savingsCadCents: acc.savingsCadCents || prev.savingsCadCents,
+              receipts: acc.receipts || prev.receipts,
+              alerts: acc.alerts || prev.alerts,
+              ownedLaptops: acc.ownedLaptops || prev.ownedLaptops,
+              activeLaptopId: acc.activeLaptopId || prev.activeLaptopId,
+              codingXp: acc.codingXp ?? prev.codingXp,
+              codingLevel: acc.codingLevel ?? prev.codingLevel,
+              completedCodingChallenges: acc.completedCodingChallenges || prev.completedCodingChallenges,
+              completedCyberMissions: acc.completedCyberMissions || prev.completedCyberMissions,
+              snapPlusExpiresAt: acc.snapPlusExpiresAt ?? prev.snapPlusExpiresAt,
+              predictionPoints: acc.predictionPoints ?? prev.predictionPoints,
+            });
+            setWallet((w) => ({
+              ...w,
+              NGN: minorToMajorNumber(updated.ngnKobo || '0'),
+              CAD: minorToMajorNumber(updated.cadCents || '0'),
+            }));
+            saveSession(updated);
+            return updated;
+          });
+        }
+        if (evt.type === 'transfer:received' && evt.amountFormatted) {
+          showToast(`💳 Credit Alert: Received ${evt.amountFormatted} from @${evt.fromUsername}`);
+          triggerSound('coin');
+        }
+        if (evt.type === 'business:wat_settlement' && evt.summary) {
+          showToast(`💼 ${evt.summary}`);
+          triggerSound('coin');
+        }
+      }
+    });
+    return () => {
+      unsub();
+    };
+  }, [currentUser?.username, currentUser?.uid, showToast, triggerSound]);
 
   // Periodic automatic cloud sync + real-time suspension enforcement every 25 seconds
   useEffect(() => {
@@ -3613,61 +3835,55 @@ export default function App() {
       <LagosLifeMap
         userProfile={currentUser}
         onUpdateUserProfile={(newProf) => {
-          const normalized = enforceOwnerFinances(newProf);
-          const owner = isStrictOwnerProfile(normalized);
+          const normalized = ensureProfileWithMinorUnits(newProf);
           setCurrentUser(normalized);
           setPlayerName(`${normalized.firstName || normalized.username} ${normalized.lastName || ''}`.trim());
           saveSession(normalized);
           setWallet((w) => ({
             ...w,
-            NGN: owner ? SEXTILLION_999 : w.NGN,
-            CAD: owner ? SEXTILLION_999 : (normalized.bankCAD ?? w.CAD),
+            NGN: minorToMajorNumber(normalized.ngnKobo || '0'),
+            CAD: minorToMajorNumber(normalized.cadCents || '0'),
           }));
           if (normalized.uid) {
             syncProfileToCloud(normalized.uid, normalized).catch(() => {});
           }
         }}
         onOwnerResetAllProgress={handleOwnerResetAllProgress}
-        onCurrencyExchange={({ direction, sourceAmount, targetAmount, receipts: nextReceipts }) => {
-          const owner = isStrictOwnerProfile(currentUser);
-          const currentNGN = owner ? SEXTILLION_999 : wallet.NGN;
-          const currentCAD = owner ? SEXTILLION_999 : (currentUser?.bankCAD ?? wallet.CAD ?? 0);
-
-          let nextNGN = currentNGN;
-          let nextCAD = currentCAD;
-
-          if (direction === 'ngn_to_cad') {
-            if (!owner && (currentNGN < sourceAmount || sourceAmount <= 0)) return;
-            nextNGN = owner ? SEXTILLION_999 : Math.max(0, Math.round(currentNGN - sourceAmount));
-            nextCAD = owner ? SEXTILLION_999 : Math.round((currentCAD + targetAmount) * 100) / 100;
-          } else {
-            if (!owner && (currentCAD < sourceAmount || sourceAmount <= 0)) return;
-            nextCAD = owner ? SEXTILLION_999 : Math.max(0, Math.round((currentCAD - sourceAmount) * 100) / 100);
-            nextNGN = owner ? SEXTILLION_999 : Math.round(currentNGN + targetAmount);
-          }
-
-          setWallet((w) => ({
-            ...w,
-            NGN: nextNGN,
-            CAD: nextCAD,
-          }));
-
+        onCurrencyExchange={({ direction, sourceAmount, targetAmount, ngnKobo, cadCents, receipts: nextReceipts }) => {
           setCurrentUser((prev) => {
             if (!prev) return prev;
-            const prevOwner = isStrictOwnerProfile(prev);
-            const cashNaira = prevOwner ? SEXTILLION_999 : Math.round(nextNGN * 0.15);
-            const bankNaira = prevOwner ? SEXTILLION_999 : Math.max(0, nextNGN - cashNaira);
-            const updated: UserProfile = enforceOwnerFinances({
-              ...prev,
-              cashNaira,
-              bankNaira,
-              bankCAD: prevOwner ? SEXTILLION_999 : nextCAD,
+            const norm = ensureProfileWithMinorUnits(prev);
+            let nextNgnKobo = ngnKobo || norm.ngnKobo || '0';
+            let nextCadCents = cadCents || norm.cadCents || '0';
+            if (!ngnKobo || !cadCents) {
+              const srcMinor = majorToMinor(sourceAmount);
+              const dstMinor = majorToMinor(targetAmount);
+              if (direction === 'ngn_to_cad') {
+                nextNgnKobo = subtractMinorUnits(nextNgnKobo, srcMinor);
+                nextCadCents = addMinorUnits(nextCadCents, dstMinor);
+              } else {
+                nextCadCents = subtractMinorUnits(nextCadCents, srcMinor);
+                nextNgnKobo = addMinorUnits(nextNgnKobo, dstMinor);
+              }
+            }
+            const nextNGN = minorToMajorNumber(nextNgnKobo);
+            const nextCAD = minorToMajorNumber(nextCadCents);
+            setWallet((w) => ({ ...w, NGN: nextNGN, CAD: nextCAD }));
+            const updated: UserProfile = {
+              ...norm,
+              ngnKobo: nextNgnKobo,
+              cadCents: nextCadCents,
+              cashNaira: 0,
+              bankNaira: nextNGN,
+              bankCAD: nextCAD,
               receipts: nextReceipts,
-            });
+            };
             saveSession(updated);
             if (updated.uid) {
               syncProfileToCloud(updated.uid, {
-                cashNaira: updated.cashNaira,
+                ngnKobo: updated.ngnKobo,
+                cadCents: updated.cadCents,
+                cashNaira: 0,
                 bankNaira: updated.bankNaira,
                 bankCAD: updated.bankCAD,
                 receipts: updated.receipts,
@@ -3710,8 +3926,8 @@ export default function App() {
         onInvest={handleInvest}
         onLiquidateInvestment={handleLiquidateInvestment}
         onPerformAction={(action) => {
-          if (action.cost) setWallet((w) => ({ ...w, NGN: Math.max(0, w.NGN - action.cost!) }));
-          if (action.earn) setWallet((w) => ({ ...w, NGN: w.NGN + action.earn! }));
+          if (action.cost) applyMinorDelta(-action.cost);
+          if (action.earn) applyMinorDelta(action.earn);
           if (action.energyEffect) setEnergy((e) => Math.max(0, Math.min(100, e + action.energyEffect!)));
           if (action.hungerEffect) setHunger((h) => Math.max(0, Math.min(100, h + action.hungerEffect!)));
           if (action.healthEffect) setHealth((hl) => Math.max(0, Math.min(100, hl + action.healthEffect!)));
@@ -3721,16 +3937,15 @@ export default function App() {
           triggerSound('coin');
         }}
         onInterstateTravel={(targetState, fare) => {
-          if (wallet.NGN < fare) {
+          const curKobo = parseMinorString(currentUser?.ngnKobo, wallet.NGN);
+          const fareKobo = majorToMinor(fare);
+          if (curKobo < fareKobo) {
             showToast(`Insufficient funds for interstate travel! Need ₦${fare.toLocaleString()}`);
             triggerSound('alert');
             return;
           }
           if (fare > 0) {
-            setWallet((w) => ({
-              ...w,
-              NGN: Math.max(0, w.NGN - fare),
-            }));
+            applyMinorDelta(-fare);
           }
           const isCanada = targetState.id === 'canada';
           const match = resolveFullStateData(targetState.id, targetState);
@@ -3759,35 +3974,7 @@ export default function App() {
         onLogout={handleLogout}
         onNewLife={handleNewGame}
         onUpdateMoney={(deltaNGN, deltaUSD) => {
-          const owner = isStrictOwnerProfile(currentUser);
-          const nextNGN = owner ? SEXTILLION_999 : Math.max(0, wallet.NGN + deltaNGN);
-          const nextUSD = owner ? 1000000000 : Math.max(0, wallet.USD + (deltaUSD || 0));
-
-          setWallet((w) => ({
-            ...w,
-            NGN: owner ? SEXTILLION_999 : Math.max(0, w.NGN + deltaNGN),
-            USD: owner ? 1000000000 : Math.max(0, w.USD + (deltaUSD || 0)),
-          }));
-
-          setCurrentUser((prev) => {
-            if (!prev) return prev;
-            const prevOwner = isStrictOwnerProfile(prev);
-            const cashNaira = prevOwner ? SEXTILLION_999 : Math.round(nextNGN * 0.15);
-            const bankNaira = prevOwner ? SEXTILLION_999 : Math.max(0, nextNGN - cashNaira);
-            const updatedProfile = enforceOwnerFinances({
-              ...prev,
-              bankNaira,
-              cashNaira,
-            });
-            saveSession(updatedProfile);
-            if (updatedProfile.uid) {
-              syncProfileToCloud(updatedProfile.uid, {
-                bankNaira: updatedProfile.bankNaira,
-                cashNaira: updatedProfile.cashNaira,
-              }).catch(() => {});
-            }
-            return updatedProfile;
-          });
+          applyMinorDelta(deltaNGN, deltaUSD || 0);
         }}
         onUpdateStats={(effects) => {
           if (effects.energy !== undefined) setEnergy((e) => Math.max(0, Math.min(100, e + effects.energy!)));

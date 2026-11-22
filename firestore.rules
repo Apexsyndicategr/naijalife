@@ -104,15 +104,18 @@ service cloud.firestore {
           'uid', 'username', 'usernameLower', 'citizenName', 'firstName', 'lastName', 'walletAccountNumber',
           'spawnStateId', 'lastLocationStateId', 'currentCountry', 'migratedToNigeriaOriginalStateV1', 'immigrationStatus', 'travelHistory',
           'socialClass', 'phoneModel',
-          'cashNaira', 'bankNaira', 'loanBalanceNGN', 'savingsBalanceNGN',
-          'cashUSD', 'cashGBP', 'cashEUR', 'bankCAD', 'savingsCAD',
+          'cashNaira', 'bankNaira', 'ngnKobo', 'loanBalanceNGN', 'savingsBalanceNGN', 'savingsNgnKobo',
+          'cashUSD', 'cashGBP', 'cashEUR', 'bankCAD', 'cadCents', 'savingsCAD', 'savingsCadCents',
           'energy', 'hunger', 'thirst', 'health', 'happiness', 'fatherRentSubsidyPct',
           'avatar', 'inventory', 'ownedClothing', 'ownedHairstyles', 'houseLayouts', 'storedItems',
           'completedCourses', 'furnitureBought',
           'receipts', 'alerts', 'ownedBusinesses', 'ownedDocuments',
           'phoneWallpaper', 'savedNotes', 'academyProgress',
           'activeJobId', 'jobTitle', 'jobLevel', 'jobRank', 'jobShiftsWorked', 'jobWeeklySalaryNGN', 'jobAutoAttend',
-          'snapUsername', 'isSnapPlus', 'createdAt', 'updatedAt'
+          'snapUsername', 'isSnapPlus', 'snapPlusExpiresAt',
+          'ownedLaptops', 'activeLaptopId', 'codingXp', 'codingLevel', 'completedCodingChallenges', 'completedCyberMissions',
+          'predictionPoints', 'familyId',
+          'createdAt', 'updatedAt'
         ])
         && isValidId(data.uid) && data.uid == uid
         && isValidUsernameStr(data.username)
@@ -128,6 +131,10 @@ service cloud.firestore {
         && (!('migratedToNigeriaOriginalStateV1' in data) || data.migratedToNigeriaOriginalStateV1 is bool)
         && (!('immigrationStatus' in data) || (data.immigrationStatus is string && data.immigrationStatus.size() <= 48))
         && (!('travelHistory' in data) || (data.travelHistory is list && data.travelHistory.size() <= 200))
+        && (!('ngnKobo' in data) || (data.ngnKobo is string && data.ngnKobo.size() >= 1 && data.ngnKobo.size() <= 64 && data.ngnKobo.matches('^[0-9]+$')))
+        && (!('savingsNgnKobo' in data) || (data.savingsNgnKobo is string && data.savingsNgnKobo.size() >= 1 && data.savingsNgnKobo.size() <= 64 && data.savingsNgnKobo.matches('^[0-9]+$')))
+        && (!('cadCents' in data) || (data.cadCents is string && data.cadCents.size() >= 1 && data.cadCents.size() <= 64 && data.cadCents.matches('^[0-9]+$')))
+        && (!('savingsCadCents' in data) || (data.savingsCadCents is string && data.savingsCadCents.size() >= 1 && data.savingsCadCents.size() <= 64 && data.savingsCadCents.matches('^[0-9]+$')))
         && (!('thirst' in data) || data.thirst is number)
         && data.avatar is map
         && (!('inventory' in data) || (data.inventory is list && data.inventory.size() <= 200))
@@ -142,6 +149,18 @@ service cloud.firestore {
         && (!('ownedBusinesses' in data) || (data.ownedBusinesses is list && data.ownedBusinesses.size() <= 100))
         && (!('ownedDocuments' in data) || (data.ownedDocuments is list && data.ownedDocuments.size() <= 100))
         && (!('phoneWallpaper' in data) || (data.phoneWallpaper is string && data.phoneWallpaper.size() <= 80))
+        && (!('savedNotes' in data) || (data.savedNotes is list && data.savedNotes.size() <= 200))
+        && (!('snapUsername' in data) || (data.snapUsername is string && data.snapUsername.size() <= 32))
+        && (!('isSnapPlus' in data) || data.isSnapPlus is bool)
+        && (!('snapPlusExpiresAt' in data) || (data.snapPlusExpiresAt is number && data.snapPlusExpiresAt >= 0))
+        && (!('ownedLaptops' in data) || (data.ownedLaptops is list && data.ownedLaptops.size() <= 50 && (data.ownedLaptops.size() == 0 || data.ownedLaptops[0] is string)))
+        && (!('activeLaptopId' in data) || (data.activeLaptopId is string && data.activeLaptopId.size() <= 64))
+        && (!('codingXp' in data) || (data.codingXp is number && data.codingXp >= 0))
+        && (!('codingLevel' in data) || (data.codingLevel is number && data.codingLevel >= 1))
+        && (!('completedCodingChallenges' in data) || (data.completedCodingChallenges is list && data.completedCodingChallenges.size() <= 200 && (data.completedCodingChallenges.size() == 0 || data.completedCodingChallenges[0] is string)))
+        && (!('completedCyberMissions' in data) || (data.completedCyberMissions is list && data.completedCyberMissions.size() <= 200 && (data.completedCyberMissions.size() == 0 || data.completedCyberMissions[0] is string)))
+        && (!('predictionPoints' in data) || (data.predictionPoints is number && data.predictionPoints >= 0))
+        && (!('familyId' in data) || (data.familyId is string && data.familyId.size() <= 64))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -340,15 +359,17 @@ service cloud.firestore {
               'username', 'usernameLower', 'citizenName', 'firstName', 'lastName', 'walletAccountNumber',
               'spawnStateId', 'lastLocationStateId', 'currentCountry', 'migratedToNigeriaOriginalStateV1', 'immigrationStatus', 'travelHistory',
               'phoneModel',
-              'cashNaira', 'bankNaira', 'loanBalanceNGN', 'savingsBalanceNGN',
-              'cashUSD', 'cashGBP', 'cashEUR', 'bankCAD', 'savingsCAD',
+              'cashNaira', 'bankNaira', 'ngnKobo', 'loanBalanceNGN', 'savingsBalanceNGN', 'savingsNgnKobo',
+              'cashUSD', 'cashGBP', 'cashEUR', 'bankCAD', 'cadCents', 'savingsCAD', 'savingsCadCents',
               'energy', 'hunger', 'thirst', 'health', 'happiness',
               'avatar', 'inventory', 'ownedClothing', 'ownedHairstyles', 'houseLayouts', 'storedItems',
               'completedCourses', 'furnitureBought',
               'receipts', 'alerts', 'ownedBusinesses', 'ownedDocuments',
               'phoneWallpaper', 'savedNotes', 'academyProgress',
               'activeJobId', 'jobTitle', 'jobLevel', 'jobRank', 'jobShiftsWorked', 'jobWeeklySalaryNGN', 'jobAutoAttend',
-              'snapUsername', 'isSnapPlus', 'updatedAt'
+              'snapUsername', 'isSnapPlus', 'snapPlusExpiresAt',
+              'ownedLaptops', 'activeLaptopId', 'codingXp', 'codingLevel', 'completedCodingChallenges', 'completedCyberMissions',
+              'predictionPoints', 'familyId', 'updatedAt'
             ])
           )
         );

@@ -3,23 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import {
+  formatCompactCurrencyFromMinor,
+  formatFullMinorDigits,
+  majorToMinor,
+  parseMinorString,
+} from './bigMoney';
+
 export function formatNaira(amount: number): string {
   if (!amount || isNaN(amount)) return '₦0';
-  if (amount >= 1e24) {
-    const val = amount / 1e24;
-    return `₦${val % 1 === 0 ? val : val.toFixed(1)} Septillion`;
-  }
-  if (amount >= 1e21) {
-    const val = Math.round((amount / 1e21) * 10) / 10;
-    return `₦${val % 1 === 0 ? val : val.toFixed(1)} Sextillion`;
-  }
-  if (amount >= 1e18) {
-    const val = amount / 1e18;
-    return `₦${val % 1 === 0 ? val : val.toFixed(1)} Quintillion`;
-  }
   if (amount >= 1e15) {
-    const val = amount / 1e15;
-    return `₦${val % 1 === 0 ? val : val.toFixed(1)} Quadrillion`;
+    return formatCompactCurrencyFromMinor(majorToMinor(amount), 'NGN');
   }
   if (amount >= 1e12) {
     const val = amount / 1e12;
@@ -42,21 +36,8 @@ export function formatNaira(amount: number): string {
 
 export function formatCAD(amount: number): string {
   if (!amount || isNaN(amount)) return '$0.00 CAD';
-  if (amount >= 1e24) {
-    const val = amount / 1e24;
-    return `$${val % 1 === 0 ? val : val.toFixed(1)} Septillion CAD`;
-  }
-  if (amount >= 1e21) {
-    const val = Math.round((amount / 1e21) * 10) / 10;
-    return `$${val % 1 === 0 ? val : val.toFixed(1)} Sextillion CAD`;
-  }
-  if (amount >= 1e18) {
-    const val = amount / 1e18;
-    return `$${val % 1 === 0 ? val : val.toFixed(1)} Quintillion CAD`;
-  }
   if (amount >= 1e15) {
-    const val = amount / 1e15;
-    return `$${val % 1 === 0 ? val : val.toFixed(1)} Quadrillion CAD`;
+    return formatCompactCurrencyFromMinor(majorToMinor(amount), 'CAD');
   }
   if (amount >= 1e12) {
     const val = amount / 1e12;
@@ -84,17 +65,33 @@ export function formatMoneyInWords(amount: number = 0, isCanada: boolean = false
 }
 
 /**
- * Formats complete integer numbers with full digit commas for Naija Pay
- * Handles standard numbers as well as large numbers cleanly without scientific notation
+ * Formats complete integer numbers with full digit commas using BigInt minor units.
+ * Never hardcodes fixed numbers so real deductions from 999 Sextillion reflect in exact digits.
  */
-export function formatFullNumberDigits(amount: number = 0): string {
-  if (!amount || isNaN(amount)) return '0.00';
-  if (amount >= 1e21) {
-    // 999 Sextillion representation
-    return '999,000,000,000,000,000,000,000.00';
+export function formatFullNumberDigits(amount: number | string = 0): string {
+  if (amount === undefined || amount === null) return '0.00';
+  if (typeof amount === 'string' && /^-?\d+$/.test(amount.trim())) {
+    return formatFullMinorDigits(parseMinorString(amount));
   }
-  if (amount >= 1e18) {
-    return (BigInt(Math.floor(amount))).toLocaleString();
+  const num = Number(amount);
+  if (!num || isNaN(num)) return '0.00';
+  if (num >= 1e15) {
+    return formatFullMinorDigits(majorToMinor(num));
   }
-  return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export function formatNairaFromKobo(koboStr?: string, fallbackMajor = 0): string {
+  const minor = parseMinorString(koboStr, fallbackMajor);
+  return formatCompactCurrencyFromMinor(minor, 'NGN');
+}
+
+export function formatCadFromCents(centsStr?: string, fallbackMajor = 0): string {
+  const minor = parseMinorString(centsStr, fallbackMajor);
+  return formatCompactCurrencyFromMinor(minor, 'CAD');
+}
+
+export function formatFullDigitsFromMinor(minorStr?: string, fallbackMajor = 0): string {
+  const minor = parseMinorString(minorStr, fallbackMajor);
+  return formatFullMinorDigits(minor);
 }

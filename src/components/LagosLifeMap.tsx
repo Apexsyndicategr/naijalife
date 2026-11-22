@@ -60,7 +60,8 @@ import {
   VolumeX,
   Plus,
   Check,
-  AlertTriangle
+  AlertTriangle,
+  Laptop
 } from 'lucide-react';
 import {
   StateData,
@@ -96,13 +97,14 @@ import {
   CANADA_AIRLINES,
   CANADA_CABIN_CLASSES,
 } from '../utils/travelPricing';
-import { formatNaira, formatMoneyInWords } from '../utils/formatNaira';
+import { formatNaira, formatMoneyInWords, formatNairaFromKobo, formatCadFromCents } from '../utils/formatNaira';
+import { parseMinorString, minorToMajorNumber } from '../utils/bigMoney';
+import { LaptopOS } from './LaptopOS';
 import { fetchRealLifeWeather, LiveWeatherData } from '../utils/realWeather';
 import { getStoredUsers } from './AuthPortal';
 import { DeviceOptimizationProfile } from './DeviceOptimizationLoader';
 import { InFlightSimulationOverlay } from './InFlightSimulationOverlay';
 import { InterstateBusSimulationOverlay } from './InterstateBusSimulationOverlay';
-import { isStrictOwnerIdentity } from '../utils/authValidation';
 
 export interface LagosLifeMapProps {
   userProfile: UserProfile;
@@ -155,6 +157,8 @@ export interface LagosLifeMapProps {
     sourceAmount: number;
     targetAmount: number;
     receipts: any[];
+    ngnKobo?: string;
+    cadCents?: string;
   }) => void;
   cloudSyncStatus?: 'synced' | 'syncing' | 'conflict' | 'offline';
   onTriggerCloudSync?: () => Promise<void> | void;
@@ -202,18 +206,10 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
   onTriggerCloudSync,
   onOwnerResetAllProgress,
 }) => {
-  const isStrictOwner = Boolean(
-    userProfile?.isOwner === true &&
-      userProfile?.role === 'owner' &&
-      userProfile?.isVerified === true &&
-      isStrictOwnerIdentity({
-        email: userProfile?.email || userProfile?.gmail,
-        emailVerified: userProfile?.isVerified,
-        username: userProfile?.username,
-      })
-  );
-  const effectiveNGN = isStrictOwner ? 9.99e23 : moneyNGN;
-  const effectiveCAD = isStrictOwner ? 9.99e23 : (userProfile?.bankCAD || 0);
+  const effectiveNGN = minorToMajorNumber(parseMinorString(userProfile?.ngnKobo, moneyNGN));
+  const effectiveCAD = minorToMajorNumber(parseMinorString(userProfile?.cadCents, userProfile?.bankCAD || 0));
+  const hasOwnedLaptop = (userProfile?.ownedLaptops?.length || 0) > 0;
+  const [isLaptopOpen, setIsLaptopOpen] = useState<boolean>(false);
   // Three.js Top-Down 3D Aerial Map Controller Ref & HUD Zoom Percentage
   const map3dRef = useRef<NaijaCity3DHandle | null>(null);
   const [zoomPercent, setZoomPercent] = useState<number>(100);
@@ -998,12 +994,16 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
             )}
           </button>
 
-          {/* Green Wallet Pill: Shows CAD in Canada & NGN in Nigeria (999 Sextillion for Owner in both) */}
+          {/* Green Wallet Pill: Live BigInt minor-unit precision for Nigeria (NGN) & Canada (CAD) */}
           <div
             className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-0.5 sm:py-1 rounded-full bg-[#1e6f47] text-white font-mono font-black text-[10px] sm:text-xs shadow-md border border-emerald-400/30 shrink-0"
-            title={`Nigeria: ${formatMoneyInWords(effectiveNGN, false)} · Canada: ${formatMoneyInWords(effectiveCAD, true)}`}
+            title={`Nigeria: ${formatNairaFromKobo(userProfile?.ngnKobo, effectiveNGN)} · Canada: ${formatCadFromCents(userProfile?.cadCents, effectiveCAD)}`}
           >
-            <span>{formatMoneyInWords(activeStateId === 'canada' ? effectiveCAD : effectiveNGN, activeStateId === 'canada')}</span>
+            <span>
+              {activeStateId === 'canada'
+                ? formatCadFromCents(userProfile?.cadCents, effectiveCAD)
+                : formatNairaFromKobo(userProfile?.ngnKobo, effectiveNGN)}
+            </span>
           </div>
         </div>
 
@@ -1572,7 +1572,37 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
           <span className="text-[8px] sm:text-[9px] font-bold text-amber-300">Buy</span>
         </button>
 
-        {/* 6. PHONE BUTTON (SLEEK TILTED SMARTPHONE GRAPHIC MATCHING REFERENCE PHOTO) */}
+        {/* 6. LAPTOP OS DOCK LAUNCHER */}
+        <button
+          type="button"
+          onClick={() => {
+            if (!hasOwnedLaptop) {
+              onShowToast('💻 Buy a laptop in Device Store inside NaijaPhone to unlock Laptop OS!');
+              triggerSound?.('alert');
+              return;
+            }
+            setIsLaptopOpen(true);
+            triggerSound?.('coin');
+          }}
+          className={`flex flex-col items-center gap-0.5 transition-colors cursor-pointer group ${
+            hasOwnedLaptop ? 'text-sky-300 hover:text-sky-200' : 'text-zinc-500 hover:text-zinc-300'
+          }`}
+          title={hasOwnedLaptop ? 'Open Laptop OS & Code Studio' : 'Locked — Purchase a laptop in Device Store'}
+        >
+          <div className={`w-5 h-5 sm:w-6 sm:h-6 rounded-lg border flex items-center justify-center relative ${
+            hasOwnedLaptop
+              ? 'bg-sky-950/90 border-sky-400/60 shadow-[0_0_10px_rgba(56,189,248,0.25)]'
+              : 'bg-zinc-900/80 border-zinc-700/60'
+          }`}>
+            <Laptop className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${hasOwnedLaptop ? 'text-sky-300' : 'text-zinc-500'}`} />
+            {!hasOwnedLaptop && <Lock className="w-2.5 h-2.5 text-amber-400 absolute -top-1 -right-1" />}
+          </div>
+          <span className={`text-[8px] sm:text-[9px] font-bold whitespace-nowrap ${hasOwnedLaptop ? 'text-sky-300' : 'text-zinc-500'}`}>
+            Laptop
+          </span>
+        </button>
+
+        {/* 7. PHONE BUTTON (SLEEK TILTED SMARTPHONE GRAPHIC MATCHING REFERENCE PHOTO) */}
         <button
           type="button"
           onClick={() => setIsPhoneOpen(true)}
@@ -2452,7 +2482,7 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
           moneyNGN={effectiveNGN}
           ownedFurnitureIds={userProfile?.furnitureBought || []}
           onPurchaseItem={(item) => {
-            if (!isStrictOwner && effectiveNGN < item.priceNGN) {
+            if (effectiveNGN < item.priceNGN) {
               onShowToast(`Insufficient funds for ${item.name}!`);
               triggerSound?.('alert');
               return;
@@ -2545,6 +2575,19 @@ export const LagosLifeMap: React.FC<LagosLifeMapProps> = ({
           // Trigger the interstate coach bus simulation (strictly 60s / 1m)
           triggerBusWithSimulation(targetState as any, fare, busOperator);
         }}
+      />
+
+      {/* =========================================================================
+          LAPTOP OS DESKTOP MODAL (Unlocked upon Laptop purchase in Device Store)
+          ========================================================================= */}
+      <LaptopOS
+        isOpen={isLaptopOpen}
+        onClose={() => setIsLaptopOpen(false)}
+        userProfile={userProfile}
+        currentStateId={currentState.id}
+        onUpdateProfile={onUpdateUserProfile}
+        onShowToast={onShowToast}
+        triggerSound={triggerSound}
       />
 
       {/* =========================================================================
